@@ -30,7 +30,7 @@
 #   --llm-review      Run Gemini review (schema/typo) on TMCF before validation (requires GEMINI_API_KEY). Default: on.
 #   --no-llm-review   Disable Gemini review for this run.
 #   --ai-advisory     If Gemini review finds issues, do not stop — continue pipeline (treat Gemini blockers as non-blocking)
-#   --model ID        Gemini model for Gemini review (default: gemini-3-flash-preview)
+#   --model ID        Gemini model for Gemini review (default: gemini-2.5-flash)
 #   --help            Show this help
 #
 # Examples:
@@ -61,7 +61,7 @@ CUSTOM_CSV=""
 CUSTOM_STAT_VARS_MCF=""
 CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
-LLM_MODEL="gemini-3-flash-preview"
+LLM_MODEL="gemini-2.5-flash"
 AI_ADVISORY=false
 
 # --- Parse args ---

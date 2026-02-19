@@ -459,7 +459,7 @@ def _read_csv_header(csv_path: str | Path) -> list[str] | None:
 def _call_gemini(
     tmcf_content: str,
     api_key: str,
-    model_id: str = "gemini-3-flash-preview",
+    model_id: str = "gemini-2.5-flash",
     stat_vars_content: str | None = None,
     stat_vars_schema_content: str | None = None,
     csv_header_columns: list[str] | None = None,
@@ -489,7 +489,9 @@ def _call_gemini(
         config = None
     if config is not None:
         response = client.models.generate_content(
-            model=model_id, contents=prompt, config=config
+            model=model_id,
+            contents=prompt,
+            config=config,
         )
     else:
         response = client.models.generate_content(model=model_id, contents=prompt)
@@ -619,7 +621,7 @@ def _parse_llm_response(text: str) -> list[dict]:
 
 def review_tmcf(
     tmcf_path: str,
-    model_id: str = "gemini-3-flash-preview",
+    model_id: str = "gemini-2.5-flash",
     stat_vars_mcf_path: str | None = None,
     stat_vars_schema_mcf_path: str | None = None,
     csv_path: str | None = None,
@@ -739,8 +741,8 @@ def main():
     parser.add_argument("--output", "-o", default="-", help="Output path (default: stdout, use - for stdout)")
     parser.add_argument(
         "--model",
-        default="gemini-3-flash-preview",
-        help="Gemini model ID (default: gemini-3-flash-preview)",
+        default="gemini-2.5-flash",
+        help="Gemini model ID (default: gemini-2.5-flash)",
     )
     parser.add_argument(
         "--stat-vars-mcf",

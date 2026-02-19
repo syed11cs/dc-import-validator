@@ -55,7 +55,7 @@ Technical signals:
 Reply with plain text only (1–3 sentences)."""
     try:
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=prompt,
         )
         text = (getattr(response, "text", None) or "").strip()

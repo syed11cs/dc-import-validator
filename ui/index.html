@@ -1163,7 +1163,10 @@
         <div id="llm-model-row" style="display: none; margin-top: 10px; margin-left: 0; overflow: visible;">
           <label style="font-size: 0.7rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Model</label>
           <select id="llm-model-select" style="width: 100%; min-width: 0; max-width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.8rem; box-sizing: border-box;">
-            <option value="gemini-3-flash-preview">gemini-3-flash-preview (default)</option>
+            <option value="gemini-2.5-flash" selected>gemini-2.5-flash (default)</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
             <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
           </select>
         </div>
@@ -3195,7 +3198,7 @@
       const select = document.getElementById('llm-model-select');
       const warning = document.getElementById('llm-api-key-warning');
       if (e.target.checked) {
-        if (select) select.value = 'gemini-3-flash-preview';  // always reset to default when Gemini Review is selected
+        if (select) select.value = 'gemini-2.5-flash';  // always reset to default when Gemini Review is selected
         await updateAiReviewWarningVisibility();
       } else {
         if (warning) warning.style.display = 'none';

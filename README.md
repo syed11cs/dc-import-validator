@@ -151,7 +151,7 @@ pip install google-genai
 
 ```bash
 ./run_e2e_test.sh child_birth --llm-review
-./run_e2e_test.sh child_birth --llm-review --model=gemini-3-pro-preview
+./run_e2e_test.sh child_birth --llm-review --model=gemini-2.5-pro
 ```
 
 ### Installing Java (macOS)
@@ -207,7 +207,7 @@ Each **child_birth_fail_*** dataset is the same structure as **child_birth** (fr
 | `--skip-rules ID1`  | Skip these rules (comma-separated). |
 | `--llm-review`      | Run Gemini Review (schema/typo) on TMCF before validation (requires API key). Default: on. Use `--no-llm-review` to disable. |
 | `--ai-advisory`     | If Gemini Review finds issues, continue pipeline (treat blockers as non-blocking). |
-| `--model ID`        | Gemini model for Gemini Review (default: gemini-3-flash-preview) |
+| `--model ID`        | Gemini model for Gemini Review (default: gemini-2.5-flash) |
 | `--help`            | Show help |
 
 ### Examples
@@ -336,7 +336,7 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 | Feature | Description |
 |---------|-------------|
 | **Dataset selector** | Choose from built-in datasets (child_birth, child_birth_fail_*, child_birth_ai_demo) or Custom |
-| **Gemini Review** | Step using Gemini to check TMCF for typos and schema issues (default: on). Requires GEMINI_API_KEY or GOOGLE_API_KEY. Model dropdown: gemini-3-flash-preview (default) or gemini-3-pro-preview. |
+| **Gemini Review** | Step using Gemini to check TMCF for typos and schema issues (default: on). Requires GEMINI_API_KEY or GOOGLE_API_KEY. Model dropdown: gemini-2.5-flash (default), gemini-2.5-flash-lite, gemini-2.5-pro; legacy gemini-3-flash-preview and gemini-3-pro-preview also available. |
 | **Run Validation** | Runs the full pipeline (LLM → genmcf → import_validation when LLM enabled). Use **Stop** or Esc to cancel. |
 | **Log tab** | Terminal output with syntax highlighting (ERROR/WARN/INFO). Copy, expand, auto-scroll. |
 | **Report tab** | Combined validation report with pass/fail, StatVar summary, lint issues, and import tool details |
