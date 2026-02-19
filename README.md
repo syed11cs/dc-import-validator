@@ -1,416 +1,319 @@
-# DC Import Validator
+DC Import Validator 🛡️
+End-to-end validation pipeline for Data Commons imports — catch issues before they reach production.
 
-End-to-end validation pipeline and web UI for Data Commons imports. Runs dc-import (genmcf) and import_validation, with optional Gemini-based schema review, CSV quality checks, and per-run reporting (local or GCS-backed).
+The DC Import Validator automates the entire import validation process: from TMCF/CSV quality checks to schema validation, with optional AI-powered review and comprehensive HTML reports.
 
-## Overview
+![Docker](https://img.shields.io/badge/-Docker-2496ED?logo=docker&logoColor=white)
+![Cloud Run](https://img.shields.io/badge/-Cloud%2520Run-4285F4?logo=google-cloud&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
 
-| | |
-|--|--|
-| **What it does** | Validates TMCF + CSV before submission: preflight, optional Gemini Review, dc-import genmcf, import_validation, Go/No-Go HTML report. |
-| **How to run** | **Docker** (recommended): one repo clone, no extra setup. **CLI / dev:** clone this repo + [datacommonsorg/data](https://github.com/datacommonsorg/data) for the validation runner. |
-| **Output** | Validation report (blockers / warnings / passed), StatVar summary, lint summary, link to import tool report. Optional upload to GCS for Cloud Run. |
+### ✨ Features
 
----
+| Feature | Description |
+|---------|-------------|
+| 🔍 Comprehensive Validation | Preflight checks, CSV quality, TMCF validation, schema conformance, and Data Commons import_validation |
+| 🤖 AI Schema Review | Optional Gemini-powered review catches typos and schema issues before validation |
+| 📊 Rich Reports | HTML reports with blockers/warnings, StatVar summaries, lint issues, and import tool integration |
+| 🚀 Multiple Run Modes | Docker (zero setup), CLI (development), or Cloud Run (production) |
+| ☁️ Cloud Ready | Deploy to Cloud Run with automatic GCS report storage and CI/CD via GitHub Actions |
 
-## Quick Start (Docker — recommended)
+### 🚀 Quick Start (Docker — recommended)
 
-Run the app locally with no Python/Java setup. The image includes the app, dc-import JAR, and a sparse clone of [datacommonsorg/data](https://github.com/datacommonsorg/data) (tools/import_validation only).
+Run the complete validator with zero local setup:
 
 ```bash
-# Clone this repo
+# Clone and run (first build takes ~few minutes)
 git clone https://github.com/syed11cs/dc-import-validator.git
 cd dc-import-validator
-
-# Build and run (first build ~few minutes)
 docker build -t dc-import-validator .
 docker run --rm -p 8080:8080 -e GEMINI_API_KEY=your_key dc-import-validator
 ```
 
-Open **http://localhost:8080**. Use built-in datasets (e.g. Child Birth) or upload your own TMCF + CSV.
+Open http://localhost:8080 and start validating!
 
-**Apple Silicon (M1/M2/M3):** Build for Cloud Run’s platform:  
-`docker build --platform linux/amd64 -t dc-import-validator .`
-
----
-
-## Alternative: Run without Docker (CLI / development)
-
-If you want to run the validation script and Web UI from your host (e.g. to change code or run integration tests), you need this repo and the Data Commons data repo for the **import_validation** runner. Built-in sample data (child_birth, child_birth_fail_*) lives in this repo.
-
-**1. Clone both repos**
+**Apple Silicon (M1/M2/M3):** Build for Cloud Run compatibility:
 
 ```bash
-# This app
-git clone https://github.com/syed11cs/dc-import-validator.git
-cd dc-import-validator
-
-# Data repo (for import_validation runner only; can be sibling or set PROJECTS_DIR)
-git clone https://github.com/datacommonsorg/data.git ../datacommonsorg/data
+docker build --platform linux/amd64 -t dc-import-validator .
 ```
 
-Default layout assumed by the script: parent of `dc-import-validator` contains `datacommonsorg/data`. To use a different path, set `PROJECTS_DIR` (see [Environment variables (script / CLI)](#environment-variables-script--cli)).
+### 📖 Table of Contents
 
-**2. One-time setup**
+- [Features](#-features)
+- [Quick Start](#-quick-start-docker--recommended)
+- [Web UI](#-web-ui)
+- [CLI Usage](#-cli-usage)
+- [Deployment](#-deployment)
+- [Pipeline Deep Dive](#-pipeline-deep-dive)
+- [Configuration](#-configuration)
+- [Development](#-development)
+- [Test Datasets](#-test-datasets)
+- [FAQ](#-faq)
 
-```bash
-chmod +x setup.sh run_e2e_test.sh run_ui.sh
-./setup.sh
-```
+### 🖥️ Web UI
 
-This creates a Python venv (`.venv/`), installs dependencies, and downloads the import tool JAR from [GitHub releases](https://github.com/datacommonsorg/import/releases) to `bin/`.
-
-**3. Run validation (CLI)**
-
-```bash
-./run_e2e_test.sh child_birth
-./run_e2e_test.sh child_birth_fail_min_value
-./run_e2e_test.sh custom --tmcf=path/to/file.tmcf --csv=path/to/file.csv
-```
-
-**4. Run Web UI (local)**
+The web interface makes validation accessible to everyone:
 
 ```bash
 ./run_ui.sh
+# Then open http://localhost:8000
 ```
 
-Open [http://localhost:8000](http://localhost:8000).
+#### UI Features
 
----
+| Feature | Description |
+|---------|-------------|
+| Dataset Browser | Test with built-in datasets (child_birth, failure cases, AI demo) or upload your own |
+| Interactive Rules | Select which validation rules to run with checkbox interface |
+| Live Logs | Real-time terminal output with syntax highlighting and copy support |
+| Rich Reports | Combined view of blockers, warnings, StatVar summaries, and lint issues |
+| Gemini Integration | Toggle AI review on/off, select model (2.5 Flash, Pro, etc.) |
+| Run Management | Cancel long-running validations, view history |
 
-## Deploy to Cloud Run
+#### Upload Custom Files
 
-The repo includes a **GitHub Actions** workflow (`.github/workflows/deploy-cloudrun.yml`) that builds the image, pushes to **Artifact Registry**, and deploys to an existing **Cloud Run** service on every push to `main`. No manual `gcloud` deploy needed once secrets are set.
+1. Select **Custom (Upload your own files)** from the dataset dropdown.
+2. Upload your TMCF (.tmcf/.mcf) and CSV (.csv) files.
+3. (Optional) Add StatVars MCF for enhanced schema validation.
+4. Click **Run Validation**.
 
-- **One-time:** Create an Artifact Registry repo, a GCP service account (Artifact Registry Writer + Cloud Run Admin), and add GitHub secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY`, and optionally `AR_LOCATION` (e.g. `us` if your AR is multi-region).
-- **Then:** Push to `main` (or run the workflow manually from the Actions tab).
+File limit: 50MB per file.
 
-For step-by-step (Artifact Registry, service account, secrets, GCS bucket), see **docs/DEPLOY_CLOUD_RUN.md** in this repository (when the `docs/` folder is present).
+### 💻 CLI Usage
 
----
-
-## Repository structure
-
-| Path | Purpose |
-|------|---------|
-| `sample_data/` | Built-in datasets (child_birth, child_birth_fail_*, child_birth_ai_demo); see [sample_data/README.md](sample_data/README.md). |
-| `scripts/` | Preflight, CSV quality, config validation, LLM schema review, HTML report generation. |
-| `ui/` | Web UI (FastAPI app, frontend, GCS upload/serve, validation runner). |
-| `validation_configs/` | Rule config (`new_import_config.json`), warn-only overrides (`warn_only_rules.json`). |
-| `run_e2e_test.sh` | Main CLI entrypoint. |
-| `run_ui.sh` | Start Web UI locally (port 8000). |
-| `Dockerfile` | Image for local run or Cloud Run (includes sparse data repo clone). |
-| `.github/workflows/deploy-cloudrun.yml` | CI/CD: build → Artifact Registry → Cloud Run on push to `main`. |
-
-When present, **docs/** contains the deploy guide (DEPLOY_CLOUD_RUN.md), architecture overview (PROJECT_OVERVIEW.md), and checklist mapping (CL_PR_CHECKLIST_MAPPING.md).
-
----
-
-## Prerequisites
-
-- **Docker (Quick Start):** Docker installed. No Python/Java on host required.
-- **CLI / dev:** **Python 3**, **Java 11+** (17 recommended; Docker image uses 17). **datacommonsorg/data** clone for the import_validation runner (see [Alternative: Run without Docker](#alternative-run-without-docker-cli--development)).
-
-### Gemini Review (LLM)
-
-The Gemini Review step uses Google's Gemini API to check TMCF files for typos, schema issues, and naming conventions.
-
-**Default behavior**
-
-- **Enabled by default** when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set. The pipeline runs Gemini Review before genmcf.
-- **Skipped automatically** when no API key is set; validation continues with genmcf and import_validation.
-- **Disable explicitly** with `--no-llm-review` (CLI) or by turning off the checkbox in the Web UI.
-
-**1. Get an API key**
-
-- Go to [Google AI Studio](https://aistudio.google.com/apikey)
-- Sign in with your Google account
-- Create an API key
-
-**2. Set the environment variable**
+Perfect for automation, CI/CD, or power users:
 
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
-# or
-export GOOGLE_API_KEY="your-api-key-here"
-```
+# Setup (one-time)
+./setup.sh
 
-For a persistent setup, add the export to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
+# Validate built-in datasets
+./run_e2e_test.sh child_birth                    # Clean dataset → PASS
+./run_e2e_test.sh child_birth_fail_min_value     # Intentional failure → FAIL
+./run_e2e_test.sh child_birth_ai_demo            # Schema issues → Gemini catches them
 
-```bash
-echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.zshrc
-source ~/.zshrc
-```
+# Validate your own data
+./run_e2e_test.sh custom --tmcf=path/to/data.tmcf --csv=path/to/data.csv
 
-**3. Install the Gemini client** (if not already installed via setup):
-
-```bash
-pip install google-genai
-```
-
-**4. Run with Gemini Review**
-
-```bash
-./run_e2e_test.sh child_birth --llm-review
+# With AI review
 ./run_e2e_test.sh child_birth --llm-review --model=gemini-2.5-pro
+
+# Run specific rules only
+./run_e2e_test.sh child_birth --rules=check_min_value,check_unit_consistency
 ```
 
-### Installing Java (macOS)
+#### CLI Options
 
-```bash
-brew install openjdk@17
-export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
-```
+| Option | Description |
+|--------|-------------|
+| `--tmcf PATH` | TMCF file (for custom datasets) |
+| `--csv PATH` | CSV file (for custom datasets) |
+| `--stat-vars-mcf PATH` | Optional StatVars MCF for schema conformance |
+| `--stat-vars-schema-mcf PATH` | Optional schema MCF |
+| `--rules ID1,ID2` | Run only these rules |
+| `--skip-rules ID1,ID2` | Skip these rules |
+| `--llm-review` | Enable Gemini Review (requires API key) |
+| `--no-llm-review` | Disable Gemini Review |
+| `--model ID` | Gemini model (default: gemini-2.5-flash) |
+| `--help` | Show help |
+### ☁️ Deployment
 
-Verify: `java -version` shows Java 11+ (17 recommended; Docker image uses 17).
+#### Deploy to Cloud Run (Automated)
 
-## Usage
+The repository includes GitHub Actions for zero-touch deployment.
 
-```bash
-./run_e2e_test.sh [OPTIONS] [DATASET]
-```
+**One-time setup:**
 
-### Datasets
+1. Create Artifact Registry repo.
+2. Create GCS bucket for reports (optional but recommended).
+3. Create service account with necessary permissions.
+4. Add GitHub secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY` (JSON key), `AR_LOCATION` (e.g. `us`).
 
-Child birth testdata (TMCF, CSV, stat vars MCF) lives in this repo at `sample_data/child_birth/`. Rule-test variants live in other `sample_data/` subfolders (same structure, modified to trigger specific rules).
+Push to `main` — automatic build and deploy!
 
-| Dataset   | Description |
-|-----------|-------------|
-| `child_birth` | Child birth from this repo’s `sample_data/child_birth/` (clean; expect PASS). |
-| `child_birth_fail_min_value` | Same base, one negative value (−1) and two large fluctuations → check_min_value FAIL; Data Fluctuation: 100%, 200%, 500%. |
-| `child_birth_fail_units` | Same base, mixed units → check_unit_consistency FAIL. |
-| `child_birth_fail_scaling_factor` | Same base, inconsistent scaling → check_scaling_factor_consistency FAIL. |
-| `child_birth_ai_demo` | TMCF with schema issues and typos (missing dcs:, duplicate, typo) → Gemini Review finds issues. |
-| `custom` | Your TMCF + CSV. Requires `--tmcf` and `--csv`. |
+See [docs/DEPLOY_CLOUD_RUN.md](docs/DEPLOY_CLOUD_RUN.md) for detailed instructions.
 
-### What “bad” data is in each child_birth variant
+#### Environment Variables
 
-Each **child_birth_fail_*** dataset is the same structure as **child_birth** (from this repo’s `sample_data/child_birth/`) but with **one intentional problem** so a specific validation rule fails. Use these to test or demo the pipeline.
-
-| Dataset | What’s wrong | Why it fails |
-|---------|----------------|--------------|
-| **child_birth_fail_min_value** | **One negative value (−1)** and **two large fluctuations**. In `sample_data/child_birth_fail_min_value/child_birth_fail_min_value.csv`: USA 2023-01 `Count_BirthEvent_LiveBirth` is −1; USA 2023-03 `Count_Death` is 996000 (300% from 249000); USA 2023-04 `Count_Death_Upto1Years` is 5400 (200% from 1800). | **check_min_value** fails on the one negative. Data Fluctuation shows three tiers: 100%, 200%, 500%. |
-| **child_birth_fail_units** | **Mixed units for the same StatVar.** The CSV has a `unit` column. Most rows have empty unit; one row (USA, 2023-02, `Count_Death`) has `unit = Percent`. Counts should not be in “Percent”; units must be consistent per StatVar. | **check_unit_consistency** fails when the same StatVar has different units (e.g. empty vs “Percent”). |
-| **child_birth_fail_scaling_factor** | **Inconsistent scaling for the same StatVar.** The CSV has a `scalingFactor` column. For `Count_BirthEvent_LiveBirth`, one month (2023-02) has `scalingFactor = 100` while all other months have `1`. Scaling factor must be the same for a StatVar. | **check_scaling_factor_consistency** fails when the same StatVar has different scaling factors (e.g. 1 vs 100). |
-
-**child_birth** (no “fail” in the name) uses the unmodified files from this repo's `sample_data/child_birth/` and has no such issues; it should pass validation (aside from optional lint warnings).
-
-### Options
-
-| Option              | Description |
-|---------------------|-------------|
-| `--tmcf PATH`       | TMCF file (for custom) |
-| `--csv PATH`        | CSV file (for custom) |
-| `--stat-vars-mcf PATH` | Optional stat vars MCF for schema conformance (custom or when dataset has it). |
-| `--stat-vars-schema-mcf PATH` | Optional stat vars schema MCF for schema conformance. |
-| `--config PATH`     | Validation config file |
-| `--rules ID1,ID2`   | Run only these rules (comma-separated). |
-| `--skip-rules ID1`  | Skip these rules (comma-separated). |
-| `--llm-review`      | Run Gemini Review (schema/typo) on TMCF before validation (requires API key). Default: on. Use `--no-llm-review` to disable. |
-| `--ai-advisory`     | If Gemini Review finds issues, continue pipeline (treat blockers as non-blocking). |
-| `--model ID`        | Gemini model for Gemini Review (default: gemini-2.5-flash) |
-| `--help`            | Show help |
-
-### Examples
-
-```bash
-./run_e2e_test.sh child_birth
-./run_e2e_test.sh child_birth_fail_min_value   # Expect FAIL
-./run_e2e_test.sh child_birth_fail_units        # Expect FAIL
-./run_e2e_test.sh child_birth_fail_scaling_factor   # Expect FAIL
-./run_e2e_test.sh child_birth_ai_demo   # TMCF issues → Gemini Review
-./run_e2e_test.sh custom --tmcf=my.tmcf --csv=my.csv
-./run_e2e_test.sh custom --tmcf=my.tmcf --csv=my.csv --stat-vars-mcf=path/to/stat_vars.mcf --stat-vars-schema-mcf=path/to/schema.mcf
-```
-
-### Schema MCF conformance
-
-When a dataset has **stat_vars.mcf** and/or **stat_vars_schema.mcf** (e.g. from this repo's `sample_data/child_birth/` for the fail/AI-demo variants), the script runs **dc-import lint** with those MCFs before genmcf. That lint report is used by import_validation so schema conformance is enforced. For custom runs, pass `--stat-vars-mcf` and/or `--stat-vars-schema-mcf` to enable the same check.
-
-## Pipeline
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | For AI review | Google AI Studio API key |
+| `GOOGLE_API_KEY` | Alternative | Alternative API key variable |
+| `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket name for report storage |
+| `LOG_LEVEL` | No | DEBUG, INFO (default), WARNING |
+| `VALIDATION_RUN_TIMEOUT_SEC` | No | Max run time (e.g. 3600) |
+### 🔄 Pipeline Deep Dive
 
 ```
-Preflight: import files exist and have .tmcf / .csv / .mcf extensions
-CSV quality: duplicate columns, empty columns, duplicate rows, non-numeric value column
-[Optional: Step 0 — Gemini Review]
-[Optional: dc-import lint with stat_vars/schema MCFs when present]
-TMCF + CSV  →  dc-import genmcf  →  report.json, summary_report.csv
-Config template check (validation_config structure)
-              import_validation  →  validation_output.json (Pass/Fail) → HTML report
+┌─────────────┐
+│   Upload    │  TMCF + CSV (+ optional StatVars MCF)
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│  Preflight  │  • Files exist? • Correct extensions?
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│ CSV Quality │  • Duplicate columns • Empty columns
+│             │  • Duplicate rows • Non-numeric values
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│    Gemini   │  OPTIONAL: AI review of TMCF for:
+│   Review    │  • Schema typos • Missing dcs: prefixes
+└──────┬──────┘  • Naming convention issues
+       ↓
+┌─────────────┐
+│  dc-import  │  • genmcf → report.json, summary_report.csv
+│   genmcf    │  • lint (if StatVars MCF provided)
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│  import_    │  • Run validation rules against config
+│ validation  │  • Generate validation_output.json
+└──────┬──────┘
+       ↓
+┌─────────────┐
+│    HTML     │  • Blockers (P0 errors)
+│   Report    │  • Warnings (non-blocking)
+└─────────────┘  • StatVar summary • Lint issues
 ```
 
-### CSV data quality
+#### What Gets Validated
 
-Before Step 0 (LLM) and Step 1 (genmcf), the pipeline runs CSV quality checks:
+| Check | Description | Blocking? |
+|-------|-------------|-----------|
+| File Preflight | TMCF/CSV exist, correct extensions | ✅ Yes |
+| CSV Quality | No duplicate columns/rows, numeric value column | ✅ Yes |
+| Gemini Review | Schema typos, naming conventions | ⚠️ Configurable |
+| Min Value | Values below threshold | ✅ Yes |
+| Unit Consistency | Same StatVar, same unit | ✅ Yes |
+| Scaling Factor | Consistent scaling per StatVar | ✅ Yes |
+| Lint Errors | Import tool warnings/errors | ⚠️ Warning by default |
+| Data Fluctuation | Extreme changes detected | ⚠️ Warning |
+### ⚙️ Configuration
 
-- **Duplicate column names** — Header must not repeat column names.
-- **Empty columns** — No column may be entirely empty (all cells empty/whitespace).
-- **Duplicate rows** — No two rows may be identical (all column values the same).
-- **Non-numeric value column** — The column named `value` (or `--value-column`) must contain only numbers or empty cells. Other columns are not checked here; dc-import and lint remain authoritative for schema.
+#### Rule Configuration
 
-Run manually: `python scripts/validate_csv_quality.py --csv path/to/file.csv [--value-column value]`
+Edit `validation_configs/new_import_config.json` to define validation rules:
 
-### Config template validation
+```json
+{
+  "rules": [
+    {
+      "rule_id": "check_min_value",
+      "description": "Check values are >= minimum",
+      "validator": "MinValueValidator",
+      "scope": {
+        "data_source": "stats",
+        "stat_var_groups": ["Count_*"]
+      },
+      "params": {
+        "min_value": 0
+      }
+    }
+  ]
+}
+```
 
-Before running import_validation, the pipeline validates `validation_config.json` (or the config in use) against an expected template:
+#### Warning vs Error Hierarchy
 
-- Required top-level: `rules` (array).
-- Each rule must have: `rule_id`, `description`, `validator`, `scope`, `params`.
-- `rule_id` must be snake_case (e.g. `check_min_value`).
-- `scope.data_source` must be one of: `stats`, `lint`, `differ`.
-
-Run manually: `python scripts/validate_config_template.py validation_configs/new_import_config.json`
-
-### File preflight
-
-Before Step 0 (LLM) and Step 1 (genmcf), the pipeline checks that required import files exist and have the expected extensions:
-
-- TMCF: `.tmcf` or `.mcf`
-- CSV: `.csv`
-- Optional stat_vars.mcf / stat_vars_schema.mcf: `.mcf`
-
-Run manually: `python scripts/validate_import_files.py --tmcf path/to/file.tmcf --csv path/to/file.csv`
-
-### Out of scope
-
-- **Extreme values / outlier detection** — Not implemented. **check_min_value** enforces a minimum; a max or outlier rule would require a defined config (e.g. per-StatVar bounds).
-- **Gemini review of validation_config.json** — Gemini Review applies only to the TMCF (schema/typos). Rule config logic is not reviewed.
-
-### Checklist alignment
-
-We map the import review checklists to this pipeline in **docs/CL_PR_CHECKLIST_MAPPING.md** (in the repo). In short: we cover StatVar definitions in stat_vars MCF (when provided), percent/rate measurementDenominator in stat_vars MCF (partial), counters and unit/scaling, and partially data holes, fluctuation, and report visibility; Gemini Review (TMCF) is also part of the pipeline. The doc lists what is applied, partial, and quick wins to add next.
-
-## Output
-
-Each dataset writes to its own folder under `output/`:
-
-- **CLI:** Output goes to the canonical folder (e.g. `output/child_birth_genmcf/`, `output/custom_input/`).
-- **Web UI:** Each run uses a per-run directory `output/{dataset}/{run_id}/` to avoid races when multiple runs overlap; after upload to GCS, artifacts are copied to the canonical folder so “latest” APIs still work.
-
-| Dataset     | Output folder       | Contents |
-|-------------|---------------------|----------|
-| child_birth | `output/child_birth_genmcf/` | report.json, summary_report.csv, table_mcf_nodes_*.mcf, validation_output.json; when stat_vars.mcf exists, lint/report.json from schema run is used. |
-| child_birth_fail_* | `output/child_birth_fail_*_genmcf/` | Same; inputs from sample_data/ (child_birth base with one intentional failure). |
-| child_birth_ai_demo | `output/child_birth_ai_demo_genmcf/` | Same; TMCF/CSV from sample_data/ for Gemini Review demo. |
-| custom      | `output/custom_input/` | report.json, summary_report.csv, table_mcf_nodes_*.mcf, validation_output.json; add --stat-vars-mcf/--stat-vars-schema-mcf for schema lint. |
-
-## Configuration
-
-- **child_birth**, **child_birth_fail_***, **child_birth_ai_demo**, and **custom** use `validation_configs/new_import_config.json`.
-
-Validation configs define which rules run (e.g. min value, num observations, date checks).
-
-### Warning vs Error hierarchy
-
-Only **Errors** (FAILED) block; **Warnings** do not. Edit `validation_configs/warn_only_rules.json` to mark rules as non-blocking per dataset:
+Control which failures block the pipeline in `validation_configs/warn_only_rules.json`:
 
 ```json
 {
   "child_birth": ["check_lint_error_count"],
-  "child_birth_fail_min_value": ["check_lint_error_count"],
-  "child_birth_fail_units": ["check_lint_error_count"],
-  "child_birth_fail_scaling_factor": ["check_lint_error_count"],
-  "child_birth_ai_demo": ["check_lint_error_count"],
-  "custom": ["check_lint_error_count"]
+  "custom": ["check_lint_error_count", "check_data_fluctuation"]
 }
 ```
 
-Rules listed under a dataset are converted from FAILED → WARNING after validation. The HTML report shows Blockers, Warnings, and Passed separately.
+Rules listed here become WARNINGS instead of ERRORS (non-blocking).
 
-## Web UI
+### 🧪 Test Datasets
 
-A web interface lets you run validations and view reports in the browser.
+Built-in datasets for testing and demos:
 
-### Starting the Web UI
+| Dataset | What It Tests | Expected Result |
+|---------|---------------|-----------------|
+| child_birth | Clean dataset | ✅ PASS |
+| child_birth_fail_min_value | Negative value + large fluctuations | ❌ FAIL (min_value) |
+| child_birth_fail_units | Mixed units (empty vs "Percent") | ❌ FAIL (unit consistency) |
+| child_birth_fail_scaling_factor | Inconsistent scaling (1 vs 100) | ❌ FAIL (scaling factor) |
+| child_birth_ai_demo | Schema typos, missing dcs: | 🤖 Gemini catches issues |
 
-```bash
-./run_ui.sh
-# or: uvicorn ui.server:app --reload --host 0.0.0.0 --port 8000
-```
+Each failure dataset modifies ONE aspect of the clean child_birth data to trigger specific rules.
 
-Open [http://localhost:8000](http://localhost:8000) in your browser.
+### 🛠️ Development
 
-`run_ui.sh` automatically installs UI dependencies (FastAPI, uvicorn, python-multipart) if needed.
-
-### Features
-
-| Feature | Description |
-|---------|-------------|
-| **Dataset selector** | Choose from built-in datasets (child_birth, child_birth_fail_*, child_birth_ai_demo) or Custom |
-| **Gemini Review** | Step using Gemini to check TMCF for typos and schema issues (default: on). Requires GEMINI_API_KEY or GOOGLE_API_KEY. Model dropdown: gemini-2.5-flash (default), gemini-2.5-flash-lite, gemini-2.5-pro; legacy gemini-3-flash-preview and gemini-3-pro-preview also available. |
-| **Run Validation** | Runs the full pipeline (LLM → genmcf → import_validation when LLM enabled). Use **Stop** or Esc to cancel. |
-| **Log tab** | Terminal output with syntax highlighting (ERROR/WARN/INFO). Copy, expand, auto-scroll. |
-| **Report tab** | Combined validation report with pass/fail, StatVar summary, lint issues, and import tool details |
-| **Rules** | Select which rules to run. Check/uncheck rules; use Select all / Deselect all. At least one rule must be selected. |
-
-### Custom Upload
-
-Upload your own TMCF and CSV files for validation:
-
-1. Select **Custom (Upload your own files)** from the dataset dropdown
-2. Choose your TMCF file (`.tmcf` or `.mcf`)
-3. Choose your CSV file (`.csv`)
-4. Click **Run Validation**
-
-- **Limit:** 50MB per file
-- **Staging:** Uploaded files are written to `output/custom_upload/` (input.tmcf, input.csv, etc.; overwritten per run).
-- **Output:** **CLI:** results go to `output/custom_input/` (each run overwrites). **Web UI:** per-run directory `output/custom/{run_id}/`, then copy to `output/custom_input/` when the run completes so “latest” APIs work. (Same pattern as built-in datasets: `output/{dataset}/{run_id}/`.)
-- **Config:** Uses `new_import_config.json`; `check_lint_error_count` is treated as a warning
-- **Optional Stat vars MCF / Stat vars schema MCF:** When provided, Gemini Review runs stat_vars MCF checks (name/description/alternateName; generated vs defined StatVars; percent/rate measurementDenominator). See [sample_data/README.md](sample_data/README.md) for test files.
-
-### Validation Report
-
-The Report tab shows a combined validation report that includes:
-
-- **Validation results** — P0 Blockers (errors), Warnings (non-blocking), Passed checks
-- **Import Run Info** — Input files (TMCF/CSV), generation duration, tool version
-- **Key Counters** — Total observations, NumRowSuccesses, NumNodeSuccesses, NumPVSuccesses
-- **StatVar Summary** — Table of StatVars with NumPlaces, NumObservations, Min/Max Value, Units, Dates
-- **Lint Summary** — Counts of INFO, WARNING, ERROR from the import tool
-- **Top Lint Issues** — First 10 issues (errors first) with file, line, and message
-
-A **View full import tool report** link at the bottom opens the import tool's detailed report (counters, sample places, time series charts) in a new tab. The same file (`summary_report.html`) is also in each dataset's output folder.
-
-### Logging
-
-When the UI server starts, it assigns a **random server session ID** and configures logging by environment:
-
-- **Cloud Run:** Logs go to **stdout** only (Cloud Run captures them and sends to Cloud Logging). No file handler (ephemeral disk).
-- **Local / VM:** Logs are written to `logs/dc_import_validator.log` (daily rotation, 30 days) and to the console. Each line includes `session=<server_session_id>` and `request_id=<per-request_id>`.
-- **Request / run IDs:** Every HTTP request gets a unique `request_id`; validation runs log `run_started` and `run_finished` with that ID (and `duration_sec`) so you can trace a run in the log file or in Cloud Logging. For validation runs, the HTTP `request_id` is the same as `run_id` (used in APIs and GCS paths).
-- **Errors:** Unhandled errors are logged with `logger.exception(...)` so stack traces appear for debugging.
-- **Log level:** Set `LOG_LEVEL` (e.g. `LOG_LEVEL=DEBUG`) to change verbosity; default is `INFO`.
-
-**Reports in GCS (Cloud Run):** If you set **`GCS_REPORTS_BUCKET`** to a Cloud Storage bucket name, after each run the app uploads to `gs://bucket/reports/{run_id}/{dataset}/`: the HTML reports (`validation_report.html`, `summary_report.html`), JSON artifacts (`validation_output.json`, `report.json`, `schema_review.json` when present), and the input CSV as `input.csv` (for rule-failure enrichment when serving from GCS). Any instance can serve the report at `/report/{dataset}/{run_id}`. Create the bucket (e.g. `dc-import-validator-reports`), grant the Cloud Run service account **Storage Object Admin** on it, and set the env var when deploying.
-
-**CLI (`run_e2e_test.sh`):** When run directly (e.g. `./run_e2e_test.sh child_birth`), the script assigns a **session ID** for that run and prefixes each `[INFO]`/`[WARN]`/`[ERROR]` line with `[session=<id>]`, and logs "Starting run (dataset=...)" so CLI-only runs can be correlated too. CLI logs use `[session=<id>]` for that CLI run; server logs use `session=<server_session_id>` and `request_id=<per-request>`.
-
-### Environment variables (UI / Cloud Run)
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GEMINI_API_KEY` or `GOOGLE_API_KEY` | For Gemini Review | API key for Gemini schema review (see Prerequisites). |
-| `GCS_REPORTS_BUCKET` | For Cloud Run reports | Bucket name for uploading reports and input CSV; enables run_id-based report serving. |
-| `LOG_LEVEL` | No | Log verbosity (e.g. `DEBUG`, `INFO`); default `INFO`. |
-| `PORT` | Set by Cloud Run | Port the app listens on; Cloud Run sets this; local `run_ui.sh` uses 8000. |
-| `VALIDATION_RUN_TIMEOUT_SEC` | No | Max run time in seconds (e.g. `3600`). If set, runs that exceed this are stopped and reported as timeout. Unset or `0` = no timeout. |
-
-### Environment variables (script / CLI)
-
-Used by `run_e2e_test.sh` and `setup.sh` when running from the command line:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PROJECTS_DIR` | For import_validation | Parent of repo root; script sets `DATA_REPO=$PROJECTS_DIR/datacommonsorg/data`. Default: parent of script dir. |
-| `IMPORT_JAR_PATH` | No | Path to dc-import JAR; if unset, script uses `bin/datacommons-import-tool.jar` or downloads from GitHub. |
-| `PYTHON` | No | Python interpreter for filter/validation scripts; default: `.venv/bin/python` or `python3`. |
-| `EMPTY_DIFFER_PATH` | No | Path to empty differ CSV when no differ output; default: `sample_data/empty_differ.csv`. |
-
-## Tests
-
-Integration tests run the pipeline for key datasets and assert exit codes and output:
+#### Local Setup (Without Docker)
 
 ```bash
+# Clone repos
+git clone https://github.com/syed11cs/dc-import-validator.git
+cd dc-import-validator
+git clone https://github.com/datacommonsorg/data.git ../datacommonsorg/data
+
+# Setup
+chmod +x setup.sh run_e2e_test.sh run_ui.sh
+./setup.sh
+
+# Run tests
 python tests/run_integration_tests.py
 ```
 
-Requires the DC data repo at `../datacommonsorg/data` (or `PROJECTS_DIR`) for the **import_validation** runner, and that `./setup.sh` and `./run_e2e_test.sh` have been run at least once (venv, JAR).
+#### Project Structure
+
+```
+dc-import-validator/
+├── sample_data/           # Built-in test datasets
+├── scripts/               # Core validation logic
+│   ├── validate_csv_quality.py
+│   ├── validate_config_template.py
+│   └── ...
+├── ui/                    # Web interface (FastAPI)
+├── validation_configs/    # Rule definitions
+├── output/                # Validation results
+├── docs/                  # Documentation
+└── .github/workflows/     # CI/CD
+```
+
+#### Logging
+
+- **Local:** `logs/dc_import_validator.log` (rotating, 30 days)
+- **Cloud Run:** stdout (captured by Cloud Logging)
+- **CLI:** Console with `[session=<id>]` prefixes for correlation
+
+Set `LOG_LEVEL=DEBUG` for verbose output.
+
+### ❓ FAQ
+
+**Q: Do I need a Gemini API key?**  
+A: Only for AI-powered schema review. The validator works without it (skips the Gemini step).
+
+**Q: What Java version do I need?**  
+A: Java 11+ (17 recommended). Docker image includes Java 17.
+
+**Q: Can I run this in CI/CD?**  
+A: Absolutely! Use the CLI (`./run_e2e_test.sh`) in your pipelines. Exit codes indicate pass/fail.
+
+**Q: How do I add new validation rules?**  
+A: Edit `validation_configs/new_import_config.json` and implement the validator in `scripts/`.
+
+**Q: What's the difference between BLOCKER and WARNING?**  
+A: Blockers (errors) stop the pipeline with exit code 1. Warnings are informational only.
+
+**Q: Can I customize the HTML report?**  
+A: Yes! The report template is in `ui/templates/validation_report.html`.
+
+### 📚 Additional Resources
+
+- [Data Commons Import Documentation](https://github.com/datacommonsorg/data)
+- [Import Validation Tool](https://github.com/datacommonsorg/import)
+- [Gemini API Documentation](https://ai.google.dev/docs)
+
+### 📄 License
+
+Apache 2.0
+
+Built for the Data Commons community — contributions welcome! 🎉
+
