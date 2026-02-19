@@ -1,0 +1,70 @@
+# Deploy DC Import Validator to Cloud Run on push to main.
+# Uses Artifact Registry for the image. Deploys to your existing Cloud Run service.
+#
+# Required GitHub secrets:
+#   GCP_PROJECT_ID    - GCP project ID (e.g. cloudsufi-ai)
+#   GCP_SA_KEY        - Service account key JSON (with AR push + Cloud Run deploy roles)
+# Optional (defaults shown):
+#   GCP_REGION        - Cloud Run region (default: us-central1)
+#   CLOUD_RUN_SERVICE - Service name (default: dc-import-validator)
+#   AR_LOCATION       - Artifact Registry location (default: same as GCP_REGION). Use "us" if your AR repo is multi-region.
+#   AR_REPOSITORY     - Artifact Registry repo name (default: dc-import-validator)
+
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual run from Actions tab
+
+env:
+  IMAGE_NAME: dc-import-validator
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          AR_LOC="${{ secrets.AR_LOCATION || secrets.GCP_REGION || 'us-central1' }}"
+          gcloud auth configure-docker ${AR_LOC}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        id: build
+        run: |
+          AR_LOC="${{ secrets.AR_LOCATION || secrets.GCP_REGION || 'us-central1' }}"
+          PROJECT="${{ secrets.GCP_PROJECT_ID }}"
+          REPO="${{ secrets.AR_REPOSITORY || 'dc-import-validator' }}"
+          IMAGE="${AR_LOC}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE_NAME}:${GITHUB_SHA::7}"
+          docker build --platform linux/amd64 -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Cloud Run
+        run: |
+          REGION="${{ secrets.GCP_REGION || 'us-central1' }}"
+          SERVICE="${{ secrets.CLOUD_RUN_SERVICE || 'dc-import-validator' }}"
+          IMAGE="${{ steps.build.outputs.image }}"
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --quiet
