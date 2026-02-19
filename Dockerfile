@@ -38,8 +38,9 @@ COPY . /app/dc-import-validator
 
 WORKDIR /app/dc-import-validator
 
-# Python deps (covers import_validation + UI)
-RUN pip install --no-cache-dir -r requirements.txt -r ui/requirements.txt
+# Upgrade pip/wheel to reduce Python-related CVEs; then install app deps (import_validation + UI)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt -r ui/requirements.txt
 
 # dc-import JAR (same version as setup.sh)
 ARG IMPORT_RELEASE_VERSION=v0.3.0
