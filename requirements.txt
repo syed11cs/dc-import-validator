@@ -1,0 +1,12 @@
+# Minimal requirements for running import_validation
+# (from datacommonsorg/data/tools/import_validation)
+absl-py
+pandas
+duckdb
+omegaconf
+
+# Optional: for Gemini Review (scripts/llm_schema_review.py)
+google-genai
+
+# Optional: for storing reports in GCS (set GCS_REPORTS_BUCKET to enable)
+google-cloud-storage

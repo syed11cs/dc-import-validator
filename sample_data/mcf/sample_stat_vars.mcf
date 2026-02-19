@@ -1,0 +1,29 @@
+# Sample stat_vars MCF for testing stat_vars MCF validation (name/description/alternateName).
+# Use with Custom mode: upload this as "Stat vars MCF" alongside a TMCF and CSV.
+# - Node 1: has name only → expect warnings: missing description, missing alternateName
+# - Node 2: has name + description only → expect warning: missing alternateName
+# - Node 3: has name + description + alternateName → no warnings
+
+Node: dcid:SampleStatVar_Count
+typeOf: dcs:StatisticalVariable
+populationType: schema:Person
+measuredProperty: dcid:count
+statType: dcs:measuredValue
+name: "Count of persons"
+
+Node: dcid:SampleStatVar_Birth
+typeOf: dcs:StatisticalVariable
+populationType: schema:Person
+measuredProperty: dcid:birthEvent
+statType: dcs:measuredValue
+name: "Live births"
+description: "Number of live birth events in the given place and period."
+
+Node: dcid:SampleStatVar_Complete
+typeOf: dcs:StatisticalVariable
+populationType: schema:Person
+measuredProperty: dcid:count
+statType: dcs:measuredValue
+name: "Example complete StatVar"
+description: "This node has name, description, and alternateName for testing."
+alternateName: "Complete Example"

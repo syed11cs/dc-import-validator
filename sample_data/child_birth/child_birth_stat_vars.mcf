@@ -1,0 +1,14 @@
+Node: dcid:Count_BirthEvent_LiveBirth
+name: "Live Birth Count"
+description: "Count of live birth events."
+alternateName: "Live Births"
+
+Node: dcid:Count_Death
+name: "Death Count"
+description: "Count of deaths."
+alternateName: "Deaths"
+
+Node: dcid:Count_Death_Upto1Years
+name: "Death Count Up to 1 Year"
+description: "Count of deaths within the first year of life."
+alternateName: "Infant Deaths"

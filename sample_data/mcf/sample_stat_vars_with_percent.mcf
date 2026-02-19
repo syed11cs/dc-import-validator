@@ -1,0 +1,20 @@
+# Sample stat_vars MCF with a percent StatVar for testing percent/rate denominator check.
+# Percent_Unemployed_Person has unit Percent but NO measurementDenominator -> expect warning.
+
+Node: dcid:Count_Person
+typeOf: dcs:StatisticalVariable
+populationType: schema:Person
+measuredProperty: dcid:count
+statType: dcs:measuredValue
+name: "Count of persons"
+description: "Total count."
+
+Node: dcid:Percent_Unemployed_Person
+typeOf: dcs:StatisticalVariable
+populationType: schema:Person
+measuredProperty: dcid:unemploymentRate
+statType: dcs:measuredValue
+unit: dcs:Percent
+name: "Percent unemployed"
+description: "Percentage of unemployed persons."
+# Missing: measurementDenominator (e.g. dcs:Count_Person)

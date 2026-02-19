@@ -1,0 +1,3559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DC Import Validator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #0c0c0f;
+      --surface: #16161a;
+      --surface-elevated: #1c1c22;
+      --border: #2a2a32;
+      --border-focus: #3f3f4a;
+      --text: #f0f0f2;
+      --text-muted: #8b8b96;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-glow: rgba(99, 102, 241, 0.25);
+      --success: #10b981;
+      --success-muted: #059669;
+      --fail: #f43f5e;
+      --warn: #f59e0b;
+      --radius-sm: 6px;
+      --radius: 10px;
+      --radius-lg: 14px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+      --shadow: 0 4px 12px rgba(0,0,0,0.25);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,0.35);
+      --transition: 0.2s ease;
+    }
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+    body {
+      font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(360px, 360px) 1fr;
+      grid-template-rows: 1fr;
+      height: 100vh;
+      min-height: 0;
+    }
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      min-height: 0;
+      overflow: hidden;
+    }
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      padding: 28px 24px 20px;
+    }
+    .sidebar-footer {
+      flex-shrink: 0;
+      padding: 0 24px 28px;
+      padding-top: 0;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+    }
+    .sidebar-footer .run-action { margin-bottom: 0; }
+    .sidebar-footer .form-group { margin-top: 14px; margin-bottom: 0; }
+    .sidebar h1.app-title-home {
+      cursor: pointer;
+      user-select: none;
+    }
+    .sidebar h1.app-title-home:hover {
+      opacity: 0.85;
+    }
+    .sidebar h1 {
+      font-size: 1.125rem;
+      font-weight: 700;
+      margin: 0 0 28px 0;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .form-group { margin-bottom: 22px; }
+    .form-group label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    select {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    select:hover, select:focus {
+      border-color: var(--border-focus);
+      outline: none;
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    select:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn {
+      width: 100%;
+      padding: 14px 18px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      color: white;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+    }
+    #run-btn {
+      padding: 14px 18px;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm), 0 0 0 1px rgba(255,255,255,0.06) inset;
+    }
+    #run-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+      box-shadow: 0 0 0 1px var(--accent), 0 6px 20px var(--accent-glow), 0 0 0 1px rgba(255,255,255,0.08) inset;
+      transform: translateY(-1px);
+    }
+    #run-btn:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: var(--shadow-sm);
+    }
+    #run-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn.btn-stop { background: var(--fail); }
+    .btn.btn-stop:hover { background: #e11d48; }
+    #run-btn.btn-stop:hover:not(:disabled) { background: #e11d48; box-shadow: 0 0 0 1px var(--fail), 0 6px 20px rgba(244, 63, 94, 0.25); }
+    .main { padding: 28px 32px; overflow-y: auto; min-height: 0; }
+    .section { margin-bottom: 36px; }
+    .section h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+      margin: 0 0 14px 0;
+    }
+    .rules-list {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .rule-item {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      transition: background var(--transition);
+    }
+    .rule-item:last-child { border-bottom: none; }
+    .rule-item input[type="checkbox"] {
+      margin-top: 3px;
+      cursor: pointer;
+      flex-shrink: 0;
+      min-width: 18px;
+      min-height: 18px;
+      accent-color: var(--accent);
+    }
+    .rule-item label { cursor: pointer; flex: 1; }
+    .rule-item:has(.rule-checkbox:checked) { background: rgba(99,102,241,0.08); }
+    .rule-item:has(.rule-checkbox:not(:checked)) { opacity: 0.72; }
+    .rule-result-icon {
+      margin-left: 8px;
+      font-size: 0.85rem; /* Smaller font for text */
+      flex-shrink: 0;
+      cursor: default;
+      padding: 4px 8px; /* Smaller padding for text */
+      margin: 0;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: unset;
+      min-height: unset;
+    }
+    .rule-result-icon.passed { color: var(--success); }
+    .rule-result-icon.failed { color: var(--fail); }
+    .rule-result-icon.warning { color: var(--warn); }
+    .rule-result-icon.skipped { color: var(--text-muted); opacity: 0.6; }
+    .rule-result-icon .rule-result-hint { font-size: 0.7rem; color: var(--text-muted); display: block; margin-top: 2px; }
+    .rule-result-icon.has-hint { flex-direction: column; align-items: flex-end; text-align: right; }
+    .rules-section-locked .rule-item { opacity: 0.6; pointer-events: none; }
+    .rule-id { font-weight: 500; }
+    .rule-desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
+    .rules-actions { margin-bottom: 8px; }
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      cursor: pointer;
+      padding: 0;
+      font-family: inherit;
+    }
+    .btn-link:hover { color: var(--text); }
+    .preset-dropdown { position: relative; flex: 1; min-width: 120px; }
+    .preset-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color var(--transition);
+    }
+    .preset-trigger:hover { border-color: var(--border-focus); }
+    .preset-trigger .chevron { font-size: 0.65rem; color: var(--text-muted); }
+    .preset-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      margin-top: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 100;
+    }
+    .preset-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      color: var(--text);
+      font-family: inherit;
+      text-align: left;
+    }
+    .preset-option:hover { background: var(--border); }
+    .preset-option.selected { background: rgba(99,102,241,0.15); color: var(--accent); }
+    .preset-option-custom .preset-delete {
+      flex-shrink: 0;
+      padding: 4px;
+      margin-left: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      border-radius: 4px;
+      opacity: 0.6;
+    }
+    .preset-option-custom .preset-delete:hover {
+      color: var(--fail);
+      opacity: 1;
+      background: rgba(239,68,68,0.15);
+    }
+    .preset-option-custom .preset-delete svg { display: block; }
+    .rules-actions button, .btn-sm {
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      margin-right: 8px;
+    }
+    .rules-actions button:hover, .btn-sm:hover { color: var(--text); }
+    .output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .output-header .tabs { margin-bottom: 0; }
+    .output-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .tab-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .output-actions .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      width: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      text-decoration: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .output-actions .btn-sm:not(:disabled) {
+      color: var(--text);
+    }
+    .output-actions .btn-sm:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+    .output-actions .btn-sm:disabled {
+      cursor: not-allowed;
+    }
+    .output-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      font-size: 0.8125rem;
+      white-space: pre-wrap;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: var(--shadow-sm);
+    }
+    .output-box.expanded { max-height: 70vh; }
+    .output-box.empty { color: var(--text-muted); }
+    .output-box .log-placeholder-intro { margin: 0 0 10px 0; font-weight: 500; color: var(--text-muted); }
+    .output-box .log-placeholder-list { margin: 0; padding-left: 20px; color: var(--text-muted); line-height: 1.7; }
+    .output-box .log-placeholder-list li { margin-bottom: 4px; }
+    .output-box .line-error { color: var(--fail); }
+    .output-box .line-warn { color: var(--warn); }
+    .output-box .line-info { color: var(--text); }
+    .output-box span.log-section-divider { display: block; color: var(--text-muted) !important; font-size: 0.8rem; margin: 10px 0 4px 0; letter-spacing: 0.02em; }
+    .output-box .line-running { color: var(--text); font-weight: 500; }
+    .log-completed-at {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+    .log-filter-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .log-search-input {
+      flex: 1;
+      min-width: 120px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: inherit;
+    }
+    .log-search-input::placeholder { color: var(--text-muted); }
+    .log-search-input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 1px var(--border-focus); }
+    .log-search-count { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
+    .log-search-count.empty { visibility: hidden; }
+    .output-box .log-search-hit { background: rgba(99, 102, 241, 0.35); color: inherit; border-radius: 2px; padding: 0 1px; }
+    .follow-log-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-muted); cursor: pointer; }
+    .follow-log-wrap input { accent-color: var(--accent); cursor: pointer; }
+    .btn-icon { display: inline-flex; align-items: center; margin-right: 4px; vertical-align: middle; }
+    .btn-icon svg { display: block; }
+    .progress-steps-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .progress-step-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background: var(--border);
+      color: var(--text-muted);
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+    .progress-step-pill.active {
+      background: var(--accent);
+      color: white;
+      animation: progress-pill-pulse 2s ease-in-out infinite;
+    }
+    .progress-step-pill.done {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+    .progress-step-pill.done::before {
+      content: '✓ ';
+      font-weight: 700;
+    }
+    .progress-step-pill.failed {
+      background: rgba(244, 63, 94, 0.2);
+      color: var(--fail);
+      box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.35);
+    }
+    .progress-step-pill.failed::before {
+      content: '✖ ';
+      font-weight: 700;
+    }
+    .progress-step-pill.skipped {
+      background: var(--border);
+      color: var(--text-muted);
+    }
+    .progress-step-pill.skipped::before {
+      content: '— ';
+      font-weight: 500;
+    }
+    .progress-step-sep {
+      width: 16px;
+      height: 1px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+    @keyframes progress-pill-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
+    }
+    .progress-container {
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+    .progress-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .progress-bar-wrap .progress-bar {
+      flex: 1;
+    }
+    .progress-pct {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--accent);
+      min-width: 36px;
+      text-align: right;
+    }
+    .progress-container.cancelling .progress-pct { color: var(--fail); }
+    .progress-container.complete .progress-pct { color: var(--success); }
+    .progress-container.complete.fail .progress-pct { color: var(--fail); }
+    .progress-container.complete .progress-bar .progress-fill {
+      background: linear-gradient(90deg, var(--success), rgba(16, 185, 129, 0.9));
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+    }
+    .progress-container.complete.fail .progress-bar .progress-fill {
+      background: linear-gradient(90deg, var(--fail), rgba(244, 63, 94, 0.9));
+      box-shadow: 0 0 10px rgba(244, 63, 94, 0.3);
+    }
+    .progress-container.complete .progress-bar .progress-fill::after {
+      animation: none;
+    }
+    .progress-bar {
+      height: 12px;
+      background: var(--surface-elevated);
+      overflow: hidden;
+      border-radius: 999px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+    .progress-bar .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent) 0%, rgba(99, 102, 241, 0.95) 50%, rgba(99, 102, 241, 0.85) 100%);
+      border-radius: 999px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 0 12px var(--accent-glow), 0 0 4px rgba(99, 102, 241, 0.3);
+    }
+    .progress-bar .progress-fill:not(.indeterminate) {
+      transition: width 0.35s ease-out;
+    }
+    .progress-bar .progress-fill::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.15) 50%,
+        transparent 100%
+      );
+      background-size: 40% 100%;
+      animation: progress-shimmer 1.5s ease-in-out infinite;
+    }
+    .progress-bar .progress-fill.indeterminate {
+      width: 40%;
+      animation: progress-indeterminate 1.8s ease-in-out infinite;
+    }
+    .progress-bar .progress-fill.indeterminate::after {
+      animation: none;
+    }
+    @keyframes progress-shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(200%); }
+    }
+    @keyframes progress-indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    .progress-container.cancelling {
+      border: 2px solid var(--fail);
+      background: rgba(239, 68, 68, 0.18);
+      animation: progress-cancel-pulse 0.6s ease-in-out;
+    }
+    .progress-container.cancelling .progress-cancel-msg {
+      display: block;
+    }
+    .progress-cancel-msg {
+      display: none;
+      font-size: 0.75rem;
+      color: var(--fail);
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    @keyframes progress-cancel-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .progress-container.complete {
+      animation: progress-complete-pulse 0.6s ease-out;
+    }
+    @keyframes progress-complete-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35); }
+      70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { box-shadow: none; }
+    }
+    .report-timestamp {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-right: 8px;
+    }
+    .report-run-id-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-right: 8px;
+    }
+    .report-run-id-label { font-size: 0.75rem; color: var(--text-muted); margin-right: 4px; }
+    .report-run-id-badge {
+      font-size: 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      color: var(--text-muted);
+      background: rgba(124, 92, 255, 0.08);
+      border: 1px solid rgba(124, 92, 255, 0.15);
+      border-radius: 999px;
+      padding: 2px 6px;
+      letter-spacing: 0.02em;
+    }
+    .review-insights {
+      margin-bottom: 16px;
+    }
+    .report-group { margin-bottom: 20px; }
+    .report-group-heading {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin: 0 0 8px 0;
+    }
+    .report-group-heading--success { color: rgba(16, 185, 129, 0.95); }
+    .report-group-heading--failure { color: rgba(244, 63, 94, 0.9); }
+    .report-group-heading--advisory { color: rgba(245, 158, 11, 0.95); }
+    .report-group-success { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+    .report-group-box {
+      padding: 14px 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      border-left-width: 3px;
+      border-left-style: solid;
+    }
+    .report-group-box--success { border-left-color: rgba(16, 185, 129, 0.45); }
+    .report-group-box--advisory { border-left-color: rgba(245, 158, 11, 0.5); }
+    .report-group-box--blocking { border-left-color: rgba(244, 63, 94, 0.5); }
+    .report-group-box--muted { border-left-color: rgba(113, 113, 122, 0.45); }
+    .report-group-box .report-group-inner-details {
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: none;
+      box-shadow: none;
+    }
+    .report-group-box .report-group-inner-details summary {
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .report-group-box .report-group-inner-details .fluctuation-samples-content,
+    .report-group-box .report-group-inner-details #llm-report-section { margin-top: 10px; }
+    .review-insights-meta {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+    .report-running-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 24px;
+      min-height: 140px;
+      text-align: center;
+    }
+    .report-running-state .report-running-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: report-running-spin 0.75s linear infinite;
+      margin-bottom: 16px;
+    }
+    .report-running-state .report-running-title {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .report-running-state .report-running-sub {
+      margin: 6px 0 0;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    @keyframes report-running-spin {
+      to { transform: rotate(360deg); }
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .status-badge.pass { background: rgba(16,185,129,0.2); color: var(--success); }
+    .status-badge.fail { background: rgba(244,63,94,0.2); color: var(--fail); }
+    .status-badge.running { background: rgba(99,102,241,0.2); color: var(--accent); }
+    .status-banner {
+      padding: 14px 20px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .status-banner.pass { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); color: var(--success); }
+    .status-banner.fail {
+      background: rgba(244,63,94,0.15);
+      border: 2px solid rgba(244,63,94,0.45);
+      color: var(--fail);
+      padding: 16px 24px;
+      box-shadow: 0 0 0 1px rgba(244,63,94,0.2);
+    }
+    .status-banner.warnings { background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); color: var(--warn); }
+    .status-banner.cancelled { background: rgba(113,113,122,0.2); border: 1px solid var(--border); color: var(--text-muted); }
+    .summary-card {
+      display: none;
+      margin-bottom: 16px;
+      padding: 20px 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      font-size: 0.9375rem;
+      box-shadow: var(--shadow);
+    }
+    .summary-card.visible { display: block; }
+    .summary-card, #output, .review-insights, .rules-list {
+      transition: opacity 0.2s ease;
+    }
+    .summary-card.clear-fade-out,
+    #output.clear-fade-out,
+    .review-insights.clear-fade-out,
+    .rules-list.clear-fade-out { opacity: 0; }
+    .summary-card.outcome-pass { border-color: rgba(16,185,129,0.4); }
+    .summary-card.outcome-warnings { border-color: rgba(245,158,11,0.4); }
+    .summary-card.outcome-fail { border-color: rgba(244,63,94,0.4); }
+    .summary-card-outcome { font-weight: 700; margin-bottom: 4px; }
+    .summary-card-rules { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; margin-bottom: 6px; }
+    .summary-card-details { margin-top: 10px; font-size: 0.85rem; }
+    .summary-card-details-summary { cursor: pointer; list-style: none; text-decoration: none; }
+    .summary-card-details-summary::-webkit-details-marker { display: none; }
+    .summary-card-details-summary::marker { content: none; }
+    .summary-card-details-summary::after { content: ' ▾'; font-size: 0.9em; }
+    .summary-card-details[open] .summary-card-details-summary::after { content: ' ▴'; }
+    .summary-card.outcome-pass .summary-card-details-summary { color: rgba(16, 185, 129, 0.95); }
+    .summary-card.outcome-pass .summary-card-details-summary:hover { color: rgba(16, 185, 129, 1); text-decoration: underline; }
+    .summary-card.outcome-warnings .summary-card-details-summary { color: rgba(245, 158, 11, 0.95); }
+    .summary-card.outcome-warnings .summary-card-details-summary:hover { color: rgba(245, 158, 11, 1); text-decoration: underline; }
+    .summary-card.outcome-fail .summary-card-details-summary { color: rgba(244, 63, 94, 0.9); }
+    .summary-card.outcome-fail .summary-card-details-summary:hover { color: rgba(244, 63, 94, 1); text-decoration: underline; }
+    .summary-card-rules .summary-fail { color: var(--fail); font-weight: 600; }
+    .summary-card-rules .summary-warn { color: var(--warn); }
+    .summary-card-rules .summary-pass { color: var(--success); }
+    .summary-card-meta { font-size: 0.8rem; color: var(--text-muted); opacity: 0.85; font-weight: 400; }
+    .summary-card-gemini-hint { font-size: 0.8rem; color: rgba(180, 140, 0, 0.95); margin-top: 6px; font-weight: 400; }
+    .summary-card .warning-details-list { margin-top: 8px; padding-left: 18px; font-size: 0.85rem; list-style: disc; color: var(--text-muted); }
+    .ai-review-section {
+      margin-top: 14px;
+      padding: 16px 18px;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      background: var(--bg);
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    .ai-review-section.is-active {
+      border-color: rgba(16,185,129,0.4);
+      box-shadow: 0 0 0 1px rgba(16,185,129,0.1);
+    }
+    #ai-review-section .ai-review-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0;
+    }
+    #ai-review-section .ai-review-row .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .ai-review-toggle {
+      flex-shrink: 0;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      border-radius: 12px;
+      background: var(--border);
+      transition: background 0.2s ease;
+      position: relative;
+    }
+    .ai-review-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    #ai-review-section .ai-review-row input:checked ~ .ai-review-toggle {
+      background: var(--success);
+    }
+    #ai-review-section .ai-review-row input:checked ~ .ai-review-toggle::after {
+      transform: translateX(20px);
+    }
+    #ai-review-section .ai-review-row input:focus-visible ~ .ai-review-toggle {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .ai-review-badge {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    #llm-report-section { margin-top: 12px; margin-bottom: 16px; }
+    #llm-report-section h3 { font-size: 0.95rem; margin: 0 0 10px 0; color: var(--text); }
+    .llm-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 8px; }
+    .llm-report-table th, .llm-report-table td { padding: 8px 10px; text-align: left; border: 1px solid var(--border); }
+    .llm-report-table th { background: var(--bg-elevated); font-weight: 600; color: var(--text-muted); }
+    .llm-report-table .severity-blocker { color: var(--fail); font-weight: 500; }
+    .llm-report-table .severity-warning { color: var(--warn); font-weight: 500; }
+    .llm-report-passed { padding: 12px 16px; background: rgba(30,158,74,0.08); border: 1px solid rgba(30,158,74,0.22); border-radius: 8px; color: var(--text-muted); font-size: 0.875rem; }
+    .llm-report-empty { color: var(--text-muted); font-size: 0.85rem; }
+    .rules-summary {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .rules-summary .count { font-weight: 600; color: var(--text); }
+    .fluctuation-samples-details {
+      margin-bottom: 12px;
+      padding: 14px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: box-shadow 0.2s ease;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    .fluctuation-samples-details:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    /* Severity accent is on the outer .report-group-box only; no duplicate border on inner details */
+    .fluctuation-samples-details summary {
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .fluctuation-samples-content {
+      margin-top: 12px;
+      font-size: 0.8rem;
+    }
+    .fluctuation-no-anomalies {
+      padding: 12px 14px;
+      background: rgba(30, 158, 74, 0.12);
+      border: 1px solid rgba(30, 158, 74, 0.35);
+      border-radius: 8px;
+      color: var(--success-muted);
+      font-size: 0.85rem;
+    }
+    .fluctuation-sample-card {
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .fluctuation-sample-card:last-child { margin-bottom: 0; }
+    .fluctuation-sample-card .card-row { margin-top: 6px; color: var(--text); }
+    .fluctuation-sample-card .card-row:first-child { margin-top: 0; }
+    .fluctuation-sample-card .stat-var { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+    .fluctuation-sample-card .location { color: var(--text); }
+    .fluctuation-sample-card .period, .fluctuation-sample-card .values { font-family: monospace; color: var(--text); }
+    .fluctuation-sample-card .change-pct {
+      font-weight: 700;
+      color: var(--warn);
+      font-size: 0.9rem;
+    }
+    .fluctuation-sample-card .source-rows { margin-top: 4px; font-size: 0.75rem; color: var(--text); }
+    .fluctuation-sample-card .copy-justification-btn {
+      margin-top: 10px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .fluctuation-sample-card .copy-justification-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .rule-failure-card {
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .rule-failure-card:last-child { margin-bottom: 0; }
+    .rule-failure-card .card-row { margin-top: 6px; color: var(--text); }
+    .rule-failure-card .card-row:first-child { margin-top: 0; }
+    .rule-failure-card .stat-var { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+    .rule-failure-card .rule-name { color: var(--fail); font-weight: 500; }
+    .rule-failure-card .copy-summary-btn {
+      margin-top: 10px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .rule-failure-card .copy-summary-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .tabs { display: flex; gap: 6px; }
+    .tab {
+      padding: 10px 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color var(--transition), background var(--transition), border-color var(--transition);
+    }
+    .tab:hover { color: var(--text); background: var(--surface-elevated); }
+    .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .dataset-dropdown { position: relative; }
+    .dataset-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    .dataset-trigger:hover:not(:disabled) { border-color: var(--border-focus); box-shadow: var(--shadow-sm); }
+    .dataset-trigger:disabled { opacity: 0.6; cursor: not-allowed; }
+    .dataset-trigger .dataset-trigger-label { flex: 1; min-width: 0; white-space: normal; word-break: break-word; }
+    .dataset-trigger .dataset-chevron { flex-shrink: 0; font-size: 0.65rem; color: var(--text-muted); transition: transform var(--transition); }
+    .dataset-dropdown.open .dataset-chevron { transform: rotate(180deg); }
+    .dataset-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      margin-top: 8px;
+      padding: 6px 0;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      max-height: 280px;
+      overflow-y: auto;
+      z-index: 100;
+      display: none;
+    }
+    .dataset-menu.open { display: block; }
+    .dataset-option {
+      display: block;
+      width: 100%;
+      padding: 12px 16px;
+      font-size: 0.875rem;
+      line-height: 1.4;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text);
+      font-family: inherit;
+      text-align: left;
+      white-space: normal;
+      word-break: break-word;
+      transition: background var(--transition);
+    }
+    .dataset-option:hover { background: var(--border); }
+    .dataset-option[aria-selected="true"] { background: var(--border-focus); }
+    .dataset-option.selected {
+      background: rgba(99,102,241,0.12);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .dataset-desc { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
+    .dataset-desc.has-fail { font-weight: 500; color: var(--text); }
+    .dataset-desc.has-fail::before { content: ''; display: inline-block; width: 6px; height: 6px; background: var(--fail); border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+    .custom-upload { margin-top: 16px; }
+    .custom-upload label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    .custom-upload-optional { margin-top: 12px; }
+    .custom-upload-optional-summary {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .custom-upload-optional-summary::-webkit-details-marker { display: none; }
+    .custom-upload-optional-summary::marker { display: none; }
+    .custom-upload-optional-summary::before { content: '▸ '; color: var(--text-muted); }
+    .custom-upload-optional[open] .custom-upload-optional-summary::before { content: '▾ '; }
+    .custom-upload-optional-summary:hover { color: var(--accent); }
+    .custom-upload-optional-fields { margin-top: 10px; padding-left: 0; }
+    .custom-upload-optional-fields > label { margin-top: 10px; }
+    .custom-upload-optional-fields > label:first-child { margin-top: 0; }
+    .required-asterisk { color: var(--fail); font-weight: 500; }
+    .file-input-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .file-input-row input[type="file"] {
+      position: absolute;
+      width: 0.1px;
+      height: 0.1px;
+      opacity: 0;
+      overflow: hidden;
+      z-index: -1;
+    }
+    .file-choose-btn {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .file-choose-btn:hover { color: var(--text); border-color: var(--accent); }
+    .file-choose-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .file-name { font-size: 0.8rem; color: var(--text-muted); }
+    .file-name.has-file { color: var(--text); }
+    .file-clear-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      margin-left: 6px;
+      font-size: 1rem;
+      line-height: 1;
+      background: none;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .file-clear-btn:hover { color: var(--text); background: rgba(239, 68, 68, 0.15); }
+    .file-clear-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .run-action {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      padding: 10px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.875rem;
+      color: var(--text);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 1000;
+    }
+    .toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-scroll">
+      <h1 id="app-title" class="app-title-home" title="Start fresh (reset to default)">DC Import Validator</h1>
+      <div class="form-group dataset-select-wrap" style="overflow: visible;">
+        <label>Dataset</label>
+        <div class="dataset-dropdown" id="dataset-dropdown">
+          <select id="dataset" aria-hidden="true" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+            <option value="">Select...</option>
+          </select>
+          <button type="button" id="dataset-trigger" class="dataset-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Select dataset">
+            <span class="dataset-trigger-label" id="dataset-trigger-label">Select...</span>
+            <span class="dataset-chevron">▾</span>
+          </button>
+          <div id="dataset-menu" class="dataset-menu" role="listbox" aria-label="Dataset options"></div>
+        </div>
+        <div id="dataset-desc" class="dataset-desc"></div>
+        <div id="custom-upload" class="custom-upload" style="display: none;">
+          <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
+          <div class="file-input-row">
+            <input type="file" id="tmcf-file" accept=".tmcf,.mcf" />
+            <button type="button" id="tmcf-choose-btn" class="file-choose-btn">Choose File</button>
+            <span id="tmcf-file-name" class="file-name">No file chosen</span>
+            <button type="button" id="tmcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+          </div>
+          <label>CSV file <span class="required-asterisk" aria-label="required">*</span></label>
+          <div class="file-input-row">
+            <input type="file" id="csv-file" accept=".csv" />
+            <button type="button" id="csv-choose-btn" class="file-choose-btn">Choose File</button>
+            <span id="csv-file-name" class="file-name">No file chosen</span>
+            <button type="button" id="csv-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+          </div>
+          <details class="custom-upload-optional" id="custom-upload-optional">
+            <summary class="custom-upload-optional-summary">Optional: Stat vars MCF files</summary>
+            <div class="custom-upload-optional-fields">
+              <label>Stat vars MCF</label>
+              <div class="file-input-row">
+                <input type="file" id="stat-vars-mcf-file" accept=".mcf" />
+                <button type="button" id="stat-vars-mcf-choose-btn" class="file-choose-btn">Choose File</button>
+                <span id="stat-vars-mcf-file-name" class="file-name">No file chosen</span>
+                <button type="button" id="stat-vars-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+              </div>
+              <label>Stat vars schema MCF</label>
+              <div class="file-input-row">
+                <input type="file" id="stat-vars-schema-mcf-file" accept=".mcf" />
+                <button type="button" id="stat-vars-schema-mcf-choose-btn" class="file-choose-btn">Choose File</button>
+                <span id="stat-vars-schema-mcf-file-name" class="file-name">No file chosen</span>
+                <button type="button" id="stat-vars-schema-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+              </div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">If provided, lint runs with these for schema conformance before genmcf.</div>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div id="ai-review-section" class="ai-review-section form-group">
+        <label class="ai-review-row" for="llm-review-checkbox">
+          <input type="checkbox" id="llm-review-checkbox" class="visually-hidden" checked />
+          <span class="ai-review-label-text">Gemini Review</span>
+          <span class="ai-review-toggle" aria-hidden="true"></span>
+        </label>
+        <div id="llm-model-row" style="display: none; margin-top: 10px; margin-left: 0; overflow: visible;">
+          <label style="font-size: 0.7rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Model</label>
+          <select id="llm-model-select" style="width: 100%; min-width: 0; max-width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.8rem; box-sizing: border-box;">
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview (default)</option>
+            <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+          </select>
+        </div>
+        <div id="llm-ai-advisory-row" style="display: none; margin-top: 10px; margin-left: 0;">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text); cursor: pointer;">
+            <input type="checkbox" id="ai-advisory-checkbox" style="width: 16px; height: 16px; accent-color: var(--accent);" />
+            <span>Non-blocking Gemini Review</span>
+          </label>
+          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; margin-left: 24px;">Pipeline continues even when Gemini Review finds issues.</div>
+        </div>
+        <div id="llm-api-key-warning" style="display: none; margin-top: 6px; margin-left: 0; padding: 8px 10px; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius); font-size: 0.75rem; color: var(--warn);">
+          ⚠ GEMINI_API_KEY or GOOGLE_API_KEY not set. Gemini review will be skipped.
+        </div>
+      </div>
+      </div>
+      <div class="sidebar-footer">
+      <div class="run-action" style="padding-top: 20px;">
+        <button id="run-btn" class="btn" disabled>Run</button>
+        <div id="esc-hint" class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px; display: none;">
+          Press Esc to stop
+        </div>
+      </div>
+      <div class="form-group" style="margin-top: 14px;">
+        <span id="status" class="status-badge">—</span>
+      </div>
+      </div>
+    </aside>
+    <main class="main">
+      <div id="rules-section" class="section">
+        <h2>Validation rules</h2>
+        <div id="rules-preset-row" style="display: none; margin-bottom: 8px;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Preset</label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px;">
+            <div class="preset-dropdown">
+              <input type="hidden" id="rules-preset" value="all">
+              <button type="button" class="preset-trigger" id="preset-trigger">
+                <span class="preset-trigger-label">All rules</span>
+                <span class="chevron">▾</span>
+              </button>
+              <div class="preset-menu" id="preset-menu" style="display: none;"></div>
+            </div>
+            <button type="button" id="save-preset-btn" class="btn-sm" style="padding: 4px 10px;">Save as preset</button>
+            <button type="button" id="clear-presets-btn" class="btn-sm" style="padding: 4px 10px;">Clear all</button>
+          </div>
+        </div>
+        <div id="rules-actions" class="rules-actions" style="display: none;">
+          <button type="button" id="select-all-rules">Select all</button>
+          <button type="button" id="deselect-all-rules">Clear selection</button>
+        </div>
+        <div id="rules-summary" class="rules-summary" style="display: none;"></div>
+        <div id="rules" class="rules-list">
+          <div class="rule-item" style="color: var(--text-muted);">Select a dataset to view rules</div>
+        </div>
+      </div>
+      <div id="results-section" class="section">
+        <h2>Execution</h2>
+        <div id="status-banner" class="status-banner" style="display: none;"></div>
+        <div id="progress-container" class="progress-container" style="display: none; margin-bottom: 12px;">
+          <div id="progress-steps-row" class="progress-steps-row">
+            <span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span>
+            <span class="progress-step-sep" aria-hidden="true"></span>
+            <span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span>
+            <span class="progress-step-sep" aria-hidden="true"></span>
+            <span id="progress-pill-3" class="progress-step-pill">3. Results</span>
+          </div>
+          <div class="progress-bar-wrap">
+            <div id="progress-bar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="progress-fill" class="progress-fill indeterminate"></div>
+            </div>
+            <span id="progress-pct" class="progress-pct" aria-live="polite">0%</span>
+          </div>
+          <div id="progress-cancel-msg" class="progress-cancel-msg">Stopping…</div>
+        </div>
+        <div id="summary-card" class="summary-card" aria-live="polite">
+          <div id="summary-card-content"></div>
+        </div>
+        <div class="output-header">
+          <div class="tabs">
+            <button class="tab active" data-tab="log">Log</button>
+            <button class="tab" data-tab="report">Report</button>
+          </div>
+          <div class="output-actions">
+            <div id="log-actions" class="tab-actions">
+              <button id="copy-log-btn" class="btn btn-sm" disabled title="Copy log to clipboard">Copy</button>
+              <button id="expand-log-btn" class="btn btn-sm" title="Expand log">Expand</button>
+              <button id="clear-log-btn" class="btn btn-sm" disabled title="Clear log output">Clear</button>
+            </div>
+            <div id="report-actions" class="tab-actions" style="display: none;">
+              <span id="report-timestamp" class="report-timestamp"></span>
+              <span id="report-run-id-wrap" class="report-run-id-wrap" style="display: none;"><span class="report-run-id-label">Run ID:</span><span id="report-run-id" class="report-run-id-badge"></span></span>
+              <a id="open-report-link" class="btn btn-sm" href="#" target="_blank" rel="noopener">Open Report ↗</a>
+              <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download</button>
+            </div>
+          </div>
+        </div>
+        <div id="log-panel" class="panel active">
+          <div id="log-filter-bar" class="log-filter-bar" style="display: none;">
+            <label class="follow-log-wrap"><input type="checkbox" id="follow-log-checkbox" checked> Follow log</label>
+            <input type="text" id="log-search" class="log-search-input" placeholder="Search in log…" aria-label="Search in log" />
+            <span id="log-search-count" class="log-search-count empty" aria-live="polite"></span>
+          </div>
+          <div id="output" class="output-box empty"><p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul></div>
+          <div id="log-completed-at" class="log-completed-at" style="display: none;"></div>
+        </div>
+        <div id="report-panel" class="panel">
+          <div class="review-insights">
+            <div class="report-group">
+              <h4 id="report-heading-ai" class="report-group-heading">AI Review (Gemini)</h4>
+              <div id="llm-report-container"></div>
+            </div>
+            <div class="report-group">
+              <h4 id="report-heading-validation" class="report-group-heading">Automated Validation (Blocking)</h4>
+              <div id="rule-failure-container"></div>
+            </div>
+            <div class="report-group">
+              <h4 id="report-heading-statistical" class="report-group-heading">Statistical Anomalies (Advisory)</h4>
+              <div id="fluctuation-samples-container"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <div id="toast" class="toast" aria-live="polite"></div>
+  </div>
+
+  <script>
+    const API = '';
+    let currentDataset = '';
+    let runAbortController = null;
+    let pendingHomeReset = false;
+    let progressHideDeferred = false;
+    let cancelFeedbackTimerId = null;
+    let lastRunDataset = null;
+    let currentRuleIds = [];
+    let customTmcfFile = null;
+    let customCsvFile = null;
+    let customStatVarsMcfFile = null;
+    let customStatVarsSchemaMcfFile = null;
+
+    const PRESET_QUICK = ['check_min_value', 'check_num_observations'];
+    let lastLogText = '';
+    let lastRunCompletedAt = null;
+    const STORAGE_KEY_PRESETS = 'import_validation_presets';
+    const LAST_OUTCOME_KEY = 'import_validation_last_outcome_';
+    const LAST_DATASET_KEY = 'import_validation_last_dataset';
+    let lastWarnCount = 0;
+    let lastRunDurationSec = null;
+    let lastRunReportGenerated = false;
+    let lastRunHadAiReview = false;
+    /** When set, report was uploaded to GCS; use /report/{dataset}/{run_id} so any instance can serve it. */
+    let lastRunReportId = null;
+
+    const LOG_PLACEHOLDER_HTML = '<p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul>';
+
+    // ═══════════════════════════════════════════════════════════════
+    // Dataset / UI
+    // ═══════════════════════════════════════════════════════════════
+    async function fetchDatasets() {
+      const r = await fetch(API + '/api/datasets');
+      const data = await r.json();
+      const sel = document.getElementById('dataset');
+      const trigger = document.getElementById('dataset-trigger');
+      const triggerLabel = document.getElementById('dataset-trigger-label');
+      const menu = document.getElementById('dataset-menu');
+      const sorted = [...(data.datasets || [])].sort((a, b) => {
+        if (a.id === 'custom') return -1;
+        if (b.id === 'custom') return 1;
+        return (a.label || '').localeCompare(b.label || '');
+      });
+      sel.innerHTML = '<option value="">Select...</option>';
+      menu.innerHTML = '';
+      let activeDatasetIndex = -1;
+      sorted.forEach((d, idx) => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = d.label;
+        opt.setAttribute('data-desc', d.description || '');
+        sel.appendChild(opt);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'dataset-option-' + idx;
+        btn.className = 'dataset-option';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('data-value', d.id);
+        btn.setAttribute('aria-selected', 'false');
+        btn.textContent = d.label;
+        btn.setAttribute('data-desc', d.description || '');
+        menu.appendChild(btn);
+      });
+      sel.addEventListener('change', onDatasetChange);
+      const dropdownEl = document.getElementById('dataset-dropdown');
+      function getDatasetOptions() { return menu.querySelectorAll('.dataset-option'); }
+      function setActiveOption(index) {
+        const options = getDatasetOptions();
+        const n = options.length;
+        if (n === 0) return;
+        activeDatasetIndex = Math.max(0, Math.min(index, n - 1));
+        options.forEach((o, i) => o.setAttribute('aria-selected', i === activeDatasetIndex ? 'true' : 'false'));
+        const active = options[activeDatasetIndex];
+        trigger.setAttribute('aria-activedescendant', active.id);
+        active.scrollIntoView({ block: 'nearest' });
+      }
+      function selectActiveAndClose() {
+        const options = getDatasetOptions();
+        if (activeDatasetIndex >= 0 && options[activeDatasetIndex]) {
+          const btn = options[activeDatasetIndex];
+          sel.value = btn.getAttribute('data-value');
+          sel.dispatchEvent(new Event('change'));
+        }
+        menu.classList.remove('open');
+        dropdownEl.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.removeAttribute('aria-activedescendant');
+      }
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (trigger.disabled) return;
+        const open = menu.classList.toggle('open');
+        dropdownEl.classList.toggle('open', open);
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+          menu.scrollTop = 0;
+          const options = getDatasetOptions();
+          const currentVal = sel.value;
+          let idx = 0;
+          options.forEach((o, i) => { if (o.getAttribute('data-value') === currentVal) idx = i; });
+          setActiveOption(idx);
+        } else {
+          trigger.removeAttribute('aria-activedescendant');
+        }
+      });
+      trigger.addEventListener('keydown', (e) => {
+        if (!menu.classList.contains('open')) {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            trigger.click();
+          }
+          return;
+        }
+        const options = getDatasetOptions();
+        const n = options.length;
+        if (n === 0) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setActiveOption(activeDatasetIndex + 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setActiveOption(activeDatasetIndex - 1);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          setActiveOption(0);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          setActiveOption(n - 1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          selectActiveAndClose();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          menu.classList.remove('open');
+          dropdownEl.classList.remove('open');
+          trigger.setAttribute('aria-expanded', 'false');
+          trigger.removeAttribute('aria-activedescendant');
+        }
+      });
+      menu.querySelectorAll('.dataset-option').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const value = btn.getAttribute('data-value');
+          sel.value = value;
+          sel.dispatchEvent(new Event('change'));
+          menu.classList.remove('open');
+          dropdownEl.classList.remove('open');
+          trigger.setAttribute('aria-expanded', 'false');
+        });
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdownEl.contains(e.target)) {
+          menu.classList.remove('open');
+          dropdownEl.classList.remove('open');
+          trigger.setAttribute('aria-expanded', 'false');
+          trigger.removeAttribute('aria-activedescendant');
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu.classList.contains('open')) {
+          menu.classList.remove('open');
+          dropdownEl.classList.remove('open');
+          trigger.setAttribute('aria-expanded', 'false');
+          trigger.removeAttribute('aria-activedescendant');
+        }
+      });
+      const stored = localStorage.getItem(LAST_DATASET_KEY);
+      if (stored && sorted.some(d => d.id === stored)) {
+        sel.value = stored;
+        sel.dispatchEvent(new Event('change'));
+      }
+    }
+
+    function onDatasetChange() {
+      if (runAbortController) {
+        runAbortController.abort();
+      }
+      const sel = document.getElementById('dataset');
+      currentDataset = sel.value;
+      if (currentDataset) localStorage.setItem(LAST_DATASET_KEY, currentDataset);
+      const customUpload = document.getElementById('custom-upload');
+      customUpload.style.display = currentDataset === 'custom' ? 'block' : 'none';
+      if (currentDataset === 'custom') {
+        customTmcfFile = null;
+        customCsvFile = null;
+        customStatVarsMcfFile = null;
+        customStatVarsSchemaMcfFile = null;
+        document.getElementById('tmcf-file').value = '';
+        document.getElementById('csv-file').value = '';
+        document.getElementById('stat-vars-mcf-file').value = '';
+        document.getElementById('stat-vars-schema-mcf-file').value = '';
+        ['tmcf-file-name', 'csv-file-name', 'stat-vars-mcf-file-name', 'stat-vars-schema-mcf-file-name'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) { el.textContent = 'No file chosen'; el.classList.remove('has-file'); }
+        });
+        ['tmcf-clear-btn', 'csv-clear-btn', 'stat-vars-mcf-clear-btn', 'stat-vars-schema-mcf-clear-btn'].forEach(id => {
+          const btn = document.getElementById(id);
+          if (btn) btn.style.display = 'none';
+        });
+        customUpload.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      progressWithLLM = document.getElementById('llm-review-checkbox').checked;
+      buildProgressPills(progressWithLLM);
+      resetProgressBar();
+      document.getElementById('progress-container').style.display = 'none';
+      updateRunButtonState();
+      const selected = sel.selectedOptions[0];
+      const descEl = document.getElementById('dataset-desc');
+      const desc = selected ? (selected.getAttribute('data-desc') || '') : '';
+      const isCustom = selected && selected.value === 'custom';
+      if (descEl) {
+        const text = isCustom ? (desc || '') : '';
+        descEl.textContent = text;
+        descEl.classList.remove('has-fail');
+      }
+      sel.title = selected ? selected.textContent : '';
+      const triggerLabel = document.getElementById('dataset-trigger-label');
+      if (triggerLabel) triggerLabel.textContent = selected ? selected.textContent : 'Select...';
+      document.querySelectorAll('.dataset-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.getAttribute('data-value') === currentDataset);
+      });
+      if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true });
+      // Clear log, status, and report when switching datasets
+      setOutputContent(LOG_PLACEHOLDER_HTML, true);
+      const outputEl = document.getElementById('output');
+      outputEl.classList.remove('expanded');
+      document.getElementById('expand-log-btn').textContent = 'Expand';
+      const status = document.getElementById('status');
+      status.textContent = '—';
+      status.className = 'status-badge';
+      document.getElementById('report-actions').style.display = 'none';
+      document.getElementById('report-timestamp').textContent = '';
+      hideStatusBanner();
+      clearValidationResults();
+      hideSummaryCard();
+      const fluctuationContainer = document.getElementById('fluctuation-samples-container');
+      if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+      const ruleFailureContainer = document.getElementById('rule-failure-container');
+      if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+      renderLLMReportSection({ exists: false });
+      loadReport();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Rules
+    // ═══════════════════════════════════════════════════════════════
+    async function loadRules(dataset, options) {
+      try {
+        const r = await fetch(API + `/api/config/${dataset}`);
+        const config = await r.json();
+        const rules = config.rules || [];
+        const html = rules.map(rule => `
+          <div class="rule-item">
+            <input type="checkbox" id="rule-${escapeHtml(rule.rule_id)}" class="rule-checkbox" data-rule-id="${escapeHtml(rule.rule_id)}" checked>
+            <label for="rule-${escapeHtml(rule.rule_id)}">
+              <div class="rule-id">${escapeHtml(rule.rule_id)}</div>
+              <div class="rule-desc">${escapeHtml(rule.description || '')}</div>
+            </label>
+            <span class="rule-result-icon" data-rule-id="${escapeHtml(rule.rule_id)}"></span>
+          </div>
+        `).join('');
+        document.getElementById('rules').innerHTML = html || '<div class="rule-item" style="color: var(--text-muted);">No rules</div>';
+        currentRuleIds = rules.map(r => r.rule_id);
+        document.getElementById('rules-actions').style.display = rules.length > 0 ? 'block' : 'none';
+        document.getElementById('rules-preset-row').style.display = rules.length > 0 ? 'block' : 'none';
+        populatePresetSelect();
+        applyPreset(document.getElementById('rules-preset').value);
+        updateRunButtonState();
+        updateRulesSummary();
+        if (!options || !options.skipApplyValidationResults) applyValidationResults(dataset);
+        const main = document.querySelector('.main');
+        if (main) main.scrollTop = 0;
+      } catch (e) {
+        document.getElementById('rules').innerHTML = `<div class="rule-item" style="color: var(--fail);">Failed to load rules</div>`;
+        document.getElementById('rules-actions').style.display = 'none';
+      }
+    }
+
+    function getFailureReason(output) {
+      if (!output || typeof output !== 'string') return null;
+      const m = output.match(/NumObservations sum \((\d+)\)\s*!=\s*NumNodeSuccesses \((\d+)\)/);
+      if (m) return `Observation count (${m[1]}) doesn't match node count (${m[2]})`;
+      // Check later failures first: if we continued past Gemini Review (advisory mode) then genmcf failed, attribute to Data processing
+      if (output.includes('CSV quality check failed') || output.includes('dc-import genmcf failed') || output.includes('Aborting prematurely')) return 'Data processing failed';
+      if (output.includes('dc-import lint failed')) return 'lint failed';
+      if (output.includes('Gemini review found issues') || output.includes('Step 0 found blocking issues')) return 'Gemini review found issues';
+      return null;
+    }
+
+    function showStatusBanner(data) {
+      /* Kept for any legacy call; main run outcome is now shown in the merged status card only. */
+      const banner = document.getElementById('status-banner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    function hideStatusBanner() {
+      const banner = document.getElementById('status-banner');
+      if (banner) banner.style.display = 'none';
+      const llmBanner = document.getElementById('llm-results-banner');
+      if (llmBanner) llmBanner.style.display = 'none';
+    }
+
+    async function fetchValidationCounts(runId) {
+      if (!currentDataset) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+      try {
+        const runIdParam = runId ? '&run_id=' + encodeURIComponent(runId) : '';
+        const r = await fetch(API + '/api/validation-result/' + currentDataset + '?t=' + Date.now() + runIdParam);
+        const json = await r.json();
+        if (!json.exists || !json.results) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+        let runCount = 0, failCount = 0, warnCount = 0;
+        json.results.forEach(v => {
+          runCount++;
+          if (v.status === 'FAILED') failCount++;
+          else if (v.status === 'WARNING') warnCount++;
+        });
+        return {
+          runCount, failCount, warnCount,
+          failedRules: json.results.filter(x => x.status === 'FAILED'),
+          warningRules: json.results.filter(x => x.status === 'WARNING'),
+        };
+      } catch (_) {
+        return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Progress / Pills
+    // ═══════════════════════════════════════════════════════════════
+    function setSummaryCard(opts) {
+      const card = document.getElementById('summary-card');
+      const content = document.getElementById('summary-card-content');
+      if (!card || !content) return;
+      card.classList.remove('outcome-pass', 'outcome-warnings', 'outcome-fail');
+      content.innerHTML = '';
+
+      if (opts.cancelled) {
+        card.classList.add('outcome-fail');
+        const outcome = document.createElement('div');
+        outcome.className = 'summary-card-outcome';
+        outcome.style.color = 'var(--text-muted)';
+        outcome.textContent = 'Validation cancelled';
+        content.appendChild(outcome);
+        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+        if (runTime) {
+          const meta = document.createElement('div');
+          meta.className = 'summary-card-meta';
+          meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
+          content.appendChild(meta);
+        }
+        card.classList.add('visible');
+        return;
+      }
+
+      const runCount = opts.runCount ?? 0;
+      const failCount = opts.failCount ?? 0;
+      const warnCount = opts.warnCount ?? 0;
+      const pipelineFailedBeforeValidation = opts.pipelineFailedBeforeValidation === true;
+      const showDetailsToggle = runCount > 0 || pipelineFailedBeforeValidation;
+
+      const outcome = document.createElement('div');
+      outcome.className = 'summary-card-outcome';
+      if (opts.success) {
+        card.classList.add(opts.hasWarnings ? 'outcome-warnings' : 'outcome-pass');
+        outcome.style.color = 'var(--success)';
+        outcome.textContent = '✔ Validation passed';
+      } else {
+        card.classList.add('outcome-fail');
+        outcome.style.color = 'var(--fail)';
+        let failLabel = '✖ Validation failed';
+        if (pipelineFailedBeforeValidation && opts.pipelineFailureReason === 'Gemini review found issues') failLabel = '✖ Run stopped: Gemini Review found issues';
+        else if (pipelineFailedBeforeValidation && (opts.pipelineFailureReason === 'Data processing failed' || opts.pipelineFailureReason === 'lint failed')) failLabel = '✖ Pipeline failed';
+        outcome.textContent = failLabel;
+      }
+      content.appendChild(outcome);
+
+      if (!pipelineFailedBeforeValidation && runCount > 0) {
+        const countsParts = [];
+        if (failCount > 0) countsParts.push(failCount + ' blocking issue' + (failCount !== 1 ? 's' : ''));
+        if (warnCount > 0) countsParts.push(warnCount + ' warning' + (warnCount !== 1 ? 's' : ''));
+        if (countsParts.length === 0) countsParts.push('0 blocking issues');
+        const counts = document.createElement('div');
+        counts.className = 'summary-card-rules';
+        counts.textContent = countsParts.join(' · ');
+        content.appendChild(counts);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'summary-card-meta';
+      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+      if (opts.durationSec != null) {
+        meta.textContent = 'Run time: ' + opts.durationSec.toFixed(1) + 's';
+      } else if (runTime) {
+        meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
+      } else {
+        meta.textContent = '—';
+      }
+      content.appendChild(meta);
+      if (opts.geminiSkippedNoKey) {
+        const hint = document.createElement('div');
+        hint.className = 'summary-card-gemini-hint';
+        hint.textContent = 'Note: Set GEMINI_API_KEY or GOOGLE_API_KEY to enable Gemini Review.';
+        content.appendChild(hint);
+      }
+
+      function formatRuleItem(r, isFailed) {
+        const rule = escapeHtml(r.validation_name || r.validation_id || '');
+        let msg = r.message ? String(r.message).slice(0, 80) : '';
+        msg = escapeHtml(msg)
+          .replace(/(Found )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3')
+          .replace(/(^| )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3');
+        const color = isFailed ? ' style="color:var(--fail);"' : '';
+        return '<li' + color + '>' + rule + (msg ? ' – ' + msg : '') + '</li>';
+      }
+      if (showDetailsToggle) {
+        const failedRules = opts.failedRules || [];
+        const warningRules = opts.warningRules || [];
+        let listItems = [];
+        if (opts.runFailureReason && !opts.pipelineFailedBeforeValidation) {
+          listItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.runFailureReason) + '</li>');
+        }
+        listItems = listItems.concat(failedRules.map(r => formatRuleItem(r, true))).concat(warningRules.map(r => formatRuleItem(r, false)));
+        if (listItems.length === 0) {
+          if (opts.pipelineFailedBeforeValidation && opts.pipelineFailureReason) {
+            const stepLabel = opts.pipelineFailureReason === 'Gemini review found issues' ? 'Gemini Review found issues' : (opts.pipelineFailureReason === 'Data processing failed' ? 'Generate MCF failed' : (opts.pipelineFailureReason === 'lint failed' ? 'Lint failed' : opts.pipelineFailureReason));
+            listItems.push('<li style="color:var(--fail);">' + escapeHtml(stepLabel) + '</li>');
+          } else {
+            listItems.push('<li style="color:var(--text-muted);">All rules passed.</li>');
+          }
+        }
+        const details = document.createElement('details');
+        details.className = 'summary-card-details';
+        const summary = document.createElement('summary');
+        summary.className = 'summary-card-details-summary';
+        summary.textContent = opts.success ? 'View details' : 'View failure details';
+        details.appendChild(summary);
+        const listEl = document.createElement('ul');
+        listEl.className = 'warning-details-list';
+        listEl.innerHTML = listItems.join('');
+        details.appendChild(listEl);
+        content.appendChild(details);
+      }
+
+      card.classList.add('visible');
+    }
+
+    function hideSummaryCard() {
+      const card = document.getElementById('summary-card');
+      if (card) {
+        card.classList.remove('visible', 'outcome-pass', 'outcome-warnings', 'outcome-fail');
+        const content = document.getElementById('summary-card-content');
+        if (content) content.innerHTML = '';
+      }
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    async function applyValidationResults(dataset, options = {}) {
+      const ignoreStoredOutcome = options.ignoreStoredOutcome === true;
+      const stored = localStorage.getItem(LAST_OUTCOME_KEY + dataset);
+      if (!ignoreStoredOutcome && stored === 'failed') {
+        clearValidationResults();
+        lastRunDataset = dataset;
+        return;
+      }
+      if (!ignoreStoredOutcome && stored === 'cancelled') {
+        clearValidationResults();
+        return;
+      }
+      try {
+        const runIdParam = (options && options.runId) ? '&run_id=' + encodeURIComponent(options.runId) : '';
+        const r = await fetch(API + `/api/validation-result/${dataset}?t=${Date.now()}${runIdParam}`);
+        const data = await r.json();
+        if (!data.exists || !data.results) return;
+        const byRule = {};
+        data.results.forEach(v => { byRule[v.validation_name] = v; });
+        let runCount = 0, failCount = 0, warnCount = 0;
+        document.querySelectorAll('.rule-result-icon').forEach(el => {
+          const result = byRule[el.dataset.ruleId];
+          const status = result?.status || '';
+          const checkbox = document.querySelector(`.rule-checkbox[data-rule-id="${el.dataset.ruleId}"]`);
+          const isChecked = checkbox ? checkbox.checked : true;
+          el.textContent = '';
+          el.className = 'rule-result-icon';
+          el.onclick = null;
+          el.dataset.status = status;
+          if (!isChecked && status) {
+            el.textContent = '— Skipped';
+            el.classList.add('skipped');
+          } else if (status === 'PASSED') {
+            el.textContent = '✔ Passed'; el.classList.add('passed'); runCount++;
+            el.onclick = null;
+          } else if (status === 'FAILED') {
+            el.textContent = '✖ Failed';
+            el.classList.add('failed'); runCount++; failCount++;
+            el.onclick = null;
+          } else if (status === 'WARNING') {
+            el.textContent = '⚠ Warning';
+            el.classList.add('warning'); runCount++; warnCount++;
+            el.onclick = null;
+          }
+        });
+        if (runCount > 0) lastRunDataset = dataset;
+      } catch (_) {}
+    }
+
+    function clearValidationResults() {
+      document.querySelectorAll('.rule-result-icon').forEach(el => {
+        el.textContent = '';
+        el.innerHTML = '';
+        el.className = 'rule-result-icon';
+      });
+    }
+
+    function updateRuleIconStates() {
+      document.querySelectorAll('.rule-result-icon').forEach(el => {
+        const status = el.dataset.status;
+        if (!status) return;
+        const checkbox = document.querySelector(`.rule-checkbox[data-rule-id="${el.dataset.ruleId}"]`);
+        const isChecked = checkbox ? checkbox.checked : true;
+        if (!isChecked) {
+          el.textContent = '— Skipped';
+          el.innerHTML = '';
+          el.className = 'rule-result-icon skipped';
+          el.onclick = null;
+        } else {
+          el.className = 'rule-result-icon ' + (status === 'PASSED' ? 'passed' : status === 'FAILED' ? 'failed' : 'warning');
+          el.onclick = null;
+          el.classList.remove('has-hint');
+          el.innerHTML = '';
+          el.textContent = status === 'PASSED' ? '✔ Passed' : status === 'FAILED' ? '✖ Failed' : '⚠ Warning';
+        }
+      });
+    }
+
+    function setRulesSectionDisabled(disabled) {
+      const section = document.getElementById('rules-section');
+      const presetTrigger = document.getElementById('preset-trigger');
+      const selectAll = document.getElementById('select-all-rules');
+      const deselectAll = document.getElementById('deselect-all-rules');
+      const savePreset = document.getElementById('save-preset-btn');
+      const clearPresets = document.getElementById('clear-presets-btn');
+      if (section) section.classList.toggle('rules-section-locked', disabled);
+      document.querySelectorAll('.rule-checkbox').forEach(cb => { cb.disabled = disabled; });
+      if (presetTrigger) presetTrigger.disabled = disabled;
+      if (selectAll) selectAll.disabled = disabled;
+      if (deselectAll) deselectAll.disabled = disabled;
+      if (savePreset) savePreset.disabled = disabled;
+      if (clearPresets) clearPresets.disabled = disabled;
+    }
+
+    function getSelectedRuleIds() {
+      const checkboxes = document.querySelectorAll('.rule-checkbox:checked');
+      return Array.from(checkboxes).map(cb => cb.dataset.ruleId);
+    }
+
+    function getSavedPresets() {
+      try {
+        const s = localStorage.getItem(STORAGE_KEY_PRESETS);
+        return s ? JSON.parse(s) : {};
+      } catch { return {}; }
+    }
+
+    function savePresets(presets) {
+      localStorage.setItem(STORAGE_KEY_PRESETS, JSON.stringify(presets));
+    }
+
+    const TRASH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+    const COPY_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+
+    function populatePresetSelect() {
+      const hidden = document.getElementById('rules-preset');
+      const triggerLabel = document.querySelector('.preset-trigger-label');
+      const menu = document.getElementById('preset-menu');
+      const presets = getSavedPresets();
+      const names = Object.keys(presets);
+      const currentVal = hidden.value;
+
+      menu.innerHTML = '';
+      const addOption = (value, label, isCustom = false) => {
+        const opt = document.createElement('button');
+        opt.type = 'button';
+        opt.className = 'preset-option' + (isCustom ? ' preset-option-custom' : '');
+        opt.dataset.value = value;
+        if (value === currentVal) opt.classList.add('selected');
+        if (isCustom) {
+          opt.innerHTML = `<span>${escapeHtml(label)}</span><button type="button" class="preset-delete" title="Delete preset">${TRASH_ICON}</button>`;
+          opt.querySelector('.preset-delete').addEventListener('click', (e) => {
+            e.stopPropagation();
+            deletePresetByName(label);
+          });
+        } else {
+          opt.textContent = label;
+        }
+        opt.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('preset-delete')) selectPreset(value);
+        });
+        menu.appendChild(opt);
+      };
+
+      addOption('all', 'All rules');
+      addOption('quick', 'Quick sanity check');
+      names.forEach(name => addOption('custom:' + name, name, true));
+
+      triggerLabel.textContent = getPresetLabelWithModification(currentVal);
+      document.getElementById('clear-presets-btn').style.display = names.length ? 'inline-block' : 'none';
+      menu.style.display = 'none';
+    }
+
+    function getPresetLabel(value) {
+      if (value === 'all') return 'All rules';
+      if (value === 'quick') return 'Quick sanity check';
+      if (value.startsWith('custom:')) return value.slice(7);
+      return 'All rules';
+    }
+
+    function selectionMatchesPreset(value) {
+      const current = getSelectedRuleIds().sort();
+      let expected;
+      if (value === 'all') {
+        expected = [...currentRuleIds].sort();
+      } else if (value === 'quick') {
+        expected = PRESET_QUICK.filter(id => currentRuleIds.includes(id)).sort();
+      } else if (value.startsWith('custom:')) {
+        const presets = getSavedPresets();
+        expected = (presets[value.slice(7)] || []).filter(id => currentRuleIds.includes(id)).sort();
+      } else {
+        return true;
+      }
+      if (current.length !== expected.length) return false;
+      return current.every((id, i) => id === expected[i]);
+    }
+
+    function getPresetLabelWithModification(value) {
+      if (selectionMatchesPreset(value)) return getPresetLabel(value);
+      return `Custom (modified from ${getPresetLabel(value)})`;
+    }
+
+    function selectPreset(value, options = {}) {
+      const hidden = document.getElementById('rules-preset');
+      hidden.value = value;
+      if (!options.skipApply) {
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      document.querySelector('.preset-trigger-label').textContent = getPresetLabelWithModification(value);
+      document.querySelectorAll('.preset-option').forEach(o => {
+        o.classList.toggle('selected', o.dataset.value === value);
+      });
+      closePresetMenu();
+    }
+
+    function deletePresetByName(name) {
+      const presets = getSavedPresets();
+      delete presets[name];
+      savePresets(presets);
+      selectPreset('all');
+      populatePresetSelect();
+      applyPreset('all');
+      showToast('Preset deleted');
+    }
+
+    function openPresetMenu() {
+      const menu = document.getElementById('preset-menu');
+      menu.style.display = 'block';
+      menu.scrollTop = 0;
+      document.addEventListener('click', closePresetMenuOnOutsideClick);
+    }
+
+    function closePresetMenu() {
+      document.getElementById('preset-menu').style.display = 'none';
+      document.removeEventListener('click', closePresetMenuOnOutsideClick);
+    }
+
+    function closePresetMenuOnOutsideClick(e) {
+      const dropdown = document.querySelector('.preset-dropdown');
+      if (dropdown && !dropdown.contains(e.target)) closePresetMenu();
+    }
+
+    function applyPreset(value) {
+      const checkboxes = document.querySelectorAll('.rule-checkbox');
+      if (value === 'all') {
+        checkboxes.forEach(cb => { cb.checked = true; });
+      } else if (value === 'quick') {
+        checkboxes.forEach(cb => {
+          cb.checked = PRESET_QUICK.includes(cb.dataset.ruleId);
+        });
+      } else if (value.startsWith('custom:')) {
+        const name = value.slice(7);
+        const presets = getSavedPresets();
+        const ids = presets[name] || [];
+        checkboxes.forEach(cb => {
+          cb.checked = ids.includes(cb.dataset.ruleId);
+        });
+      }
+      updateRunButtonState();
+      updateRulesSummary();
+      updateRuleIconStates();
+    }
+
+    function updateRulesSummary() {
+      const el = document.getElementById('rules-summary');
+      if (!el) return;
+      const total = document.querySelectorAll('.rule-checkbox').length;
+      const checked = document.querySelectorAll('.rule-checkbox:checked').length;
+      if (total === 0) {
+        el.style.display = 'none';
+        return;
+      }
+      el.style.display = 'block';
+      const icon = checked === 0 ? '⚠️' : '✅';
+      const hint = checked === 0 ? ' — select at least one' : '';
+      el.innerHTML = `<span class="count">${icon} ${checked} / ${total} rules enabled${hint}</span>`;
+    }
+
+    function updateRunButtonState() {
+      const btn = document.getElementById('run-btn');
+      const hasRules = document.querySelectorAll('.rule-checkbox').length > 0;
+      const atLeastOneRule = document.querySelectorAll('.rule-checkbox:checked').length > 0;
+      if (!currentDataset || (hasRules && !atLeastOneRule)) {
+        btn.disabled = true;
+        return;
+      }
+      if (currentDataset === 'custom') {
+        btn.disabled = !customTmcfFile || !customCsvFile;
+      } else {
+        btn.disabled = false;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Run
+    // ═══════════════════════════════════════════════════════════════
+    function onRunButtonClick() {
+      if (runAbortController) {
+        const container = document.getElementById('progress-container');
+        const btn = document.getElementById('run-btn');
+        const cancelMsg = document.getElementById('progress-cancel-msg');
+        if (container) container.classList.add('cancelling');
+        if (cancelMsg) cancelMsg.textContent = 'Stopping…';
+        if (btn) btn.textContent = 'Stopping…';
+        runAbortController.abort();
+        return;
+      }
+      runValidation();
+    }
+
+    function hideProgressAfterCancel() {
+      const container = document.getElementById('progress-container');
+      if (container) {
+        container.style.display = 'none';
+        container.classList.remove('cancelling');
+      }
+      const cancelMsg = document.getElementById('progress-cancel-msg');
+      if (cancelMsg) cancelMsg.textContent = '';
+      const btn = document.getElementById('run-btn');
+      if (btn) {
+        btn.textContent = 'Run';
+        btn.title = '';
+        btn.classList.remove('btn-stop');
+        btn.disabled = false;
+      }
+    }
+
+    const PROGRESS_STEPS = {
+      0: { pct: 10 },
+      1: { pct: 33 },
+      2: { pct: 66 },
+      3: { pct: 100 },
+    };
+    const PROGRESS_STEPS_NO_LLM = {
+      1: { pct: 33 },
+      2: { pct: 66 },
+      3: { pct: 100 },
+    };
+    const DEFAULT_STEP_LABELS = { 0: 'Gemini Review', 1: 'DC Import Tool', 2: 'DC Import Validation', 3: 'Results' };
+    let progressWithLLM = false;
+    const MIN_STEP_DISPLAY_MS = 750;
+    let lastLabelUpdateAt = 0;
+    let pendingStepTimer = null;
+    let fillCurrentPct = 0;
+    let fillTargetPct = 0;
+    let elapsedTimerId = null;
+    let stepLabels = {};
+    let progressRunStartTime = null;
+    /** Current step index for label (0–3). Used to show "Step label · timer" during run; no numeric percent. */
+    let currentProgressStepIndex = 0;
+
+    function formatElapsed(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return m + 'm ' + s + 's';
+    }
+
+    function getRunningProgressText() {
+      if (progressRunStartTime == null) return '';
+      const elapsed = Math.floor((Date.now() - progressRunStartTime) / 1000);
+      const label = stepLabels[currentProgressStepIndex] ?? DEFAULT_STEP_LABELS[currentProgressStepIndex] ?? ('Step ' + currentProgressStepIndex);
+      return label + ' · ' + formatElapsed(elapsed);
+    }
+
+    function updateProgressPctLabel() {
+      const el = document.getElementById('progress-pct');
+      if (!el) return;
+      if (elapsedTimerId != null) {
+        el.textContent = getRunningProgressText();
+      } else {
+        el.textContent = Math.round(fillCurrentPct) + '%';
+      }
+      const bar = document.getElementById('progress-bar');
+      if (bar) bar.setAttribute('aria-valuenow', Math.round(fillCurrentPct));
+    }
+
+    function updateStepPills(step) {
+      const start = progressWithLLM ? 0 : 1;
+      const end = 3;
+      const allDone = (step >= 4);
+      for (let i = start; i <= end; i++) {
+        const pill = document.getElementById('progress-pill-' + i);
+        if (!pill) continue;
+        pill.classList.remove('active', 'done', 'failed');
+        pill.removeAttribute('aria-current');
+        if (allDone || i < step) {
+          pill.classList.add('done');
+        } else if (i === step) {
+          pill.classList.add('active');
+          pill.setAttribute('aria-current', 'step');
+        }
+      }
+    }
+
+    function setFailedStepPill(failedStep) {
+      const start = progressWithLLM ? 0 : 1;
+      const end = 3;
+      for (let i = start; i <= end; i++) {
+        const pill = document.getElementById('progress-pill-' + i);
+        if (!pill) continue;
+        pill.classList.remove('active', 'done', 'failed', 'skipped');
+        pill.removeAttribute('aria-current');
+        if (i < failedStep) pill.classList.add('done');
+        else if (i === failedStep) pill.classList.add('failed');
+        else if (failedStep === 0 && progressWithLLM) pill.classList.add('skipped');  // steps 1–3 not run when run stopped because Gemini Review found issues
+        else pill.classList.add('failed');
+      }
+    }
+
+    function applyLabelAndPills(step) {
+      currentProgressStepIndex = step;
+      updateStepPills(step);
+    }
+
+    function animateFillTo(targetPct) {
+      fillTargetPct = targetPct;
+      fillCurrentPct = targetPct;
+      const fillEl = document.getElementById('progress-fill');
+      const pctEl = document.getElementById('progress-pct');
+      const bar = document.getElementById('progress-bar');
+      if (!fillEl) return;
+      fillEl.classList.remove('indeterminate');
+      fillEl.style.width = targetPct + '%';
+      fillEl.style.transform = 'none';
+      if (pctEl) updateProgressPctLabel();
+      if (bar) bar.setAttribute('aria-valuenow', Math.round(fillCurrentPct));
+    }
+
+    function finishProgressBar(success, durationSec, failedStepIndex) {
+      if (elapsedTimerId) {
+        clearInterval(elapsedTimerId);
+        elapsedTimerId = null;
+      }
+      progressRunStartTime = null;
+      const container = document.getElementById('progress-container');
+      const pctEl = document.getElementById('progress-pct');
+      const fillEl = document.getElementById('progress-fill');
+      const bar = document.getElementById('progress-bar');
+      if (!container) return;
+      container.classList.remove('cancelling');
+      fillCurrentPct = 100;
+      if (fillEl) {
+        fillEl.classList.remove('indeterminate');
+        fillEl.style.width = '100%';
+      }
+      if (bar) bar.setAttribute('aria-valuenow', '100');
+      const sec = Math.round(durationSec);
+      if (success) {
+        if (pctEl) pctEl.textContent = '\u2713 Completed in ' + sec + 's';
+      } else {
+        const stepLabel = stepLabels[failedStepIndex] ?? DEFAULT_STEP_LABELS[failedStepIndex] ?? ('step ' + failedStepIndex);
+        if (pctEl) pctEl.textContent = '✗ Failed at ' + stepLabel + ' in ' + sec + 's';
+      }
+      container.classList.add('complete');
+      if (!success) container.classList.add('fail');
+    }
+
+    function updateProgressStep(step) {
+      // When LLM is off, backend still runs "Step 0" (schema review) first; don't show that as pill 0 (we only have pills 1–3), so keep pill 1 active.
+      const pillStep = (!progressWithLLM && step === 0) ? 1 : step;
+      const steps = progressWithLLM ? PROGRESS_STEPS : PROGRESS_STEPS_NO_LLM;
+      const s = steps[step] || (progressWithLLM ? PROGRESS_STEPS[1] : PROGRESS_STEPS_NO_LLM[1]);
+      if (s) animateFillTo(s.pct);
+      const now = Date.now();
+      const elapsed = now - lastLabelUpdateAt;
+      if (pendingStepTimer) clearTimeout(pendingStepTimer);
+      if (elapsed >= MIN_STEP_DISPLAY_MS || lastLabelUpdateAt === 0) {
+        lastLabelUpdateAt = now;
+        applyLabelAndPills(pillStep);
+      } else {
+        const delay = MIN_STEP_DISPLAY_MS - elapsed;
+        pendingStepTimer = setTimeout(() => {
+          lastLabelUpdateAt = Date.now();
+          applyLabelAndPills(pillStep);
+          pendingStepTimer = null;
+        }, delay);
+      }
+    }
+
+    function buildProgressPills(withLLM) {
+      const row = document.getElementById('progress-steps-row');
+      if (!row) return;
+      if (withLLM) {
+        row.innerHTML = '<span id="progress-pill-0" class="progress-step-pill">0. Gemini Review</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. Results</span>';
+      } else {
+        row.innerHTML = '<span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. Results</span>';
+      }
+    }
+
+    function resetProgressBar() {
+      lastLabelUpdateAt = 0;
+      if (pendingStepTimer) clearTimeout(pendingStepTimer);
+      if (elapsedTimerId) clearInterval(elapsedTimerId);
+      pendingStepTimer = null;
+      elapsedTimerId = null;
+      progressRunStartTime = null;
+      stepLabels = {};
+      currentProgressStepIndex = progressWithLLM ? 0 : 1;
+      fillCurrentPct = 0;
+      fillTargetPct = 0;
+      const fillEl = document.getElementById('progress-fill');
+      const pctEl = document.getElementById('progress-pct');
+      const container = document.getElementById('progress-container');
+      const bar = document.getElementById('progress-bar');
+      if (fillEl) {
+        fillEl.style.transition = 'none';
+        fillEl.style.width = '0%';
+        fillEl.style.transform = '';
+        fillEl.classList.remove('indeterminate');
+        fillEl.offsetHeight;
+        fillEl.style.transition = '';
+      }
+      if (pctEl) pctEl.textContent = '…';
+      if (container) container.classList.remove('complete', 'cancelling', 'fail');
+      const barWrap = document.querySelector('.progress-bar-wrap');
+      if (barWrap) barWrap.style.display = '';
+      if (bar) bar.setAttribute('aria-valuenow', '0');
+      updateStepPills(progressWithLLM ? 0 : 1);
+    }
+
+    async function consumeStream(body, onMessage) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalData = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.t === 'done') finalData = msg;
+            else if (onMessage) onMessage(msg);
+          } catch (_) {}
+        }
+      }
+      if (buffer.trim()) {
+        try {
+          const msg = JSON.parse(buffer);
+          if (msg.t === 'done') finalData = msg;
+          else if (onMessage) onMessage(msg);
+        } catch (_) {}
+      }
+      return finalData || { success: false, output: '', cancelled: false };
+    }
+
+    function smoothScrollTo(el, targetTop, duration = 500) {
+      const start = el.scrollTop;
+      const startTime = performance.now();
+      function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 2);
+        el.scrollTop = start + (targetTop - start) * eased;
+        if (progress < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    async function runValidation() {
+      if (!currentDataset) return;
+      const btn = document.getElementById('run-btn');
+      const status = document.getElementById('status');
+      const output = document.getElementById('output');
+      runAbortController = new AbortController();
+      progressHideDeferred = false;
+      if (cancelFeedbackTimerId) {
+        clearTimeout(cancelFeedbackTimerId);
+        cancelFeedbackTimerId = null;
+      }
+      document.getElementById('dataset').disabled = true;
+      const datasetTrigger = document.getElementById('dataset-trigger');
+      if (datasetTrigger) { datasetTrigger.disabled = true; datasetTrigger.setAttribute('aria-expanded', 'false'); }
+      const datasetMenu = document.getElementById('dataset-menu');
+      if (datasetMenu) datasetMenu.classList.remove('open');
+      const datasetDropdown = document.getElementById('dataset-dropdown');
+      if (datasetDropdown) datasetDropdown.classList.remove('open');
+      document.getElementById('llm-review-checkbox').disabled = true;
+      document.getElementById('llm-model-select').disabled = true;
+      const aiAdvisoryCb = document.getElementById('ai-advisory-checkbox');
+      if (aiAdvisoryCb) aiAdvisoryCb.disabled = true;
+      document.getElementById('tmcf-file').disabled = true;
+      document.getElementById('csv-file').disabled = true;
+      document.getElementById('stat-vars-mcf-file').disabled = true;
+      document.getElementById('stat-vars-schema-mcf-file').disabled = true;
+      document.getElementById('tmcf-choose-btn').disabled = true;
+      document.getElementById('csv-choose-btn').disabled = true;
+      document.getElementById('stat-vars-mcf-choose-btn').disabled = true;
+      document.getElementById('stat-vars-schema-mcf-choose-btn').disabled = true;
+      document.getElementById('tmcf-clear-btn').disabled = true;
+      document.getElementById('csv-clear-btn').disabled = true;
+      document.getElementById('stat-vars-mcf-clear-btn').disabled = true;
+      document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = true;
+      setRulesSectionDisabled(true);
+      const summaryCard = document.getElementById('summary-card');
+      const outputEl = document.getElementById('output');
+      const reviewInsights = document.querySelector('.review-insights');
+      const rulesList = document.querySelector('.rules-list');
+      [summaryCard, outputEl, reviewInsights, rulesList].forEach(el => { if (el) el.classList.add('clear-fade-out'); });
+      setTimeout(() => {
+        [summaryCard, outputEl, reviewInsights, rulesList].forEach(el => { if (el) el.classList.remove('clear-fade-out'); });
+        hideStatusBanner();
+        hideSummaryCard();
+        clearValidationResults();
+        document.getElementById('log-completed-at').style.display = 'none';
+        progressWithLLM = document.getElementById('llm-review-checkbox').checked;
+        buildProgressPills(progressWithLLM);
+        document.getElementById('progress-container').style.display = 'block';
+        resetProgressBar();
+        progressRunStartTime = Date.now();
+        elapsedTimerId = setInterval(function () {
+          updateProgressPctLabel();
+        }, 1000);
+        updateProgressPctLabel();
+        const mainEl = document.querySelector('.main');
+        const resultsSection = document.getElementById('results-section');
+        if (mainEl && resultsSection) {
+          setTimeout(() => {
+            const targetScrollTop = mainEl.scrollTop + (resultsSection.getBoundingClientRect().top - mainEl.getBoundingClientRect().top) - 16;
+            smoothScrollTo(mainEl, Math.max(0, targetScrollTop), 600);
+          }, 50);
+        }
+        btn.textContent = 'Stop';
+        btn.title = '';
+        btn.classList.add('btn-stop');
+        btn.disabled = false;
+        document.getElementById('esc-hint').style.display = 'block';
+        status.textContent = 'Running…';
+        status.className = 'status-badge running';
+        setOutputContent('Running validation...\n', false);
+        setReportRunningState();
+        switchToLogTab({ scrollIntoView: true });
+        const runStartTime = Date.now();
+
+        (async () => {
+      try {
+        const selectedRules = getSelectedRuleIds();
+        const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
+        const llmReview = document.getElementById('llm-review-checkbox').checked;
+        let r, data;
+        let lastStepReached = -1;
+        if (currentDataset === 'custom') {
+          if (!customTmcfFile || !customCsvFile) {
+            setOutputContent('Please select both TMCF and CSV files.', false);
+            status.textContent = 'Error';
+            status.className = 'status-badge fail';
+            return;
+          }
+          const formData = new FormData();
+          formData.append('tmcf', customTmcfFile);
+          formData.append('csv', customCsvFile);
+          if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
+          if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
+          if (rulesParam) formData.append('rules', rulesParam);
+          if (llmReview) {
+            formData.append('llm_review', '1');
+            const llmModel = document.getElementById('llm-model-select').value;
+            formData.append('llm_model', llmModel);
+            if (document.getElementById('ai-advisory-checkbox').checked) formData.append('ai_advisory', '1');
+          }
+          r = await fetch(API + '/api/run/custom/stream', {
+            method: 'POST',
+            body: formData,
+            signal: runAbortController.signal,
+          });
+        } else {
+          let url = `${API}/api/run/${currentDataset}?stream=true`;
+          if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
+          if (llmReview) {
+            url += '&llm_review=1';
+            const llmModel = document.getElementById('llm-model-select').value;
+            url += `&llm_model=${encodeURIComponent(llmModel)}`;
+            if (document.getElementById('ai-advisory-checkbox').checked) url += '&ai_advisory=1';
+          }
+          r = await fetch(url, { method: 'POST', signal: runAbortController.signal });
+        }
+        if (!r.ok) throw new Error(r.statusText);
+        if (!r.body) throw new Error('Streaming not supported');
+        data = await consumeStream(r.body, (msg) => {
+          if (msg.t === 'step') {
+            const s = msg.step ?? -1;
+            lastStepReached = Math.max(lastStepReached, s);
+            if (msg.label != null && msg.label !== '') {
+              stepLabels[s] = msg.label;
+              const pill = document.getElementById('progress-pill-' + s);
+              if (pill) pill.textContent = s + '. ' + msg.label;
+            }
+            updateProgressStep(msg.step || 0);
+          } else if (msg.t === 'line') {
+            const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
+            setOutputContent(prev ? prev + msg.v : msg.v, false);
+          }
+        });
+        setOutputContent(data.output || '(no output)', false);
+        status.textContent = data.cancelled ? 'Cancelled' : '—';
+        status.className = 'status-badge' + (data.cancelled ? '' : '');
+        if (!data.cancelled) {
+          progressHideDeferred = true;
+          if (pendingStepTimer) {
+            clearTimeout(pendingStepTimer);
+            pendingStepTimer = null;
+          }
+          // Green = step completed successfully; red = that step failed (Gemini review, genmcf/lint, or validation rules).
+          var failedStepIndex = 2;
+          if (data.success) {
+            updateStepPills(4);
+          } else {
+            const reason = getFailureReason(data.output || '');
+            if (reason === 'Gemini review found issues') {
+              failedStepIndex = 0;
+              setFailedStepPill(0);
+            } else if (reason === 'Data processing failed' || reason === 'lint failed') {
+              failedStepIndex = 1;
+              setFailedStepPill(1);
+            } else {
+              failedStepIndex = 2;
+              setFailedStepPill(2);
+            }
+          }
+          const durationSec = (Date.now() - runStartTime) / 1000;
+          finishProgressBar(data.success, durationSec, data.success ? 0 : failedStepIndex);
+        }
+        if (!data.cancelled) {
+          const btn = document.getElementById('run-btn');
+          if (btn) {
+            btn.textContent = 'Run';
+            btn.title = '';
+            btn.classList.remove('btn-stop');
+            btn.disabled = false;
+          }
+        }
+        showStatusBanner(data);
+        lastRunCompletedAt = new Date();
+        const completedEl = document.getElementById('log-completed-at');
+        completedEl.textContent = 'Completed at ' + formatRunTimestamp(lastRunCompletedAt);
+        completedEl.style.display = 'block';
+        if (llmReview) await loadLLMReportSection(currentDataset);
+        else renderLLMReportSection({ notRun: true });
+        if (!data.cancelled) {
+          lastRunDurationSec = runStartTime != null ? (lastRunCompletedAt - runStartTime) / 1000 : null;
+          const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
+          const failureReason = getFailureReason(data.output || '');
+          const pipelineFailedBeforeValidation = !data.success && (failureReason === 'Gemini review found issues' || failureReason === 'Data processing failed' || failureReason === 'lint failed');
+          lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
+          lastRunHadAiReview = llmReview;
+          const runIdForResult = data.run_id || null;
+          const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runIdForResult);
+          const output = data.output || '';
+          const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
+          setSummaryCard({
+            cancelled: false,
+            success: data.success,
+            hasWarnings,
+            runCount: counts.runCount,
+            failCount: counts.failCount,
+            warnCount: counts.warnCount,
+            failedRules: counts.failedRules || [],
+            warningRules: counts.warningRules || [],
+            durationSec: lastRunDurationSec,
+            reportGenerated: lastRunReportGenerated,
+            pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || undefined,
+            pipelineFailureReason: pipelineFailedBeforeValidation ? failureReason : undefined,
+            runFailureReason: !data.success && !pipelineFailedBeforeValidation ? failureReason : undefined,
+            aiReviewUsed: llmReview,
+            geminiSkippedNoKey,
+            completedAt: lastRunCompletedAt,
+          });
+        } else if (data.cancelled) {
+          if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
+          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt });
+        }
+        if (!data.cancelled && data.success) {
+          lastRunDataset = currentDataset;
+          lastRunReportId = data.run_id || null;
+          const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
+          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
+          loadReport();
+          applyValidationResults(currentDataset, { runId: lastRunReportId });
+          switchToReportTab({ scrollIntoView: true });
+        } else if (data.cancelled) {
+          lastRunReportId = null;
+          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, 'cancelled');
+          clearValidationResults();
+        } else {
+          lastRunDataset = currentDataset;
+          lastRunReportId = data.run_id || null;
+          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, 'failed');
+          const reason = getFailureReason(data.output || '');
+          if (reason === 'Data processing failed' || reason === 'lint failed') {
+            clearValidationResults();
+          } else {
+            applyValidationResults(currentDataset, { ignoreStoredOutcome: true, runId: lastRunReportId });
+          }
+          if (reason === 'Gemini review found issues' || reason === 'Data processing failed' || reason === 'lint failed') {
+            setReportInsightsPlaceholder('Validation did not run. Fix Gemini Review or pipeline issues and run again.');
+          }
+          loadReport();
+          switchToReportTab({ scrollIntoView: true });
+        }
+      } catch (e) {
+        if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
+        progressRunStartTime = null;
+        if (e.name === 'AbortError') {
+          setOutputContent('Validation cancelled.', false);
+          status.textContent = 'Cancelled';
+          status.className = 'status-badge';
+          showStatusBanner({ cancelled: true });
+          setSummaryCard({ cancelled: true });
+          const cancelMsg = document.getElementById('progress-cancel-msg');
+          if (cancelMsg) cancelMsg.textContent = 'Cancelled';
+          progressHideDeferred = true;
+          cancelFeedbackTimerId = setTimeout(() => {
+            hideProgressAfterCancel();
+            cancelFeedbackTimerId = null;
+          }, 1500);
+          loadReport();
+          switchToReportTab({ scrollIntoView: true });
+        } else {
+          const prev = output.classList.contains('empty') ? '' : output.innerText;
+          setOutputContent(prev + '\nError: ' + e.message, false, true);
+          status.textContent = 'Error';
+          status.className = 'status-badge fail';
+          showStatusBanner({ success: false, cancelled: false });
+        }
+        lastRunCompletedAt = new Date();
+        const completedEl = document.getElementById('log-completed-at');
+        const timeLabel = e.name === 'AbortError' ? 'Cancelled at ' : 'Completed at ';
+        completedEl.textContent = timeLabel + formatRunTimestamp(lastRunCompletedAt);
+        completedEl.style.display = 'block';
+      } finally {
+        if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
+        progressRunStartTime = null;
+        runAbortController = null;
+        document.getElementById('esc-hint').style.display = 'none';
+        document.getElementById('dataset').disabled = false;
+        const datasetTrigger = document.getElementById('dataset-trigger');
+        if (datasetTrigger) datasetTrigger.disabled = false;
+        document.getElementById('llm-review-checkbox').disabled = false;
+        document.getElementById('llm-model-select').disabled = false;
+        const aiAdvisoryCb = document.getElementById('ai-advisory-checkbox');
+        if (aiAdvisoryCb) aiAdvisoryCb.disabled = false;
+        document.getElementById('tmcf-file').disabled = false;
+        document.getElementById('csv-file').disabled = false;
+        document.getElementById('stat-vars-mcf-file').disabled = false;
+        document.getElementById('stat-vars-schema-mcf-file').disabled = false;
+        document.getElementById('tmcf-choose-btn').disabled = false;
+        document.getElementById('csv-choose-btn').disabled = false;
+        document.getElementById('stat-vars-mcf-choose-btn').disabled = false;
+        document.getElementById('stat-vars-schema-mcf-choose-btn').disabled = false;
+        document.getElementById('tmcf-clear-btn').disabled = false;
+        document.getElementById('csv-clear-btn').disabled = false;
+        document.getElementById('stat-vars-mcf-clear-btn').disabled = false;
+        document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = false;
+        setRulesSectionDisabled(false);
+        if (!progressHideDeferred) {
+          hideProgressAfterCancel();
+          btn.textContent = 'Run';
+          btn.title = '';
+          btn.classList.remove('btn-stop');
+          btn.disabled = false;
+        }
+        if (pendingHomeReset) {
+          pendingHomeReset = false;
+          setTimeout(() => resetAppNow(), 0);
+        }
+      }
+        })();
+      }, 200);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Report / LLM
+    // ═══════════════════════════════════════════════════════════════
+    function reportBox(variant, html) {
+      return '<div class="report-group-box report-group-box--' + variant + '">' + html + '</div>';
+    }
+
+    function updateReportHeadingStates() {
+      const stateClasses = ['report-group-heading--success', 'report-group-heading--failure', 'report-group-heading--advisory'];
+      function setHeadingState(headingId, state) {
+        const h = document.getElementById(headingId);
+        if (!h) return;
+        stateClasses.forEach(c => h.classList.remove(c));
+        if (state) h.classList.add('report-group-heading--' + state);
+      }
+      function boxVariant(containerId) {
+        const c = document.getElementById(containerId);
+        if (!c || !c.firstElementChild || !c.firstElementChild.classList.contains('report-group-box')) return null;
+        const box = c.firstElementChild;
+        if (box.classList.contains('report-group-box--success')) return 'success';
+        if (box.classList.contains('report-group-box--blocking')) return 'failure';
+        if (box.classList.contains('report-group-box--advisory')) return 'advisory';
+        return null;
+      }
+      const llmBox = document.getElementById('llm-report-container')?.firstElementChild;
+      const llmState = llmBox?.classList?.contains('report-group-box--success') ? 'success' : (llmBox?.classList?.contains('report-group-box--advisory') ? 'advisory' : null);
+      setHeadingState('report-heading-ai', llmState);
+      setHeadingState('report-heading-validation', boxVariant('rule-failure-container'));
+      setHeadingState('report-heading-statistical', boxVariant('fluctuation-samples-container'));
+    }
+
+    function renderLLMReportSection(data) {
+      const container = document.getElementById('llm-report-container');
+      if (!container) return;
+      if (data && data.neutral === true) {
+        container.style.display = '';
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        updateReportHeadingStates();
+        return;
+      }
+      if (data && data.notRun === true) {
+        container.style.display = '';
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">Gemini Review was not run</p>');
+        updateReportHeadingStates();
+        return;
+      }
+      if (!data || !data.exists) {
+        container.style.display = 'none';
+        container.innerHTML = '';
+        updateReportHeadingStates();
+        return;
+      }
+      container.style.display = '';
+      const issues = data.issues || [];
+      const passed = data.passed !== false;
+      if (issues.length === 0 || passed && issues.every(i => (i.type || '').match(/^(info|parse_error)$/))) {
+        container.innerHTML = reportBox('success', '<p class="report-group-success">No advisory findings</p>');
+        updateReportHeadingStates();
+        return;
+      }
+      const isBlocker = (i) => i.severity === 'blocker';
+      const blockers = issues.filter(isBlocker);
+      const warnings = issues.filter(i => !isBlocker(i));
+      const total = blockers.length + warnings.length;
+      let html = '';
+      if (blockers.length > 0) {
+        html += '<table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
+        blockers.forEach(i => {
+          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-blocker">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      if (warnings.length > 0) {
+        html += '<table class="llm-report-table" style="margin-top:12px;"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
+        warnings.forEach(i => {
+          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-warning">Warning</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
+      updateReportHeadingStates();
+    }
+
+    async function loadLLMReportSection(dataset, options) {
+      if (!dataset) return;
+      const showPassedIfMissing = options && options.showPassedIfMissing === true;
+      try {
+        const runIdParam = (options && options.runId) ? '&run_id=' + encodeURIComponent(options.runId) : '';
+        const r = await fetch(API + `/api/llm-report/${dataset}?t=${Date.now()}${runIdParam}`);
+        if (!r.ok) {
+          if (showPassedIfMissing) renderLLMReportSection({ exists: true, issues: [], passed: true });
+          else renderLLMReportSection({ exists: false });
+          return;
+        }
+        const data = await r.json();
+        if (showPassedIfMissing && (!data || !data.exists)) {
+          renderLLMReportSection({ exists: true, issues: [], passed: true });
+        } else {
+          renderLLMReportSection(data);
+        }
+      } catch {
+        if (showPassedIfMissing) renderLLMReportSection({ exists: true, issues: [], passed: true });
+        else renderLLMReportSection({ exists: false });
+      }
+    }
+
+    async function loadReport() {
+      document.getElementById('report-actions').style.display = 'none';
+      if (!currentDataset) {
+        setReportInsightsPlaceholder();
+        renderLLMReportSection({ neutral: true });
+        return;
+      }
+      const reportRunId = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
+      if (lastRunDataset === currentDataset && !lastRunHadAiReview) {
+        renderLLMReportSection({ notRun: true });
+      } else {
+        await loadLLMReportSection(currentDataset, { runId: reportRunId });
+      }
+      let reportLoaded = false;
+      try {
+        let r;
+        const useGcsUrl = lastRunReportId && lastRunDataset === currentDataset;
+        if (useGcsUrl) {
+          r = await fetch(API + `/report/${currentDataset}/${lastRunReportId}?t=${Date.now()}`);
+        } else {
+          r = await fetch(API + `/report/${currentDataset}?t=${Date.now()}`);
+        }
+        if (!r.ok && useGcsUrl) {
+          r = await fetch(API + `/report/${currentDataset}?t=${Date.now()}`);
+        }
+        if (!r.ok) {
+          document.getElementById('report-actions').style.display = 'none';
+          document.getElementById('report-timestamp').textContent = '';
+          const rw = document.getElementById('report-run-id-wrap');
+          if (rw) rw.style.display = 'none';
+          const reportUnavailableMsg = (r.status === 404 && lastRunDataset === currentDataset && !lastRunReportGenerated)
+            ? 'Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.'
+            : (r.status === 404)
+              ? "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds."
+              : null;
+          setReportInsightsPlaceholder(reportUnavailableMsg);
+          if (!reportRunId) renderLLMReportSection({ neutral: true });
+          return;
+        }
+        await r.text();
+        reportLoaded = true;
+        const reportActions = document.getElementById('report-actions');
+        const link = document.getElementById('open-report-link');
+        const reportUrl = (lastRunReportId && lastRunDataset === currentDataset)
+          ? (API + `/report/${currentDataset}/${lastRunReportId}`)
+          : (API + `/report/${currentDataset}`);
+        link.href = reportUrl;
+        const runIdWrap = document.getElementById('report-run-id-wrap');
+        const runIdEl = document.getElementById('report-run-id');
+        if (runIdWrap && runIdEl) {
+          if (lastRunReportId && lastRunDataset === currentDataset) {
+            runIdEl.textContent = lastRunReportId;
+            runIdWrap.style.display = 'inline-flex';
+          } else {
+            runIdWrap.style.display = 'none';
+          }
+        }
+        reportActions.style.display = document.querySelector('.tab[data-tab="report"]')?.classList.contains('active') ? 'flex' : 'none';
+        const reportRunId = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
+        const reportInfoUrl = reportRunId
+          ? API + `/api/report-info/${currentDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
+          : API + `/api/report-info/${currentDataset}?t=${Date.now()}`;
+        const infoRes = await fetch(reportInfoUrl);
+        if (infoRes.ok) {
+          const info = await infoRes.json();
+          const mtime = info.mtime;
+          document.getElementById('report-timestamp').textContent = mtime ? `Generated ${formatTimeAgo(mtime)}` : '';
+        } else {
+          document.getElementById('report-timestamp').textContent = '';
+        }
+      } catch (e) {
+        setReportInsightsPlaceholder();
+        if (!reportRunId) renderLLMReportSection({ neutral: true });
+      }
+      if (reportLoaded) {
+        if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
+          setReportInsightsPlaceholder('Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.');
+        } else {
+          loadFluctuationSamples(currentDataset, reportRunId);
+          loadRuleFailureSamples(currentDataset, reportRunId);
+        }
+      }
+    }
+
+    var REPORT_RUNNING_PLACEHOLDER_HTML = '<div class="report-running-state">' +
+      '<div class="report-running-spinner"></div>' +
+      '<p class="report-running-title">Running validation…</p>' +
+      '<p class="report-running-sub">New report will appear when complete.</p>' +
+      '</div>';
+
+    function setReportRunningState() {
+      const reportActions = document.getElementById('report-actions');
+      if (reportActions) reportActions.style.display = 'none';
+      const reportTimestamp = document.getElementById('report-timestamp');
+      if (reportTimestamp) reportTimestamp.textContent = '';
+      const runIdWrap = document.getElementById('report-run-id-wrap');
+      if (runIdWrap) runIdWrap.style.display = 'none';
+      const fluctuationContainer = document.getElementById('fluctuation-samples-container');
+      if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', REPORT_RUNNING_PLACEHOLDER_HTML);
+      const ruleFailureContainer = document.getElementById('rule-failure-container');
+      if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', REPORT_RUNNING_PLACEHOLDER_HTML);
+      renderLLMReportSection({ exists: false });
+      updateReportHeadingStates();
+    }
+
+    function setReportInsightsPlaceholder(msg, msgRuleFailure) {
+      const text = msg || 'Run validation to see results.';
+      const textRule = (msgRuleFailure !== undefined && msgRuleFailure !== null) ? msgRuleFailure : text;
+      const fluctuationContainer = document.getElementById('fluctuation-samples-container');
+      if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(text) + '</p>');
+      const ruleFailureContainer = document.getElementById('rule-failure-container');
+      if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(textRule) + '</p>');
+      updateReportHeadingStates();
+    }
+
+    function formatChangePct(pct) {
+      if (pct == null || typeof pct !== 'number') return '—';
+      const sign = pct >= 0 ? '+' : '-';
+      const abs = Math.abs(pct);
+      if (abs >= 1e6) return sign + (abs / 1e6).toFixed(1) + 'M%';
+      if (abs >= 1e3) return sign + (abs / 1e3).toFixed(1) + 'K%';
+      return sign + Math.round(abs).toLocaleString('en-US') + '%';
+    }
+
+    function stripDcid(s) {
+      if (s == null || typeof s !== 'string') return s;
+      return s.replace(/^dcid:/i, '');
+    }
+
+    function buildJustificationBlock(s) {
+      const points = s.problemPoints || [];
+      const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
+      const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
+      const pctStr = s.percentDifference != null && typeof s.percentDifference === 'number' ? formatChangePct(s.percentDifference) : '—';
+      const displayThreshold = s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (s.percentDifference != null && typeof s.percentDifference === 'number' && s.percentDifference > 200 ? '200%' : '100%') : '');
+      const changeLine = displayThreshold ? 'Change: ' + pctStr + ' (exceeds ' + displayThreshold + ' threshold)' : 'Change: ' + pctStr;
+      const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
+      let sourceStr = '';
+      if (locs.length) {
+        const byFile = {};
+        locs.forEach(({ file, line }) => { if (!byFile[file]) byFile[file] = []; byFile[file].push(line); });
+        sourceStr = Object.entries(byFile).map(([f, lines]) => {
+          lines.sort((a, b) => a - b);
+          const ranges = [];
+          let start = lines[0], end = lines[0];
+          for (let i = 1; i <= lines.length; i++) {
+            if (i < lines.length && lines[i] === end + 1) end = lines[i];
+            else { ranges.push(start === end ? `${start}` : `${start}-${end}`); if (i < lines.length) start = end = lines[i]; }
+          }
+          return f + ':' + ranges.join(',');
+        }).join(', ');
+      }
+      const freq = s.observationPeriod ? 'Frequency: ' + s.observationPeriod : '';
+      const lines = [
+        'StatVar: ' + stripDcid(s.statVar || '—'),
+        'Location: ' + stripDcid(s.location || '—'),
+        'Period: ' + period,
+        freq,
+        'Values: ' + values,
+        changeLine,
+        sourceStr ? 'Source: ' + sourceStr : '',
+        'Note: Fluctuation observed in source dataset.'
+      ].filter(Boolean).join('\n');
+      return lines;
+    }
+
+    async function loadFluctuationSamples(dataset, runId) {
+      const container = document.getElementById('fluctuation-samples-container');
+      if (!container) return;
+      if (!dataset) {
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        updateReportHeadingStates();
+        return;
+      }
+      try {
+        const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
+        const r = await fetch(API + `/api/fluctuation-samples/${dataset}?t=${Date.now()}${runIdParam}`);
+        const data = await r.json();
+        const samples = data.samples || [];
+        if (samples.length === 0) {
+          container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p>');
+          updateReportHeadingStates();
+          return;
+        }
+        const cards = samples.map((s) => {
+            const points = s.problemPoints || [];
+            const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
+            const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
+            const pctStr = s.percentDifference != null && typeof s.percentDifference === 'number'
+              ? formatChangePct(s.percentDifference)
+              : (s.percentDifference != null ? String(s.percentDifference) : '—');
+            const displayThreshold = s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (s.percentDifference != null && typeof s.percentDifference === 'number' && s.percentDifference > 200 ? '200%' : '100%') : '');
+            const changeLine = displayThreshold ? 'Change: ' + pctStr + ' (exceeds ' + displayThreshold + ' threshold)' : 'Change: ' + pctStr;
+            const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
+            let sourceRows = '';
+            if (locs.length) {
+              const byFile = {};
+              locs.forEach(({ file, line }) => { if (!byFile[file]) byFile[file] = []; byFile[file].push(line); });
+              sourceRows = Object.entries(byFile).map(([f, lines]) => {
+                lines.sort((a, b) => a - b);
+                const ranges = [];
+                let start = lines[0], end = lines[0];
+                for (let i = 1; i <= lines.length; i++) {
+                  if (i < lines.length && lines[i] === end + 1) end = lines[i];
+                  else { ranges.push(start === end ? '' + start : start + '-' + end); if (i < lines.length) start = end = lines[i]; }
+                }
+                return f + ':' + ranges.join(',');
+              }).join(', ');
+            }
+            const justification = buildJustificationBlock(s);
+            const justificationAttr = escapeHtml(justification.replace(/"/g, '&quot;').replace(/\n/g, '&#10;'));
+            const freqRow = s.observationPeriod ? `<div class="card-row">Frequency: ${escapeHtml(s.observationPeriod)}</div>` : '';
+            return `<div class="fluctuation-sample-card" data-justification="${justificationAttr}">
+              <div class="card-row stat-var">${escapeHtml(stripDcid(s.statVar || '—'))}</div>
+              <div class="card-row location">Location: ${escapeHtml(stripDcid(s.location || '—'))}</div>
+              <div class="card-row period">Period: ${escapeHtml(period)}</div>
+              ${freqRow}
+              <div class="card-row values">Values: ${escapeHtml(values)}</div>
+              <div class="card-row change-pct">${escapeHtml(changeLine)}</div>
+              ${sourceRows ? `<div class="card-row source-rows">Source rows: ${escapeHtml(sourceRows)}</div>` : ''}
+              <button type="button" class="copy-justification-btn" data-copy-justification><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
+            </div>`;
+        }).join('');
+        container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
+        updateReportHeadingStates();
+        container.querySelectorAll('[data-copy-justification]').forEach(btn => {
+          const card = btn.closest('.fluctuation-sample-card');
+          const raw = card.getAttribute('data-justification');
+          const text = raw ? raw.replace(/&quot;/g, '"').replace(/&#10;/g, '\n') : '';
+          btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(text).then(() => {
+              const origHtml = btn.innerHTML;
+              btn.textContent = 'Copied!';
+              setTimeout(() => { btn.innerHTML = origHtml; }, 1500);
+            });
+          });
+        });
+      } catch {
+        container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p><p style="color: var(--text-muted); margin: 0;">Could not load fluctuation samples.</p>');
+        updateReportHeadingStates();
+      }
+    }
+
+    function buildRuleFailureSummaryBlock(s) {
+      const lines = [
+        'StatVar: ' + (s.statVar != null && s.statVar !== '' ? stripDcid(s.statVar) : '—'),
+        'Location: ' + (s.location != null && s.location !== '' ? stripDcid(s.location) : '—'),
+        'Date: ' + (s.date != null && s.date !== '' ? s.date : '—'),
+        'Value: ' + (s.value != null ? String(s.value) : '—'),
+        'Rule: ' + (s.rule || '—'),
+        'Expected: ' + (s.expected || '—'),
+        'Source row: ' + (s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—')
+      ];
+      return lines.join('\n');
+    }
+
+    async function loadRuleFailureSamples(dataset, runId) {
+      const container = document.getElementById('rule-failure-container');
+      if (!container) return;
+      if (!dataset) {
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        updateReportHeadingStates();
+        return;
+      }
+      try {
+        const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
+        const r = await fetch(API + `/api/rule-failure-samples/${dataset}?t=${Date.now()}${runIdParam}`);
+        const data = await r.json();
+        const samples = data.samples || [];
+        if (samples.length === 0) {
+          container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p>');
+          updateReportHeadingStates();
+          return;
+        }
+        const cards = samples.map((s) => {
+          const hasDetails = (s.statVar != null && s.statVar !== '') || (s.location != null && s.location !== '') || (s.date != null && s.date !== '') || (s.value != null) || (s.sourceRow != null && s.sourceRow !== '');
+          const statVar = s.statVar != null && s.statVar !== '' ? stripDcid(s.statVar) : '—';
+          const location = s.location != null && s.location !== '' ? stripDcid(s.location) : '—';
+          const date = s.date != null && s.date !== '' ? s.date : '—';
+          const value = s.value != null ? String(s.value) : '—';
+          const rule = s.rule || '—';
+          const expected = s.expected != null && s.expected !== '' ? s.expected : '—';
+          const sourceRow = s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—';
+          const summary = buildRuleFailureSummaryBlock(s);
+          const summaryAttr = escapeHtml(summary.replace(/"/g, '&quot;').replace(/\n/g, '&#10;'));
+          if (!hasDetails) {
+            return `<div class="rule-failure-card" data-summary="${summaryAttr}">
+              <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
+              <div class="card-row">Expected: ${escapeHtml(expected)}</div>
+              <button type="button" class="copy-summary-btn" data-copy-summary><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
+            </div>`;
+          }
+          return `<div class="rule-failure-card" data-summary="${summaryAttr}">
+            <div class="card-row stat-var">${escapeHtml(statVar)}</div>
+            <div class="card-row location">Location: ${escapeHtml(location)}</div>
+            <div class="card-row">Date: ${escapeHtml(date)}</div>
+            <div class="card-row">Value: ${escapeHtml(value)}</div>
+            <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
+            <div class="card-row">Expected: ${escapeHtml(expected)}</div>
+            <div class="card-row">Source row: ${escapeHtml(sourceRow)}</div>
+            <button type="button" class="copy-summary-btn" data-copy-summary><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
+          </div>`;
+        }).join('');
+        container.innerHTML = reportBox('blocking', '<details id="rule-failure-details" class="report-group-inner-details" open><summary>' + samples.length + ' blocking rule failure' + (samples.length !== 1 ? 's' : '') + '</summary><div id="rule-failure-content" class="fluctuation-samples-content">' + cards + '</div></details>');
+        updateReportHeadingStates();
+        container.querySelectorAll('[data-copy-summary]').forEach(btn => {
+          const card = btn.closest('.rule-failure-card');
+          const raw = card.getAttribute('data-summary');
+          const text = raw ? raw.replace(/&quot;/g, '"').replace(/&#10;/g, '\n') : '';
+          btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(text).then(() => {
+              const origHtml = btn.innerHTML;
+              btn.textContent = 'Copied!';
+              setTimeout(() => { btn.innerHTML = origHtml; }, 1500);
+            });
+          });
+        });
+      } catch {
+        container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p><p style="color: var(--text-muted); margin: 0;">Could not load rule failure samples.</p>');
+        updateReportHeadingStates();
+      }
+    }
+
+    function switchToLogTab(options) {
+      const scrollIntoView = options && options.scrollIntoView;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const logTab = document.querySelector('.tab[data-tab="log"]');
+      const logPanel = document.getElementById('log-panel');
+      if (logTab) logTab.classList.add('active');
+      if (logPanel) logPanel.classList.add('active');
+      const logActions = document.getElementById('log-actions');
+      if (logActions) logActions.style.display = 'flex';
+      document.getElementById('report-actions').style.display = 'none';
+      if (scrollIntoView) {
+        const mainEl = document.querySelector('.main');
+        const resultsSection = document.getElementById('results-section');
+        if (mainEl && resultsSection) {
+          requestAnimationFrame(() => {
+            const targetScrollTop = mainEl.scrollTop + (resultsSection.getBoundingClientRect().top - mainEl.getBoundingClientRect().top) - 16;
+            smoothScrollTo(mainEl, Math.max(0, targetScrollTop), 600);
+          });
+        }
+      }
+    }
+
+    function switchToReportTab(options) {
+      const scrollIntoView = options && options.scrollIntoView;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const reportTab = document.querySelector('.tab[data-tab="report"]');
+      const reportPanel = document.getElementById('report-panel');
+      if (reportTab) reportTab.classList.add('active');
+      if (reportPanel) reportPanel.classList.add('active');
+      const logActions = document.getElementById('log-actions');
+      if (logActions) logActions.style.display = 'none';
+      if (!runAbortController) loadReport();
+      if (scrollIntoView) {
+        const mainEl = document.querySelector('.main');
+        const resultsSection = document.getElementById('results-section');
+        if (mainEl && resultsSection) {
+          requestAnimationFrame(() => {
+            const targetScrollTop = mainEl.scrollTop + (resultsSection.getBoundingClientRect().top - mainEl.getBoundingClientRect().top) - 16;
+            smoothScrollTo(mainEl, Math.max(0, targetScrollTop), 600);
+          });
+        }
+      }
+    }
+
+    // Initial neutral placeholders for report sections
+    setReportInsightsPlaceholder();
+    renderLLMReportSection({ neutral: true });
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab + '-panel').classList.add('active');
+        document.getElementById('log-actions').style.display = tab.dataset.tab === 'log' ? 'flex' : 'none';
+        if (tab.dataset.tab === 'report') {
+          if (!runAbortController) loadReport();
+        } else {
+          document.getElementById('report-actions').style.display = 'none';
+        }
+      });
+    });
+
+    function resetAppNow() {
+      // Cancel any pending "cancel UI" timers and force the UI back to baseline.
+      if (cancelFeedbackTimerId) {
+        clearTimeout(cancelFeedbackTimerId);
+        cancelFeedbackTimerId = null;
+      }
+      progressHideDeferred = false;
+      hideProgressAfterCancel();
+
+      const sel = document.getElementById('dataset');
+      if (sel) {
+        sel.value = '';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      setOutputContent(LOG_PLACEHOLDER_HTML, true);
+      const logSearch = document.getElementById('log-search');
+      if (logSearch) logSearch.value = '';
+
+      setReportInsightsPlaceholder();
+      renderLLMReportSection({ neutral: true });
+
+      const summaryCard = document.getElementById('summary-card');
+      const summaryContent = document.getElementById('summary-card-content');
+      if (summaryCard) {
+        summaryCard.classList.remove('visible', 'outcome-pass', 'outcome-warnings', 'outcome-fail');
+        if (summaryContent) summaryContent.innerHTML = '';
+      }
+      hideStatusBanner();
+
+      const progressContainer = document.getElementById('progress-container');
+      if (progressContainer) progressContainer.style.display = 'none';
+      resetProgressBar();
+
+      const optionalDetails = document.getElementById('custom-upload-optional');
+      if (optionalDetails) optionalDetails.removeAttribute('open');
+
+      const mainEl = document.querySelector('main.main');
+      if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+
+      const logTab = document.querySelector('.tab[data-tab=\"log\"]');
+      if (logTab) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        logTab.classList.add('active');
+        document.getElementById('log-panel').classList.add('active');
+        document.getElementById('log-actions').style.display = 'flex';
+        document.getElementById('report-actions').style.display = 'none';
+      }
+
+      updateRunButtonState();
+    }
+
+    function resetApp() {
+      // If a run is in progress, abort it first, then reset after cleanup finishes.
+      if (runAbortController) {
+        pendingHomeReset = true;
+        runAbortController.abort();
+        return;
+      }
+      pendingHomeReset = false;
+      resetAppNow();
+    }
+
+    const appTitle = document.getElementById('app-title');
+    if (appTitle) {
+      appTitle.addEventListener('click', resetApp);
+    }
+
+    document.getElementById('run-btn').addEventListener('click', onRunButtonClick);
+    const aiReviewSection = document.getElementById('ai-review-section');
+    const llmCheckbox = document.getElementById('llm-review-checkbox');
+    function syncAiReviewSectionActive() {
+      if (aiReviewSection) aiReviewSection.classList.toggle('is-active', llmCheckbox.checked);
+      const row = document.getElementById('llm-model-row');
+      if (row) row.style.display = llmCheckbox.checked ? 'block' : 'none';
+      const advisoryRow = document.getElementById('llm-ai-advisory-row');
+      if (advisoryRow) advisoryRow.style.display = llmCheckbox.checked ? 'block' : 'none';
+    }
+    async function updateAiReviewWarningVisibility() {
+      const warning = document.getElementById('llm-api-key-warning');
+      if (!warning || !llmCheckbox.checked) {
+        if (warning) warning.style.display = 'none';
+        return;
+      }
+      try {
+        const r = await fetch(API + '/api/llm-status');
+        const data = await r.json();
+        warning.style.display = data.key_set ? 'none' : 'block';
+      } catch {
+        warning.style.display = 'block';
+      }
+    }
+    llmCheckbox.addEventListener('change', async (e) => {
+      syncAiReviewSectionActive();
+      const select = document.getElementById('llm-model-select');
+      const warning = document.getElementById('llm-api-key-warning');
+      if (e.target.checked) {
+        if (select) select.value = 'gemini-3-flash-preview';  // always reset to default when Gemini Review is selected
+        await updateAiReviewWarningVisibility();
+      } else {
+        if (warning) warning.style.display = 'none';
+      }
+    });
+    // Gemini Review is on by default (checkbox has checked in HTML). Sync UI state on load.
+    syncAiReviewSectionActive();
+    if (llmCheckbox.checked) updateAiReviewWarningVisibility();
+    function setupCustomFileInput(inputId, chooseBtnId, nameSpanId, clearBtnId, setFile, clearFile) {
+      const input = document.getElementById(inputId);
+      const btn = document.getElementById(chooseBtnId);
+      const nameEl = document.getElementById(nameSpanId);
+      const clearBtn = document.getElementById(clearBtnId);
+      btn.addEventListener('click', () => input.click());
+      input.addEventListener('change', () => {
+        if (input.files && input.files.length > 0) {
+          setFile(input.files[0]);
+          nameEl.textContent = input.files[0].name;
+          nameEl.classList.add('has-file');
+          if (clearBtn) clearBtn.style.display = 'inline';
+          updateRunButtonState();
+        }
+      });
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          clearFile();
+          input.value = '';
+          nameEl.textContent = 'No file chosen';
+          nameEl.classList.remove('has-file');
+          clearBtn.style.display = 'none';
+          updateRunButtonState();
+        });
+      }
+    }
+    setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { customTmcfFile = f; }, () => { customTmcfFile = null; });
+    setupCustomFileInput('csv-file', 'csv-choose-btn', 'csv-file-name', 'csv-clear-btn', (f) => { customCsvFile = f; }, () => { customCsvFile = null; });
+    setupCustomFileInput('stat-vars-mcf-file', 'stat-vars-mcf-choose-btn', 'stat-vars-mcf-file-name', 'stat-vars-mcf-clear-btn', (f) => { customStatVarsMcfFile = f; }, () => { customStatVarsMcfFile = null; });
+    setupCustomFileInput('stat-vars-schema-mcf-file', 'stat-vars-schema-mcf-choose-btn', 'stat-vars-schema-mcf-file-name', 'stat-vars-schema-mcf-clear-btn', (f) => { customStatVarsSchemaMcfFile = f; }, () => { customStatVarsSchemaMcfFile = null; });
+    document.getElementById('preset-trigger').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = document.getElementById('preset-menu');
+      if (menu.style.display === 'block') closePresetMenu();
+      else openPresetMenu();
+    });
+    document.getElementById('select-all-rules').addEventListener('click', () => {
+      document.querySelectorAll('.rule-checkbox').forEach(cb => { cb.checked = true; });
+      selectPreset('all', { skipApply: true });
+      updateRunButtonState();
+      updateRulesSummary();
+      updateRuleIconStates();
+    });
+    document.getElementById('deselect-all-rules').addEventListener('click', () => {
+      document.querySelectorAll('.rule-checkbox').forEach(cb => { cb.checked = false; });
+      const hidden = document.getElementById('rules-preset');
+      document.querySelector('.preset-trigger-label').textContent = getPresetLabelWithModification(hidden.value);
+      updateRunButtonState();
+      updateRulesSummary();
+      updateRuleIconStates();
+    });
+    document.getElementById('rules').addEventListener('change', (e) => {
+      if (e.target.classList.contains('rule-checkbox')) {
+        const hidden = document.getElementById('rules-preset');
+        document.querySelector('.preset-trigger-label').textContent = getPresetLabelWithModification(hidden.value);
+        updateRunButtonState();
+        updateRulesSummary();
+        updateRuleIconStates();
+      }
+    });
+    document.getElementById('rules-preset').addEventListener('change', (e) => {
+      applyPreset(e.target.value);
+    });
+    document.getElementById('save-preset-btn').addEventListener('click', () => {
+      const name = prompt('Preset name:');
+      if (!name || !name.trim()) return;
+      const ids = getSelectedRuleIds();
+      const presets = getSavedPresets();
+      presets[name.trim()] = ids;
+      savePresets(presets);
+      populatePresetSelect();
+      selectPreset('custom:' + name.trim());
+      showToast('Preset saved');
+    });
+    document.getElementById('clear-presets-btn').addEventListener('click', () => {
+      savePresets({});
+      populatePresetSelect();
+      selectPreset('all');
+      applyPreset('all');
+      showToast('Presets cleared');
+    });
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(() => {
+        toast.classList.remove('visible');
+      }, 2000);
+    }
+
+    function formatRunTimestamp(d) {
+      if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const h = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      const s = String(d.getSeconds()).padStart(2, '0');
+      return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+    }
+
+    function formatTimeAgo(unixSec) {
+      const diff = Date.now() / 1000 - unixSec;
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)} hour${diff >= 7200 ? 's' : ''} ago`;
+      return `${Math.floor(diff / 86400)} day${diff >= 172800 ? 's' : ''} ago`;
+    }
+
+    document.getElementById('open-report-link').addEventListener('click', async function(e) {
+      e.preventDefault();
+      if (!currentDataset) return;
+      const hasRunId = lastRunReportId && lastRunDataset === currentDataset;
+      const path = hasRunId ? '/report/' + currentDataset + '/' + lastRunReportId : '/report/' + currentDataset;
+      const reportUrl = (API || '') + path + '?t=' + Date.now();
+      // When we have a run_id, open the report URL directly so the new tab shows a shareable link (GCS).
+      if (hasRunId) {
+        window.open(reportUrl, '_blank', 'noopener');
+        return;
+      }
+      try {
+        const r = await fetch(reportUrl);
+        if (!r.ok) {
+          if (r.status === 404) {
+            showToast('Report not available. Set GCS_REPORTS_BUCKET on Cloud Run, or try again in a few seconds.');
+          } else {
+            showToast('Report not found');
+          }
+          return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank', 'noopener');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } catch (err) {
+        showToast('Could not open report');
+      }
+    });
+
+    document.getElementById('download-report-btn').addEventListener('click', async () => {
+      if (!currentDataset) return;
+      const path = (lastRunReportId && lastRunDataset === currentDataset)
+        ? `/report/${currentDataset}/${lastRunReportId}`
+        : `/report/${currentDataset}`;
+      try {
+        const r = await fetch((API || '') + path + '?t=' + Date.now());
+        if (!r.ok) throw new Error('Report not found');
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `validation_report_${currentDataset}.html`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        showToast('Download failed');
+      }
+    });
+
+    function getLineType(line) {
+      if (/\[ERROR\]|^E\d{4}\s|\bERROR\b/.test(line)) return 'error';
+      if (/\[WARN\]|^W\d{4}\s|\bWARN\b/.test(line)) return 'warn';
+      if (/\[INFO\]|^I\d{4}\s|\bINFO\b/.test(line)) return 'info';
+      return 'plain';
+    }
+
+    function getLogSectionDivider(line) {
+      if (!/\[INFO\]\s+Step\s+[0-3]:/.test(line)) return null;
+      if (/Step\s+0:/.test(line)) return '──────── Gemini Review ────────';
+      if (/Step\s+1:/.test(line)) return '──────── dc-import (lint + genmcf) ────────';
+      if (/Step\s+2:/.test(line)) return '──────── import_validation ────────';
+      if (/Step\s+3:/.test(line)) return '──────── Report Generation ────────';
+      return null;
+    }
+
+    function escapeRegex(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function highlightSearchInLine(line, search) {
+      if (!search) return escapeHtml(line);
+      try {
+        const regex = new RegExp(escapeRegex(search), 'gi');
+        const parts = [];
+        let lastIndex = 0;
+        let match;
+        while ((match = regex.exec(line)) !== null) {
+          parts.push(escapeHtml(line.slice(lastIndex, match.index)));
+          parts.push('<mark class="log-search-hit">' + escapeHtml(match[0]) + '</mark>');
+          lastIndex = match.index + match[0].length;
+        }
+        parts.push(escapeHtml(line.slice(lastIndex)));
+        return parts.join('');
+      } catch (e) {
+        return escapeHtml(line);
+      }
+    }
+
+    function renderLogOutput(text, filterType = 'all', searchQuery = '') {
+      if (!text || text === 'Run validation to see output...') {
+        return { html: escapeHtml(text || ''), matchCount: 0 };
+      }
+      if (text === 'Running validation...\n' || text.startsWith('Running validation...')) {
+        return { html: `<span class="line-running">Running validation...</span>\n`, matchCount: 0 };
+      }
+      const search = searchQuery.trim();
+      const searchLower = search.toLowerCase();
+      const lines = text.split('\n');
+      const visible = lines.filter(line => {
+        const type = getLineType(line);
+        const matchesFilter = filterType === 'all' || type === filterType;
+        const matchesSearch = !search || line.toLowerCase().includes(searchLower);
+        return matchesFilter && matchesSearch;
+      });
+      const matchCount = visible.length;
+      let body = visible.map(line => {
+        const sectionLabel = getLogSectionDivider(line);
+        if (sectionLabel) {
+          return `<span class="log-section-divider">${escapeHtml(sectionLabel)}</span>`;
+        }
+        const type = getLineType(line);
+        const highlighted = highlightSearchInLine(line, search);
+        if (type === 'error') return `<span class="line-error">${highlighted}</span>`;
+        if (type === 'warn') return `<span class="line-warn">${highlighted}</span>`;
+        if (type === 'info') return `<span class="line-info">${highlighted}</span>`;
+        return highlighted;
+      }).join('\n');
+      if (search && matchCount === 0) {
+        body = '<p class="log-search-empty" style="color:var(--text-muted);font-size:0.85rem;margin:8px 0;">No matching lines.</p>';
+      }
+      return { html: body, matchCount };
+    }
+
+    function updateLogSearchCount(count, hasSearch) {
+      const el = document.getElementById('log-search-count');
+      if (!el) return;
+      if (!hasSearch) {
+        el.textContent = '';
+        el.classList.add('empty');
+        return;
+      }
+      el.classList.remove('empty');
+      el.textContent = count === 0 ? 'No matches' : (count === 1 ? '1 match' : count + ' matches');
+    }
+
+    function applyLogFilter() {
+      const searchQuery = (document.getElementById('log-search') && document.getElementById('log-search').value) || '';
+      const output = document.getElementById('output');
+      const result = renderLogOutput(lastLogText, 'all', searchQuery);
+      output.innerHTML = result.html;
+      updateLogSearchCount(result.matchCount, searchQuery.trim().length > 0);
+      output.scrollTop = 0;
+    }
+
+    function setOutputContent(text, isPlaceholder = false, scrollIntoView = false) {
+      const output = document.getElementById('output');
+      const filterBar = document.getElementById('log-filter-bar');
+      if (isPlaceholder) {
+        if (typeof text === 'string' && text.trim().startsWith('<')) {
+          output.innerHTML = text;
+        } else {
+          output.textContent = text || '';
+        }
+        output.classList.add('empty');
+        lastLogText = '';
+        lastRunCompletedAt = null;
+        filterBar.style.display = 'none';
+        document.getElementById('log-completed-at').style.display = 'none';
+      } else {
+        lastLogText = text;
+        const searchQuery = (document.getElementById('log-search') && document.getElementById('log-search').value) || '';
+        const result = renderLogOutput(text, 'all', searchQuery);
+        output.innerHTML = result.html;
+        updateLogSearchCount(result.matchCount, searchQuery.trim().length > 0);
+        output.classList.remove('empty');
+        const scrollToBottom = () => { output.scrollTop = output.scrollHeight; };
+        const scrollIntoViewOnce = () => {
+          const el = document.getElementById('log-completed-at');
+          (el && el.style.display !== 'none' ? el : output).scrollIntoView({ behavior: 'smooth', block: 'end' });
+        };
+        const followLog = document.getElementById('follow-log-checkbox');
+        if (followLog && followLog.checked) {
+          setTimeout(() => {
+            scrollToBottom();
+            if (scrollIntoView) scrollIntoViewOnce();
+          }, 50);
+        }
+        filterBar.style.display = 'flex';
+      }
+      const hasContent = !isPlaceholder && (lastLogText || (output.innerText && output.innerText.trim().length > 0));
+      document.getElementById('copy-log-btn').disabled = !hasContent;
+      document.getElementById('clear-log-btn').disabled = !hasContent;
+      const expandBtn = document.getElementById('expand-log-btn');
+      expandBtn.disabled = !hasContent;
+      if (!hasContent && document.getElementById('output').classList.contains('expanded')) {
+        document.getElementById('output').classList.remove('expanded');
+        expandBtn.textContent = 'Expand';
+      }
+    }
+
+    document.getElementById('copy-log-btn').addEventListener('click', async () => {
+      const output = document.getElementById('output');
+      const text = output.innerText || output.textContent || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Copied!');
+      } catch (e) {
+        showToast('Copy failed');
+      }
+    });
+
+    document.getElementById('expand-log-btn').addEventListener('click', () => {
+      const output = document.getElementById('output');
+      const btn = document.getElementById('expand-log-btn');
+      if (btn.disabled) return;
+      output.classList.toggle('expanded');
+      btn.textContent = output.classList.contains('expanded') ? 'Collapse' : 'Expand';
+    });
+
+    document.getElementById('clear-log-btn').addEventListener('click', () => {
+      document.getElementById('log-search').value = '';
+      setOutputContent(LOG_PLACEHOLDER_HTML, true);
+    });
+
+    document.getElementById('log-search').addEventListener('input', applyLogFilter);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && runAbortController) {
+        runAbortController.abort();
+        e.preventDefault();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        if (currentDataset && !runAbortController) {
+          runValidation();
+          e.preventDefault();
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
+        const logPanel = document.getElementById('log-panel');
+        if (logPanel.classList.contains('active')) {
+          document.getElementById('output').classList.toggle('expanded');
+          document.getElementById('expand-log-btn').textContent =
+            document.getElementById('output').classList.contains('expanded') ? 'Collapse' : 'Expand';
+          e.preventDefault();
+        }
+      }
+    });
+
+    fetchDatasets();
+    setOutputContent(LOG_PLACEHOLDER_HTML, true);
+  </script>
+</body>
+</html>

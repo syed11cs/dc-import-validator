@@ -1,0 +1,20 @@
+# Sample stat_vars_schema MCF for testing schema MCF validation (name/description/alternateName).
+# Use with Custom mode: upload as "Stat vars schema MCF" alongside TMCF + CSV.
+# - Node 1: name only → expect warnings: missing description, missing alternateName
+# - Node 2: name + description → expect warning: missing alternateName
+# - Node 3: name + description + alternateName → no warnings
+
+Node: dcid:SampleType_A
+typeOf: dcs:Class
+name: "Sample type A"
+
+Node: dcid:SampleType_B
+typeOf: dcs:Class
+name: "Sample type B"
+description: "Optional schema type for testing."
+
+Node: dcid:SampleType_Complete
+typeOf: dcs:Class
+name: "Sample type complete"
+description: "Has name, description, and alternateName."
+alternateName: "Complete"

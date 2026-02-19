@@ -1,0 +1,14 @@
+output/
+logs/
+bin/
+.venv/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/

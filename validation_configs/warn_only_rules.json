@@ -1,0 +1,8 @@
+{
+  "child_birth": ["check_lint_error_count"],
+  "child_birth_fail_min_value": ["check_lint_error_count"],
+  "child_birth_fail_units": ["check_lint_error_count"],
+  "child_birth_fail_scaling_factor": ["check_lint_error_count"],
+  "child_birth_ai_demo": ["check_lint_error_count"],
+  "custom": ["check_lint_error_count"]
+}

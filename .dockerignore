@@ -1,0 +1,29 @@
+# Git and IDE
+.git
+.gitignore
+.cursor
+.vscode
+*.swp
+*~
+
+# Python
+.venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Output and temp
+output
+tmp
+*.log
+
+# Docs and local-only (optional; keep if you want in image)
+# docs/
+# *.md
+
+# Avoid copying sibling repos into context (we clone data in Dockerfile)
+datacommonsorg

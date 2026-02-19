@@ -1,0 +1,9 @@
+Node: E:child_birth->E0
+observationAbout: C:child_birth->observationAbout
+observationDate: C:child_birth->observationDate
+value: C:child_birth->value
+variableMeasured: C:child_birth->variableMeasured
+observationPeriod: C:child_birth->observationPeriod
+measurementMethod: dcs:DataCommonsAggregate
+unit: dcs:Percent
+typeOf: dcs:StatVarObservation

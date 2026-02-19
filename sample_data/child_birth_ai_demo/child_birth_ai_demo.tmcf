@@ -1,0 +1,14 @@
+Node: E:child_birth_ai_demo->E0
+observationAbout: C:child_birth_ai_demo->observationAbout
+observationDate: C:child_birth_ai_demo->observationDate
+observationDate: C:child_birth_ai_demo->observationDate
+value: C:child_birth_ai_demo->value
+variableMeasured: C:child_birth_ai_demo->variableMeasured
+observationPeriod: C:child_birth_ai_demo->observationPeriod
+scaleingFactor: C:child_birth_ai_demo->scalingFactor
+measurementMethod: DataCommonsAggregate
+measurementMethd: C:child_birth_ai_demo->observationAbout
+measurementMethodology: WeightedAverage
+unit: Percent
+typeOf: StatVarObservation
+typeOf: dcs:StatVarObservation
