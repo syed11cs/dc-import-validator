@@ -2,51 +2,113 @@
 
 End-to-end validation pipeline and web UI for Data Commons imports. Runs dc-import (genmcf) and import_validation, with optional Gemini-based schema review, CSV quality checks, and per-run reporting (local or GCS-backed).
 
-## Setup
+## Overview
 
-**1. Clone** alongside the Data Commons data repo:
+| | |
+|--|--|
+| **What it does** | Validates TMCF + CSV before submission: preflight, optional Gemini Review, dc-import genmcf, import_validation, Go/No-Go HTML report. |
+| **How to run** | **Docker** (recommended): one repo clone, no extra setup. **CLI / dev:** clone this repo + [datacommonsorg/data](https://github.com/datacommonsorg/data) for the validation runner. |
+| **Output** | Validation report (blockers / warnings / passed), StatVar summary, lint summary, link to import tool report. Optional upload to GCS for Cloud Run. |
 
-```
-Projects/
-├── dc-import-validator/
-└── datacommonsorg/
-    └── data/
-```
+---
 
-**2. Run setup (one-time):**
+## Quick Start (Docker — recommended)
+
+Run the app locally with no Python/Java setup. The image includes the app, dc-import JAR, and a sparse clone of [datacommonsorg/data](https://github.com/datacommonsorg/data) (tools/import_validation only).
 
 ```bash
+# Clone this repo
+git clone https://github.com/syed11cs/dc-import-validator.git
 cd dc-import-validator
-chmod +x setup.sh run_e2e_test.sh run_ui.sh
-./setup.sh
-```
 
-Setup creates a Python venv (`.venv/`), installs dependencies, and downloads the import tool JAR from [GitHub releases](https://github.com/datacommonsorg/import/releases) to `bin/`.
-
-**3. Run validation:**
-
-```bash
-./run_e2e_test.sh child_birth   # In-repo sample_data (clean, expect PASS)
-./run_e2e_test.sh child_birth_fail_min_value   # Rule-test: negative value → FAIL
-./run_e2e_test.sh --tmcf=path/to/file.tmcf --csv=path/to/file.csv   # Custom data
-```
-
-**4. (Optional) Run with Docker**
-
-Build and run the app in a container for local testing or deployment. See [docs/DEPLOY_CLOUD_RUN.md](docs/DEPLOY_CLOUD_RUN.md) for Cloud Run and local Docker usage:
-
-```bash
+# Build and run (first build ~few minutes)
 docker build -t dc-import-validator .
 docker run --rm -p 8080:8080 -e GEMINI_API_KEY=your_key dc-import-validator
 ```
 
-Then open `http://localhost:8080`.
+Open **http://localhost:8080**. Use built-in datasets (e.g. Child Birth) or upload your own TMCF + CSV.
+
+**Apple Silicon (M1/M2/M3):** Build for Cloud Run’s platform:  
+`docker build --platform linux/amd64 -t dc-import-validator .`
+
+---
+
+## Alternative: Run without Docker (CLI / development)
+
+If you want to run the validation script and Web UI from your host (e.g. to change code or run integration tests), you need this repo and the Data Commons data repo for the **import_validation** runner. Built-in sample data (child_birth, child_birth_fail_*) lives in this repo.
+
+**1. Clone both repos**
+
+```bash
+# This app
+git clone https://github.com/syed11cs/dc-import-validator.git
+cd dc-import-validator
+
+# Data repo (for import_validation runner only; can be sibling or set PROJECTS_DIR)
+git clone https://github.com/datacommonsorg/data.git ../datacommonsorg/data
+```
+
+Default layout assumed by the script: parent of `dc-import-validator` contains `datacommonsorg/data`. To use a different path, set `PROJECTS_DIR` (see [Environment variables (script / CLI)](#environment-variables-script--cli)).
+
+**2. One-time setup**
+
+```bash
+chmod +x setup.sh run_e2e_test.sh run_ui.sh
+./setup.sh
+```
+
+This creates a Python venv (`.venv/`), installs dependencies, and downloads the import tool JAR from [GitHub releases](https://github.com/datacommonsorg/import/releases) to `bin/`.
+
+**3. Run validation (CLI)**
+
+```bash
+./run_e2e_test.sh child_birth
+./run_e2e_test.sh child_birth_fail_min_value
+./run_e2e_test.sh custom --tmcf=path/to/file.tmcf --csv=path/to/file.csv
+```
+
+**4. Run Web UI (local)**
+
+```bash
+./run_ui.sh
+```
+
+Open [http://localhost:8000](http://localhost:8000).
+
+---
+
+## Deploy to Cloud Run
+
+The repo includes a **GitHub Actions** workflow (`.github/workflows/deploy-cloudrun.yml`) that builds the image, pushes to **Artifact Registry**, and deploys to an existing **Cloud Run** service on every push to `main`. No manual `gcloud` deploy needed once secrets are set.
+
+- **One-time:** Create an Artifact Registry repo, a GCP service account (Artifact Registry Writer + Cloud Run Admin), and add GitHub secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY`, and optionally `AR_LOCATION` (e.g. `us` if your AR is multi-region).
+- **Then:** Push to `main` (or run the workflow manually from the Actions tab).
+
+For step-by-step (Artifact Registry, service account, secrets, GCS bucket), see **docs/DEPLOY_CLOUD_RUN.md** in this repository (when the `docs/` folder is present).
+
+---
+
+## Repository structure
+
+| Path | Purpose |
+|------|---------|
+| `sample_data/` | Built-in datasets (child_birth, child_birth_fail_*, child_birth_ai_demo); see [sample_data/README.md](sample_data/README.md). |
+| `scripts/` | Preflight, CSV quality, config validation, LLM schema review, HTML report generation. |
+| `ui/` | Web UI (FastAPI app, frontend, GCS upload/serve, validation runner). |
+| `validation_configs/` | Rule config (`new_import_config.json`), warn-only overrides (`warn_only_rules.json`). |
+| `run_e2e_test.sh` | Main CLI entrypoint. |
+| `run_ui.sh` | Start Web UI locally (port 8000). |
+| `Dockerfile` | Image for local run or Cloud Run (includes sparse data repo clone). |
+| `.github/workflows/deploy-cloudrun.yml` | CI/CD: build → Artifact Registry → Cloud Run on push to `main`. |
+
+When present, **docs/** contains the deploy guide (DEPLOY_CLOUD_RUN.md), architecture overview (PROJECT_OVERVIEW.md), and checklist mapping (CL_PR_CHECKLIST_MAPPING.md).
+
+---
 
 ## Prerequisites
 
-- **Python 3**
-- **Java 11+** (17 recommended; Docker image uses 17) — for child_birth, child_birth_fail_*, custom
-- **datacommonsorg/data** as sibling directory (for the **import_validation** module only; child_birth testdata is in this repo under `sample_data/child_birth/`)
+- **Docker (Quick Start):** Docker installed. No Python/Java on host required.
+- **CLI / dev:** **Python 3**, **Java 11+** (17 recommended; Docker image uses 17). **datacommonsorg/data** clone for the import_validation runner (see [Alternative: Run without Docker](#alternative-run-without-docker-cli--development)).
 
 ### Gemini Review (LLM)
 
@@ -215,7 +277,7 @@ Run manually: `python scripts/validate_import_files.py --tmcf path/to/file.tmcf 
 
 ### Checklist alignment
 
-We map the import review checklists to this pipeline in **[docs/CL_PR_CHECKLIST_MAPPING.md](docs/CL_PR_CHECKLIST_MAPPING.md)**. In short: we cover StatVar definitions in stat_vars MCF (when provided), percent/rate measurementDenominator in stat_vars MCF (partial), counters and unit/scaling, and partially data holes, fluctuation, and report visibility; Gemini Review (TMCF) is also part of the pipeline. The doc lists what is applied, partial, and quick wins to add next.
+We map the import review checklists to this pipeline in **docs/CL_PR_CHECKLIST_MAPPING.md** (in the repo). In short: we cover StatVar definitions in stat_vars MCF (when provided), percent/rate measurementDenominator in stat_vars MCF (partial), counters and unit/scaling, and partially data holes, fluctuation, and report visibility; Gemini Review (TMCF) is also part of the pipeline. The doc lists what is applied, partial, and quick wins to add next.
 
 ## Output
 
