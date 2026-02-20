@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 ARG DATA_REPO_URL=https://github.com/datacommonsorg/data.git
+
 # Sparse clone: only tools/import_validation (child_birth testdata is in this repo)
 RUN git clone --depth 1 --filter=blob:none --sparse "${DATA_REPO_URL}" datacommonsorg/data \
     && cd datacommonsorg/data \
@@ -21,6 +22,11 @@ RUN git clone --depth 1 --filter=blob:none --sparse "${DATA_REPO_URL}" datacommo
 # Stage 2: Runtime image (slim base, no git)
 # ------------------------------------------------------------------------------
 FROM python:3.11-slim-bookworm
+
+# Add metadata
+LABEL maintainer="Data Commons Team" \
+      version="1.0.0" \
+      description="DC Import Validator - Full image with built-in datasets"
 
 # Java 17 for dc-import JAR; curl for JAR download only (no git at runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -42,10 +48,26 @@ WORKDIR /app/dc-import-validator
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt -r ui/requirements.txt
 
-# dc-import JAR (same version as setup.sh)
+# dc-import JAR with retry logic
 ARG IMPORT_RELEASE_VERSION=v0.3.0
-RUN mkdir -p bin && curl -sL -o bin/datacommons-import-tool.jar \
-    "https://github.com/datacommonsorg/import/releases/download/${IMPORT_RELEASE_VERSION}/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
+RUN mkdir -p bin && \
+    echo "Downloading import tool JAR..." && \
+    curl --retry 3 --retry-delay 5 -sL -o bin/datacommons-import-tool.jar \
+    "https://github.com/datacommonsorg/import/releases/download/${IMPORT_RELEASE_VERSION}/datacommons-import-tool-0.3.0-jar-with-dependencies.jar" && \
+    chmod 644 bin/datacommons-import-tool.jar && \
+    echo "✓ JAR downloaded successfully"
+
+# Verify JAR is valid (basic check)
+RUN file bin/datacommons-import-tool.jar | grep -q "Zip archive" || \
+    (echo "❌ JAR file appears corrupted" && exit 1)
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 app && \
+    adduser --system --uid 1001 --gid 1001 app && \
+    chown -R app:app /app
+
+# Switch to non-root user
+USER app
 
 # run_e2e_test.sh expects PROJECTS_DIR so DATA_REPO = $PROJECTS_DIR/datacommonsorg/data
 ENV PROJECTS_DIR=/app

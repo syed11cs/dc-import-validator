@@ -1,4 +1,6 @@
+# ---------------------------
 # Git and IDE
+# ---------------------------
 .git
 .gitignore
 .cursor
@@ -6,7 +8,17 @@
 *.swp
 *~
 
+# ---------------------------
+# OS files
+# ---------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+._*
+
+# ---------------------------
 # Python
+# ---------------------------
 .venv
 __pycache__
 *.py[cod]
@@ -14,16 +26,39 @@ __pycache__
 .pytest_cache
 .mypy_cache
 .coverage
+.coverage.*
 htmlcov
+*.prof
 
-# Output and temp
+# ---------------------------
+# Environment & Secrets
+# ---------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+service-account-key.json
+
+# ---------------------------
+# Output & Temp
+# ---------------------------
 output
 tmp
 *.log
+*.pid
+*.seed
+*.pid.lock
+test-results
 
-# Docs and local-only (optional; keep if you want in image)
-# docs/
-# *.md
-
-# Avoid copying sibling repos into context (we clone data in Dockerfile)
+# ---------------------------
+# Local repos (important)
+# ---------------------------
 datacommonsorg
+
+# ---------------------------
+# Debug logs
+# ---------------------------
+debug.log
+npm-debug.log*

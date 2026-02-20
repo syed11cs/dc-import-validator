@@ -1185,8 +1185,8 @@
       <div class="sidebar-footer">
       <div class="run-action" style="padding-top: 20px;">
         <button id="run-btn" class="btn" disabled>Run</button>
-        <div id="esc-hint" class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px; display: none;">
-          Press Esc to stop
+        <div class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px;">
+          <kbd>⌘</kbd>+<kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
         </div>
       </div>
       <div class="form-group" style="margin-top: 14px;">
@@ -1265,7 +1265,7 @@
         <div id="log-panel" class="panel active">
           <div id="log-filter-bar" class="log-filter-bar" style="display: none;">
             <label class="follow-log-wrap"><input type="checkbox" id="follow-log-checkbox" checked> Follow log</label>
-            <input type="text" id="log-search" class="log-search-input" placeholder="Search in log…" aria-label="Search in log" />
+            <input type="text" id="log-search" class="log-search-input" placeholder="Search in log…" aria-label="Search in log" autocomplete="off" />
             <span id="log-search-count" class="log-search-count empty" aria-live="polite"></span>
           </div>
           <div id="output" class="output-box empty"><p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul></div>
@@ -1296,6 +1296,8 @@
     const API = '';
     let currentDataset = '';
     let runAbortController = null;
+    let lastReportMtime = null;
+    let reportTimestampInterval = null;
     let pendingHomeReset = false;
     let progressHideDeferred = false;
     let cancelFeedbackTimerId = null;
@@ -1524,6 +1526,7 @@
       status.textContent = '—';
       status.className = 'status-badge';
       document.getElementById('report-actions').style.display = 'none';
+      lastReportMtime = null;
       document.getElementById('report-timestamp').textContent = '';
       hideStatusBanner();
       clearValidationResults();
@@ -1540,6 +1543,15 @@
     // Rules
     // ═══════════════════════════════════════════════════════════════
     async function loadRules(dataset, options) {
+      const rulesEl = document.getElementById('rules');
+      const presetTrigger = document.getElementById('preset-trigger');
+      if (rulesEl) {
+        rulesEl.innerHTML = '<div class="rule-item" style="color: var(--text-muted);">Loading rules…</div>';
+        rulesEl.setAttribute('aria-busy', 'true');
+      }
+      if (presetTrigger) presetTrigger.disabled = true;
+      document.getElementById('rules-actions').style.display = 'none';
+      document.getElementById('rules-preset-row').style.display = 'none';
       try {
         const r = await fetch(API + `/api/config/${dataset}`);
         const config = await r.json();
@@ -1569,6 +1581,8 @@
         document.getElementById('rules').innerHTML = `<div class="rule-item" style="color: var(--fail);">Failed to load rules</div>`;
         document.getElementById('rules-actions').style.display = 'none';
       }
+      if (rulesEl) rulesEl.removeAttribute('aria-busy');
+      if (presetTrigger) presetTrigger.disabled = false;
     }
 
     function getFailureReason(output) {
@@ -2362,7 +2376,6 @@
         btn.title = '';
         btn.classList.add('btn-stop');
         btn.disabled = false;
-        document.getElementById('esc-hint').style.display = 'block';
         status.textContent = 'Running…';
         status.className = 'status-badge running';
         setOutputContent('Running validation...\n', false);
@@ -2426,7 +2439,11 @@
             updateProgressStep(msg.step || 0);
           } else if (msg.t === 'line') {
             const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
-            setOutputContent(prev ? prev + msg.v : msg.v, false);
+            let next = msg.v ?? '';
+            if (prev && next && !prev.endsWith('\n') && !next.startsWith('\n')) {
+              next = '\n' + next;
+            }
+            setOutputContent(prev ? prev + next : next, false);
           }
         });
         setOutputContent(data.output || '(no output)', false);
@@ -2569,7 +2586,6 @@
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
         runAbortController = null;
-        document.getElementById('esc-hint').style.display = 'none';
         document.getElementById('dataset').disabled = false;
         const datasetTrigger = document.getElementById('dataset-trigger');
         if (datasetTrigger) datasetTrigger.disabled = false;
@@ -2640,6 +2656,7 @@
     function renderLLMReportSection(data) {
       const container = document.getElementById('llm-report-container');
       if (!container) return;
+      try {
       if (data && data.neutral === true) {
         container.style.display = '';
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
@@ -2687,6 +2704,12 @@
       }
       container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
       updateReportHeadingStates();
+      } catch (e) {
+        console.error('Failed to render LLM report:', e);
+        container.innerHTML = '<div class="error-boundary" style="padding:12px;color:var(--text-muted);font-size:0.85rem;">Failed to load report. <button type="button" id="llm-report-retry-btn" class="btn btn-sm" style="margin-left:8px;">Retry</button></div>';
+        const retryBtn = document.getElementById('llm-report-retry-btn');
+        if (retryBtn) retryBtn.addEventListener('click', () => loadLLMReportSection(currentDataset));
+      }
     }
 
     async function loadLLMReportSection(dataset, options) {
@@ -2739,6 +2762,7 @@
         }
         if (!r.ok) {
           document.getElementById('report-actions').style.display = 'none';
+          lastReportMtime = null;
           document.getElementById('report-timestamp').textContent = '';
           const rw = document.getElementById('report-run-id-wrap');
           if (rw) rw.style.display = 'none';
@@ -2778,8 +2802,10 @@
         if (infoRes.ok) {
           const info = await infoRes.json();
           const mtime = info.mtime;
-          document.getElementById('report-timestamp').textContent = mtime ? `Generated ${formatTimeAgo(mtime)}` : '';
+          lastReportMtime = mtime != null ? mtime : null;
+          document.getElementById('report-timestamp').textContent = lastReportMtime ? `Generated ${formatTimeAgo(lastReportMtime)}` : '';
         } else {
+          lastReportMtime = null;
           document.getElementById('report-timestamp').textContent = '';
         }
       } catch (e) {
@@ -2805,6 +2831,7 @@
     function setReportRunningState() {
       const reportActions = document.getElementById('report-actions');
       if (reportActions) reportActions.style.display = 'none';
+      lastReportMtime = null;
       const reportTimestamp = document.getElementById('report-timestamp');
       if (reportTimestamp) reportTimestamp.textContent = '';
       const runIdWrap = document.getElementById('report-run-id-wrap');
@@ -3085,6 +3112,23 @@
     setReportInsightsPlaceholder();
     renderLLMReportSection({ neutral: true });
 
+    function startReportTimestampRefresh() {
+      stopReportTimestampRefresh();
+      reportTimestampInterval = setInterval(() => {
+        const reportPanel = document.getElementById('report-panel');
+        if (reportPanel && reportPanel.classList.contains('active') && lastReportMtime != null) {
+          const el = document.getElementById('report-timestamp');
+          if (el) el.textContent = 'Generated ' + formatTimeAgo(lastReportMtime);
+        }
+      }, 60000);
+    }
+    function stopReportTimestampRefresh() {
+      if (reportTimestampInterval) {
+        clearInterval(reportTimestampInterval);
+        reportTimestampInterval = null;
+      }
+    }
+
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -3093,8 +3137,10 @@
         document.getElementById(tab.dataset.tab + '-panel').classList.add('active');
         document.getElementById('log-actions').style.display = tab.dataset.tab === 'log' ? 'flex' : 'none';
         if (tab.dataset.tab === 'report') {
+          startReportTimestampRefresh();
           if (!runAbortController) loadReport();
         } else {
+          stopReportTimestampRefresh();
           document.getElementById('report-actions').style.display = 'none';
         }
       });
@@ -3282,6 +3328,7 @@
       showToast('Preset saved');
     });
     document.getElementById('clear-presets-btn').addEventListener('click', () => {
+      if (!confirm('Delete all saved presets?')) return;
       savePresets({});
       populatePresetSelect();
       selectPreset('all');
@@ -3367,9 +3414,14 @@
     });
 
     function getLineType(line) {
-      if (/\[ERROR\]|^E\d{4}\s|\bERROR\b/.test(line)) return 'error';
-      if (/\[WARN\]|^W\d{4}\s|\bWARN\b/.test(line)) return 'warn';
-      if (/\[INFO\]|^I\d{4}\s|\bINFO\b/.test(line)) return 'info';
+      // Prefer log-level prefix so "[INFO] ... WARN ..." stays info, not warn
+      if (/^\[ERROR\]\s/.test(line) || /^E\d{4}\s/.test(line)) return 'error';
+      if (/^\[WARN\]\s/.test(line) || /^W\d{4}\s/.test(line)) return 'warn';
+      if (/^\[INFO\]\s/.test(line) || /^I\d{4}\s/.test(line)) return 'info';
+      // Fallback: word anywhere (e.g. raw tool output without prefix)
+      if (/\bERROR\b/.test(line)) return 'error';
+      if (/\bWARN\b/.test(line)) return 'warn';
+      if (/\bINFO\b/.test(line)) return 'info';
       return 'plain';
     }
 
@@ -3452,6 +3504,14 @@
       el.textContent = count === 0 ? 'No matches' : (count === 1 ? '1 match' : count + ' matches');
     }
 
+    function debounce(fn, ms) {
+      let t = null;
+      return function (...args) {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => { fn.apply(this, args); t = null; }, ms);
+      };
+    }
+
     function applyLogFilter() {
       const searchQuery = (document.getElementById('log-search') && document.getElementById('log-search').value) || '';
       const output = document.getElementById('output');
@@ -3531,7 +3591,7 @@
       setOutputContent(LOG_PLACEHOLDER_HTML, true);
     });
 
-    document.getElementById('log-search').addEventListener('input', applyLogFilter);
+    document.getElementById('log-search').addEventListener('input', debounce(applyLogFilter, 300));
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && runAbortController) {

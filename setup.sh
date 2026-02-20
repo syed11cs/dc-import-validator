@@ -22,6 +22,17 @@ IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/${IMP
 echo "=== DC Import Validator - Setup ==="
 echo ""
 
+# --- Check Python version ---
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+if [[ "$PYTHON_VERSION" != "unknown" ]]; then
+  PY_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+  PY_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+  if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 8 ]]; then
+    echo "⚠️  Python 3.8+ recommended (found $PYTHON_VERSION)"
+    echo ""
+  fi
+fi
+
 # --- 1. Python venv (self-contained, no external dependencies) ---
 echo "1. Setting up Python environment..."
 
@@ -34,13 +45,13 @@ if [[ -f "$VENV_DIR/bin/python" ]]; then
     fi
   else
     echo "   Reinstalling packages..."
-    "$VENV_DIR/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+    "$VENV_DIR/bin/pip" install -q --upgrade -r "$SCRIPT_DIR/requirements.txt"
     echo "   ✓ Packages installed"
   fi
 else
   echo "   Creating venv..."
   python3 -m venv "$VENV_DIR"
-  "$VENV_DIR/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+  "$VENV_DIR/bin/pip" install -q --upgrade -r "$SCRIPT_DIR/requirements.txt"
   echo "   ✓ Venv created and packages installed"
 fi
 
@@ -64,35 +75,62 @@ if [[ -z "$JAR_PATH" && -f "$BIN_DIR/$JAR_NAME" ]]; then
   echo "   Found: $BIN_DIR/$JAR_NAME"
 fi
 
-# Download from GitHub releases if not found
-if [[ -z "$JAR_PATH" ]]; then
-  if command -v curl &>/dev/null; then
-    echo "   Downloading from GitHub releases..."
-    mkdir -p "$BIN_DIR"
-    if curl -sL -o "$BIN_DIR/$JAR_NAME" "$IMPORT_JAR_URL" 2>/dev/null && [[ -f "$BIN_DIR/$JAR_NAME" ]]; then
-      JAR_PATH="$BIN_DIR/$JAR_NAME"
-      echo "   Downloaded: $BIN_DIR/$JAR_NAME"
-    fi
+# Verify JAR is valid
+if [[ -n "$JAR_PATH" ]]; then
+  if file "$JAR_PATH" | grep -q "Zip archive"; then
+    echo "   ✓ Import tool JAR ready"
+  else
+    echo "   ✗ JAR file appears corrupted"
+    JAR_PATH=""
   fi
 fi
 
-if [[ -n "$JAR_PATH" ]]; then
-  echo "   ✓ Import tool JAR ready"
-else
-  echo "   ✗ Import tool JAR not found."
+# Download from GitHub releases if not found
+if [[ -z "$JAR_PATH" ]]; then
+  echo "   Downloading from GitHub releases..."
+  mkdir -p "$BIN_DIR"
+  
+  if command -v curl &>/dev/null; then
+    HTTP_CODE=$(curl -sL -w "%{http_code}" -o "$BIN_DIR/$JAR_NAME" "$IMPORT_JAR_URL")
+    if [[ "$HTTP_CODE" == "200" ]] && [[ -f "$BIN_DIR/$JAR_NAME" ]]; then
+      JAR_PATH="$BIN_DIR/$JAR_NAME"
+      echo "   ✓ Downloaded: $BIN_DIR/$JAR_NAME"
+    else
+      echo "   ✗ Download failed (HTTP $HTTP_CODE)"
+      rm -f "$BIN_DIR/$JAR_NAME" 2>/dev/null
+    fi
+  elif command -v wget &>/dev/null; then
+    if wget -q -O "$BIN_DIR/$JAR_NAME" "$IMPORT_JAR_URL" 2>/dev/null && [[ -f "$BIN_DIR/$JAR_NAME" ]]; then
+      JAR_PATH="$BIN_DIR/$JAR_NAME"
+      echo "   ✓ Downloaded: $BIN_DIR/$JAR_NAME"
+    else
+      echo "   ✗ Download failed"
+    fi
+  else
+    echo "   ✗ Neither curl nor wget found. Please install one."
+  fi
+fi
+
+if [[ -z "$JAR_PATH" ]]; then
   echo ""
   echo "   Download manually from: https://github.com/datacommonsorg/import/releases"
   echo "   Save to: $BIN_DIR/$JAR_NAME"
 fi
 
+# Make scripts executable
 chmod +x "$SCRIPT_DIR/run_e2e_test.sh" "$SCRIPT_DIR/run_ui.sh" 2>/dev/null || true
 
 echo ""
 echo "=== Setup complete ==="
+echo ""
+echo "🚀 Next steps:"
 echo ""
 echo "Run validation:"
 echo "  ./run_e2e_test.sh child_birth   # Quick test"
 echo ""
 echo "Start Web UI:"
 echo "  ./run_ui.sh"
+echo ""
+echo "📚 Documentation:"
+echo "  See README.md for more details"
 echo ""

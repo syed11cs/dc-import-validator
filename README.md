@@ -4,7 +4,7 @@ End-to-end validation pipeline for Data Commons imports — catch issues before 
 The DC Import Validator automates the entire import validation process: from TMCF/CSV quality checks to schema validation, with optional AI-powered review and comprehensive HTML reports.
 
 ![Docker](https://img.shields.io/badge/-Docker-2496ED?logo=docker&logoColor=white)
-![Cloud Run](https://img.shields.io/badge/-Cloud%2520Run-4285F4?logo=google-cloud&logoColor=white)
+![Cloud Run](https://img.shields.io/badge/-Cloud%20Run-4285F4?logo=google-cloud&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
 
 ### ✨ Features
