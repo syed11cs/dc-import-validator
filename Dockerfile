@@ -28,7 +28,7 @@ LABEL maintainer="Data Commons Team" \
       version="1.0.0" \
       description="DC Import Validator - Full image with built-in datasets"
 
-# Java 17 for dc-import JAR; curl for JAR download only (no git at runtime)
+# Java 17 for dc-import JAR; curl for JAR download
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
     curl \
@@ -48,18 +48,12 @@ WORKDIR /app/dc-import-validator
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.txt -r ui/requirements.txt
 
-# dc-import JAR with retry logic
+# dc-import JAR (-f = fail on HTTP errors; retry on transient failure)
 ARG IMPORT_RELEASE_VERSION=v0.3.0
 RUN mkdir -p bin && \
-    echo "Downloading import tool JAR..." && \
-    curl --retry 3 --retry-delay 5 -sL -o bin/datacommons-import-tool.jar \
+    curl --retry 3 --retry-delay 5 -sfL -o bin/datacommons-import-tool.jar \
     "https://github.com/datacommonsorg/import/releases/download/${IMPORT_RELEASE_VERSION}/datacommons-import-tool-0.3.0-jar-with-dependencies.jar" && \
-    chmod 644 bin/datacommons-import-tool.jar && \
-    echo "✓ JAR downloaded successfully"
-
-# Verify JAR is valid (basic check)
-RUN file bin/datacommons-import-tool.jar | grep -q "Zip archive" || \
-    (echo "❌ JAR file appears corrupted" && exit 1)
+    chmod 644 bin/datacommons-import-tool.jar
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 app && \
