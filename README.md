@@ -1,7 +1,9 @@
 DC Import Validator 🛡️
 End-to-end validation pipeline for Data Commons imports — catch issues before they reach production.
 
-The DC Import Validator automates the entire import validation process: from TMCF/CSV quality checks to schema validation, with optional AI-powered review and comprehensive HTML reports.
+The DC Import Validator automates end-to-end Data Commons import validation — from TMCF/CSV quality checks to schema validation — with optional AI-powered review and rich HTML reports.
+
+Prevent bad imports from reaching production by catching schema issues, data inconsistencies, and statistical anomalies early.
 
 ![Docker](https://img.shields.io/badge/-Docker-2496ED?logo=docker&logoColor=white)
 ![Cloud Run](https://img.shields.io/badge/-Cloud%20Run-4285F4?logo=google-cloud&logoColor=white)
@@ -17,21 +19,35 @@ The DC Import Validator automates the entire import validation process: from TMC
 | 🚀 Multiple Run Modes | Docker (zero setup), CLI (development), or Cloud Run (production) |
 | ☁️ Cloud Ready | Deploy to Cloud Run with automatic GCS report storage and CI/CD via GitHub Actions |
 
-### 🚀 Quick Start (Docker — recommended)
+### 🚀 Quick Start (Recommended: Docker)
 
-Run the complete validator with zero local setup:
+Run the validator with zero local setup.  
+AI review is optional and disabled by default.
 
 ```bash
-# Clone and run (first build takes ~few minutes)
 git clone https://github.com/syed11cs/dc-import-validator.git
 cd dc-import-validator
 docker build -t dc-import-validator .
-docker run --rm -p 8080:8080 -e GEMINI_API_KEY=your_key dc-import-validator
+docker run --rm -p 8080:8080 dc-import-validator
 ```
 
-Open http://localhost:8080 and start validating!
+Open http://localhost:8080 and start validating.
 
-**Apple Silicon (M1/M2/M3):** Build for Cloud Run compatibility:
+### 🤖 Enable AI Review (Optional)
+
+To use Gemini for schema and typo review:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e GEMINI_API_KEY=your_key \
+  dc-import-validator
+```
+
+Replace `your_key` with an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+
+#### Platform notes
+
+**Apple Silicon (M1/M2/M3)** — If building for Cloud Run compatibility:
 
 ```bash
 docker build --platform linux/amd64 -t dc-import-validator .
@@ -40,7 +56,7 @@ docker build --platform linux/amd64 -t dc-import-validator .
 ### 📖 Table of Contents
 
 - [Features](#-features)
-- [Quick Start](#-quick-start-docker--recommended)
+- [Quick Start](#-quick-start-recommended-docker)
 - [Web UI](#-web-ui)
 - [CLI Usage](#-cli-usage)
 - [Deployment](#-deployment)
@@ -135,13 +151,28 @@ See [docs/DEPLOY_CLOUD_RUN.md](docs/DEPLOY_CLOUD_RUN.md) for detailed instructio
 
 #### Environment Variables
 
+All supported environment variables in one place. See `.env.example` for an optional template.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | For AI review | Google AI Studio API key |
-| `GOOGLE_API_KEY` | Alternative | Alternative API key variable |
-| `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket name for report storage |
-| `LOG_LEVEL` | No | DEBUG, INFO (default), WARNING |
-| `VALIDATION_RUN_TIMEOUT_SEC` | No | Max run time (e.g. 3600) |
+| `GEMINI_API_KEY` | For AI review | Google AI Studio API key for Gemini schema review |
+| `GOOGLE_API_KEY` | Alternative | Alternative API key variable (used if `GEMINI_API_KEY` not set) |
+| `DC_API_KEY` | Required for FULL mode | Data Commons API key used by Java import tool for Recon and existence checks |
+| `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket name for report storage; upload/serve fails clearly if bucket not accessible |
+| `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
+| `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
+| `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
+| `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks (default: `true`) |
+| `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
+
+#### Recommended Modes
+
+| Use case | `IMPORT_RESOLUTION_MODE` | `IMPORT_EXISTENCE_CHECKS` | Notes |
+|----------|--------------------------|---------------------------|------|
+| **CI / deterministic** | `LOCAL` | `false` | No KG/API calls; fast, reproducible. Use for tests and automation. |
+| **Local development** | `LOCAL` | `true` (default) | Validates DCID references against local MCFs and optional API; good for catching reference issues. |
+| **Production / DE** | `LOCAL` or `FULL` | `true` | `FULL` resolves external IDs (e.g. ISO) via DC Recon API; use when you need location resolution. |
+
 ### 🔄 Pipeline Deep Dive
 
 ```
@@ -252,6 +283,7 @@ Each failure dataset modifies ONE aspect of the clean child_birth data to trigge
 git clone https://github.com/syed11cs/dc-import-validator.git
 cd dc-import-validator
 git clone https://github.com/datacommonsorg/data.git ../datacommonsorg/data
+# Optional: set DATA_REPO to use a different path (e.g. for Docker/Cloud Run)
 
 # Setup
 chmod +x setup.sh run_e2e_test.sh run_ui.sh

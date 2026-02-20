@@ -22,7 +22,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, Body
-from fastapi.responses import FileResponse, Response, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -45,6 +45,7 @@ from ui.services.review_summary import (
     review_summary_to_markdown as _review_summary_to_markdown,
 )
 from ui import gcs_reports
+from ui.gcs_reports import GCSAccessError
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_MB = 50
@@ -58,6 +59,7 @@ DATASET_OUTPUT_MAP = {
     "child_birth_fail_units": OUTPUT_DIR / "child_birth_fail_units_genmcf",
     "child_birth_fail_scaling_factor": OUTPUT_DIR / "child_birth_fail_scaling_factor_genmcf",
     "child_birth_ai_demo": OUTPUT_DIR / "child_birth_ai_demo_genmcf",
+    "child_birth_over_1000": OUTPUT_DIR / "child_birth_over_1000_genmcf",
     "custom": OUTPUT_DIR / "custom_input",
 }
 
@@ -67,6 +69,7 @@ DATASET_CONFIG_MAP = {
     "child_birth_fail_units": "new_import_config.json",
     "child_birth_fail_scaling_factor": "new_import_config.json",
     "child_birth_ai_demo": "new_import_config.json",
+    "child_birth_over_1000": "new_import_config.json",
     "custom": "new_import_config.json",
 }
 
@@ -149,6 +152,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(LoggingMiddleware)
 
 
+@app.exception_handler(GCSAccessError)
+def gcs_access_error_handler(request: Request, exc: GCSAccessError):
+    """Return 503 with clear message when GCS bucket is not accessible (do not swallow)."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": f"GCS reports bucket not accessible: {exc!s}"},
+    )
+
+
 @app.get("/api/llm-status")
 def llm_status():
     """Check if GEMINI_API_KEY or GOOGLE_API_KEY is set (for Gemini Review)."""
@@ -165,6 +177,7 @@ def list_datasets():
             {"id": "child_birth_fail_units", "label": "Child Birth — fail units", "description": "Mixed units → check_unit_consistency FAIL"},
             {"id": "child_birth_fail_scaling_factor", "label": "Child Birth — fail scaling factor", "description": "Inconsistent scaling → check_scaling_factor_consistency FAIL"},
             {"id": "child_birth_ai_demo", "label": "Child Birth — AI demo", "description": "TMCF with schema issues & typos (missing dcs:, duplicate, typo) → Gemini Review finds issues"},
+            {"id": "child_birth_over_1000", "label": "Child Birth — over 1000 rows", "description": "1001 data rows → check_csv_row_count FAIL (sample limit)."},
             {"id": "custom", "label": "Custom (Upload your own files)", "description": "Upload TMCF + CSV files to validate."},
         ]
     }

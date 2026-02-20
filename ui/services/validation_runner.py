@@ -77,10 +77,62 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _parse_failure(output: str) -> dict | None:
+    """Parse run output into a structured failure event. Returns None if no known failure.
+    Fallback only when no structured failure was emitted during stream. Order matters: first match wins.
+    """
+    if not output or not isinstance(output, str):
+        return None
+    # Observation count mismatch (validation step)
+    m = re.search(r"NumObservations sum \((\d+)\)\s*!=\s*NumNodeSuccesses \((\d+)\)", output)
+    if m:
+        return {
+            "code": "OBSERVATION_COUNT_MISMATCH",
+            "step": 3,
+            "message": f"Observation count ({m.group(1)}) doesn't match node count ({m.group(2)})",
+        }
+    if "CSV row count exceeds" in output:
+        limit_m = re.search(r"exceeds (\d+)|limit of (\d+)", output)
+        limit = int(limit_m.group(1) or limit_m.group(2)) if limit_m else None
+        return {
+            "code": "ROW_COUNT_EXCEEDED",
+            "step": 0,
+            "message": "CSV row count exceeds limit" + (f" ({limit} rows max)" if limit else ""),
+            "limit": limit,
+        }
+    if "CSV quality check failed" in output:
+        return {"code": "CSV_QUALITY_FAILED", "step": 0, "message": "CSV quality check failed"}
+    if "Preflight failed" in output:
+        return {"code": "PREFLIGHT_FAILED", "step": 0, "message": "Preflight failed"}
+    if "dc-import genmcf failed" in output or "Aborting prematurely" in output:
+        return {"code": "DATA_PROCESSING_FAILED", "step": 2, "message": "Data processing failed"}
+    if "dc-import lint failed" in output:
+        return {"code": "LINT_FAILED", "step": 2, "message": "lint failed"}
+    if "Gemini review found issues" in output or "Step 0 found blocking issues" in output:
+        return {"code": "GEMINI_BLOCKING", "step": 1, "message": "Gemini review found issues"}
+    return None  # Order above defines priority when multiple phrases could match
+
+
+def _normalize_failure_event(obj: dict) -> dict | None:
+    """Validate and normalize a streamed failure event (t==='failure'). Returns dict with code, step, message, optional limit."""
+    if not isinstance(obj, dict) or obj.get("t") != "failure":
+        return None
+    code = obj.get("code")
+    step = obj.get("step")
+    message = obj.get("message")
+    if not code or not isinstance(message, str):
+        return None
+    out = {"code": str(code), "step": int(step) if isinstance(step, (int, float)) else None, "message": message}
+    if obj.get("limit") is not None and isinstance(obj["limit"], (int, float)):
+        out["limit"] = int(obj["limit"])
+    return out
+
+
 async def _stream_run_output(proc):
-    """Stream process stdout line by line, yielding NDJSON. Detect steps for progress."""
+    """Stream process stdout line by line, yielding NDJSON. Detect steps and structured failure events."""
     output_lines = []
     cancelled = False
+    last_failure = None  # First structured failure emitted by backend; used in done so we don't re-parse output
     try:
         while True:
             line = await proc.stdout.readline()
@@ -89,6 +141,18 @@ async def _stream_run_output(proc):
             text = line.decode("utf-8", errors="replace")
             text = _strip_ansi(text)
             output_lines.append(text)
+            # Detect structured failure line (single-line JSON from backend)
+            stripped = text.strip()
+            if stripped.startswith("{") and '"t"' in stripped and '"failure"' in stripped:
+                try:
+                    obj = json.loads(stripped)
+                    failure = _normalize_failure_event(obj)
+                    if failure:
+                        if last_failure is None:
+                            last_failure = failure  # Keep first failure (root cause); ignore cascaded ones
+                        yield json.dumps({"t": "failure", **failure}) + "\n"
+                except (json.JSONDecodeError, TypeError):
+                    pass
             step = None
             label = None
             _step_match = re.search(r"::STEP::(\d)(?::(.+))?", text)
@@ -96,24 +160,19 @@ async def _stream_run_output(proc):
                 step = int(_step_match.group(1))
                 if _step_match.group(2):
                     label = _step_match.group(2).strip()
-            elif "::STEP::0" in text:
+            # Fallback only; ::STEP::N is authoritative. Backend log "Step N" = UI step N (0–4).
+            elif "Pre-Import Checks" in text or "CSV quality" in text.lower():
                 step = 0
-            elif "::STEP::1" in text:
+            elif "Step 1" in text or ("Gemini review" in text and "model:" in text):
                 step = 1
-            elif "::STEP::2" in text:
+            elif "Step 2" in text or "Running dc-import genmcf" in text:
                 step = 2
-            elif "::STEP::3" in text:
+            elif "Step 3" in text or "Running import_validation" in text:
                 step = 3
-            elif "Step 0" in text or ("Gemini review" in text and "model:" in text):
-                step = 0
-            elif "Step 1" in text or "Running dc-import genmcf" in text:
-                step = 1
-            elif "Step 2" in text or "Running import_validation" in text:
-                step = 2
-            elif "Step 3" in text or "HTML report:" in text or "Validation PASSED" in text or "Validation FAILED" in text:
-                step = 3
+            elif "Step 4" in text or "HTML report:" in text or "Validation PASSED" in text or "Validation FAILED" in text:
+                step = 4
             if step is not None:
-                payload = {"t": "step", "step": step}
+                payload = {"t": "step", "step": step, "ts": time.time()}
                 if label:
                     payload["label"] = label
                 yield json.dumps(payload) + "\n"
@@ -132,13 +191,23 @@ async def _stream_run_output(proc):
         output_lines.append("[INFO] Validation cancelled by user.\n")
     finally:
         output = "".join(output_lines)
-        yield json.dumps({
+        done_payload = {
             "t": "done",
             "success": False if cancelled else (proc.returncode == 0),
             "exit_code": -1 if cancelled else (proc.returncode if proc.returncode is not None else -1),
             "output": output,
             "cancelled": cancelled,
-        }) + "\n"
+            "ts_end": time.time(),
+        }
+        if not done_payload["success"] and not cancelled:
+            failure = last_failure or _parse_failure(output)
+            if failure:
+                done_payload["failure_code"] = failure["code"]
+                done_payload["failure_step"] = failure["step"]
+                done_payload["failure_message"] = failure["message"]
+                if failure.get("limit") is not None:
+                    done_payload["failure_limit"] = failure["limit"]
+        yield json.dumps(done_payload) + "\n"
 
 
 async def run_validation_process(
@@ -185,15 +254,20 @@ async def run_validation_process(
                         logger.warning("validation run timed out after %s sec request_id=%s", timeout_sec, request_id)
 
                 timeout_task = asyncio.create_task(timeout_killer()) if timeout_sec > 0 else None
+                done_yielded = False
                 try:
                     async for chunk in _stream_run_output(proc):
                         try:
                             obj = json.loads(chunk) if chunk.strip() else {}
                             if obj.get("t") == "done":
+                                done_yielded = True
                                 if run_timed_out:
                                     obj["timeout"] = True
                                     obj["success"] = False
                                     obj["exit_code"] = -1
+                                    obj["failure_code"] = "RUN_TIMEOUT"
+                                    obj["failure_step"] = None
+                                    obj["failure_message"] = "Validation run timed out."
                                 duration_sec = round(time.monotonic() - run_start_time, 2)
                                 logger.info(
                                     "run_finished request_id=%s success=%s cancelled=%s duration_sec=%s",
@@ -217,6 +291,33 @@ async def run_validation_process(
                         except (json.JSONDecodeError, TypeError):
                             pass
                         yield chunk
+                    # If we timed out and the subprocess never sent "done", emit a synthetic done so UI gets structured failure
+                    if run_timed_out and not done_yielded:
+                        duration_sec = round(time.monotonic() - run_start_time, 2)
+                        logger.info(
+                            "run_finished request_id=%s success=False timeout=True duration_sec=%s",
+                            request_id,
+                            duration_sec,
+                        )
+                        synthetic = {
+                            "t": "done",
+                            "success": False,
+                            "exit_code": -1,
+                            "timeout": True,
+                            "run_id": request_id,
+                            "failure_code": "RUN_TIMEOUT",
+                            "failure_step": None,
+                            "failure_message": "Validation run timed out.",
+                        }
+                        if output_dir and dataset:
+                            await asyncio.to_thread(
+                                _upload_reports_sync, output_dir, request_id, dataset
+                            )
+                            if canonical_output_dir and output_dir != canonical_output_dir:
+                                await asyncio.to_thread(
+                                    _copy_run_to_canonical, output_dir, canonical_output_dir
+                                )
+                        yield json.dumps(synthetic) + "\n"
                 except asyncio.CancelledError:
                     try:
                         proc.kill()
@@ -239,6 +340,9 @@ async def run_validation_process(
                         "output": "[INFO] Validation cancelled by user.\n",
                         "cancelled": True,
                         "run_id": request_id,
+                        "failure_code": "RUN_CANCELLED",
+                        "failure_step": None,
+                        "failure_message": "Validation cancelled by user.",
                     }) + "\n"
                 finally:
                     if timeout_task is not None:
@@ -298,6 +402,9 @@ async def run_validation_process(
                     "output": f"[ERROR] Validation run timed out after {timeout_sec} seconds.\n",
                     "run_id": request_id,
                     "timeout": True,
+                    "failure_code": "RUN_TIMEOUT",
+                    "failure_step": None,
+                    "failure_message": "Validation run timed out.",
                 }
         else:
             done, pending = await asyncio.wait(
@@ -333,6 +440,9 @@ async def run_validation_process(
                 "output": "[INFO] Validation cancelled by user.\n",
                 "cancelled": True,
                 "run_id": request_id,
+                "failure_code": "RUN_CANCELLED",
+                "failure_step": None,
+                "failure_message": "Validation cancelled by user.",
             }
 
         stdout, _ = await proc_task
@@ -363,12 +473,21 @@ async def run_validation_process(
                 await asyncio.to_thread(
                     _copy_run_to_canonical, output_dir, canonical_output_dir
                 )
-        return {
+        result = {
             "success": success,
             "exit_code": exit_code,
             "output": output,
             "run_id": request_id,
         }
+        if not success:
+            failure = _parse_failure(output)
+            if failure:
+                result["failure_code"] = failure["code"]
+                result["failure_step"] = failure["step"]
+                result["failure_message"] = failure["message"]
+                if failure.get("limit") is not None:
+                    result["failure_limit"] = failure["limit"]
+        return result
     finally:
         if not stream and config_path and config_path.exists():
             config_path.unlink(missing_ok=True)

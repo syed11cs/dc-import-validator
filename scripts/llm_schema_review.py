@@ -531,9 +531,9 @@ def _build_prompt(
 5. Column references (e.g. C:table->C1): must be consistent within the TMCF; flag references that look like typos (e.g. C99 when only C1–C5 appear elsewhere).
 9. If no table header list was provided, skip column-existence check."""
 
-    extra = ""
+    extra = "\n\nOptional reference — known StatVars/schema (use to check if TMCF StatVar DCIDs or types exist):\n"
+    extra += "Standard Data Commons schema types (treat as known; do not flag as unknown_statvar): dcs:DataCommonsAggregate, dcs:Percent, dcs:StatVarObservation.\n"
     if stat_vars_content or stat_vars_schema_content:
-        extra = "\n\nOptional reference — known StatVars/schema (use to check if TMCF StatVar DCIDs or types exist):\n"
         if stat_vars_content:
             extra += "--- stat_vars.mcf (excerpt) ---\n" + (stat_vars_content[:12000] or "") + "\n"
         if stat_vars_schema_content:

@@ -63,7 +63,7 @@ RUN addgroup --system --gid 1001 app && \
 # Switch to non-root user
 USER app
 
-# run_e2e_test.sh expects PROJECTS_DIR so DATA_REPO = $PROJECTS_DIR/datacommonsorg/data
+# run_e2e_test.sh uses DATA_REPO when set, else defaults to $PROJECTS_DIR/datacommonsorg/data
 ENV PROJECTS_DIR=/app
 EXPOSE 8080
 

@@ -17,6 +17,7 @@
 #   child_birth_fail_units       - Same base, mixed units → check_unit_consistency FAIL
 #   child_birth_fail_scaling_factor - Same base, inconsistent scaling → check_scaling_factor_consistency FAIL
 #   child_birth_ai_demo      - TMCF with schema issues & typos → Gemini Review finds issues
+#   child_birth_over_1000    - 1001 data rows → row-count check fails in Pre-Import Checks
 #   custom                  - Your own TMCF + CSV (use --tmcf and --csv)
 #
 # Options:
@@ -44,7 +45,10 @@ set -e
 # --- Paths (relative to script location) ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_REPO="$PROJECTS_DIR/datacommonsorg/data"
+DATA_REPO="${DATA_REPO:-$PROJECTS_DIR/datacommonsorg/data}"
+# Import tool behavior: passed to Java process (env). Defaults support deterministic/local runs.
+export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
+export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -149,7 +153,7 @@ while [[ $# -gt 0 ]]; do
       head -28 "$0" | tail -23
       exit 0
       ;;
-    child_birth|child_birth_fail_min_value|child_birth_fail_units|child_birth_fail_scaling_factor|child_birth_ai_demo|custom)
+    child_birth|child_birth_fail_min_value|child_birth_fail_units|child_birth_fail_scaling_factor|child_birth_ai_demo|child_birth_over_1000|custom)
       DATASET="$1"
       shift
       ;;
@@ -184,6 +188,16 @@ log_info()  { echo -e "${GREEN}[INFO]${NC} [session=$SESSION_ID] $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} [session=$SESSION_ID] $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} [session=$SESSION_ID] $1"; }
 
+# Emit structured failure event for UI (single line JSON). Runner forwards it; done payload uses it instead of parsing output.
+emit_failure() {
+  local code=$1 step=$2 msg=$3 limit=${4:-}
+  if [[ -n "$limit" && "$limit" != "null" ]]; then
+    echo "{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\",\"limit\":$limit}"
+  else
+    echo "{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\"}"
+  fi
+}
+
 # --- Validation ---
 if [[ ! -d "$DATA_REPO" ]]; then
   log_error "Data repo not found at $DATA_REPO"
@@ -213,6 +227,9 @@ mkdir -p "$OUTPUT_DIR"
 # =============================================================================
 # Child birth testdata lives in this repo so we don't depend on data repo for sample inputs
 log_info "Starting run (dataset=$DATASET)"
+dc_key_status="missing"
+[[ -n "${DC_API_KEY:-}" ]] && dc_key_status="present"
+log_info "Resolution Mode: $IMPORT_RESOLUTION_MODE | Existence Checks: $IMPORT_EXISTENCE_CHECKS | DC_API_KEY: $dc_key_status"
 CB="$SCRIPT_DIR/sample_data/child_birth"
 if [[ "$DATASET" == "child_birth" ]]; then
   TMCF="$CB/child_birth.tmcf"
@@ -275,6 +292,18 @@ elif [[ "$DATASET" == "child_birth_ai_demo" ]]; then
   DIFFER_OUTPUT=""
   [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
   log_info "Using child_birth_ai_demo (TMCF with schema issues & typos → Gemini Review finds issues)"
+elif [[ "$DATASET" == "child_birth_over_1000" ]]; then
+  TMCF="$SCRIPT_DIR/sample_data/child_birth_over_1000/child_birth_over_1000.tmcf"
+  CSV="$SCRIPT_DIR/sample_data/child_birth_over_1000/child_birth_over_1000.csv"
+  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_over_1000_genmcf"
+  DATASET_OUTPUT="$GENMCF_OUTPUT"
+  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
+  LINT_REPORT="$GENMCF_OUTPUT/report.json"
+  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
+  STAT_VARS_SCHEMA_MCF=""
+  DIFFER_OUTPUT=""
+  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
+  log_info "Using child_birth_over_1000 (1001 rows → check_csv_row_count FAIL)"
 elif [[ "$DATASET" == "custom" ]]; then
   if [[ -z "$CUSTOM_TMCF" || -z "$CUSTOM_CSV" ]]; then
     log_error "Custom dataset requires --tmcf and --csv"
@@ -295,7 +324,7 @@ elif [[ "$DATASET" == "custom" ]]; then
   log_info "Using custom data: TMCF=$TMCF, CSV=$CSV"
 else
   log_error "Unknown dataset: $DATASET"
-  echo "Use: child_birth, child_birth_fail_min_value, child_birth_fail_units, child_birth_fail_scaling_factor, child_birth_ai_demo, or custom (with --tmcf and --csv)"
+  echo "Use: child_birth, child_birth_fail_min_value, child_birth_fail_units, child_birth_fail_scaling_factor, child_birth_ai_demo, child_birth_over_1000, or custom (with --tmcf and --csv)"
   exit 1
 fi
 
@@ -341,8 +370,17 @@ if [[ -n "$RULES_FILTER" || -n "$SKIP_RULES_FILTER" ]]; then
 fi
 
 # =============================================================================
-# Preflight: import files exist and follow expected naming (.tmcf, .csv, .mcf)
+# Step 0: Pre-Import Checks (preflight + CSV quality + row count)
 # =============================================================================
+if [[ -z "$PYTHON" ]]; then
+  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
+fi
+echo "::STEP::0:Pre-Import Checks"
+log_info "Pre-Import Checks (files + CSV quality + row count)..."
 VALIDATE_FILES_SCRIPT="$SCRIPT_DIR/scripts/validate_import_files.py"
 if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
   PREFLIGHT_ARGS=(--tmcf="$TMCF" --csv="$CSV")
@@ -350,71 +388,102 @@ if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
   if ! $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" 2>/dev/null; then
     log_error "Preflight failed: required import files missing or wrong extension."
+    emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed"
     $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" || true
     exit 1
   fi
 fi
 
-# =============================================================================
-# CSV data quality: duplicate columns, empty columns, duplicate rows, non-numeric value column
-# =============================================================================
 VALIDATE_CSV_SCRIPT="$SCRIPT_DIR/scripts/validate_csv_quality.py"
 if [[ -f "$VALIDATE_CSV_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
   if ! $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value 2>/dev/null; then
     log_error "CSV quality check failed."
+    emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed"
     $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value || true
     exit 1
   fi
 fi
 
+# CSV row count (pre-import constraint; only needs CSV)
+ROW_COUNT_SCRIPT="$SCRIPT_DIR/scripts/check_csv_row_count.py"
+ROW_COUNT_RESULT="$DATASET_OUTPUT/row_count_result.json"
+if [[ -f "$ROW_COUNT_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
+  mkdir -p "$DATASET_OUTPUT"
+  if $PYTHON "$ROW_COUNT_SCRIPT" --csv="$CSV" --threshold=1000 --output="$ROW_COUNT_RESULT"; then
+    if [[ -f "$ROW_COUNT_RESULT" ]] && grep -q '"status": "FAILED"' "$ROW_COUNT_RESULT" 2>/dev/null; then
+      WARN_ONLY_JSON="${CONFIG_DIR}/warn_only_rules.json"
+      if [[ -f "$WARN_ONLY_JSON" ]]; then
+        if ! $PYTHON -c "
+import json, sys
+with open('$WARN_ONLY_JSON') as f: d = json.load(f)
+rules = d.get('$DATASET', [])
+sys.exit(0 if 'check_csv_row_count' in rules else 1)
+" 2>/dev/null; then
+          log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
+          emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
+          exit 1
+        fi
+      else
+        log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
+        emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
+        exit 1
+      fi
+    fi
+  else
+    log_warn "Row count check script failed or skipped"
+  fi
+fi
+
 # =============================================================================
-# Step 0: Schema review (deterministic checks always; LLM only when --llm-review)
+# Step 1: Schema review (deterministic checks always; LLM only when --llm-review)
 # =============================================================================
 if [[ -n "$TMCF" && -f "$TMCF" ]]; then
   LLM_REVIEW_SCRIPT="$SCRIPT_DIR/scripts/llm_schema_review.py"
   SCHEMA_REVIEW_OUT="$DATASET_OUTPUT/schema_review.json"
   mkdir -p "$DATASET_OUTPUT"
   if [[ -f "$LLM_REVIEW_SCRIPT" ]]; then
-    STEP0_START=$(date +%s)
+    STEP1_START=$(date +%s)
     LLM_EXTRA_ARGS=()
     [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
     [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
     [[ -n "$CSV" && -f "$CSV" ]] && LLM_EXTRA_ARGS+=(--csv="$CSV")
     [[ "$LLM_REVIEW" == "true" ]] && LLM_EXTRA_ARGS+=(--llm-review)
-    echo "::STEP::0:Gemini Review"
+    echo "::STEP::1:Gemini Review"
     if [[ "$LLM_REVIEW" == "true" ]]; then
-      log_info "Step 0: Running schema review + Gemini review (model: $LLM_MODEL)..."
+      log_info "Step 1: Running schema review + Gemini review (model: $LLM_MODEL)..."
     else
-      log_info "Step 0: Running schema review (deterministic checks only)..."
+      log_info "Step 1: Running schema review (deterministic checks only)..."
     fi
     if $PYTHON "$LLM_REVIEW_SCRIPT" --tmcf="$TMCF" --output="$SCHEMA_REVIEW_OUT" --model="$LLM_MODEL" "${LLM_EXTRA_ARGS[@]}"; then
-      log_info "Step 0 passed (no blocking issues)"
+      log_info "Step 1 passed (no blocking issues)"
     else
       if [[ -f "$SCHEMA_REVIEW_OUT" ]]; then
-        log_error "Step 0 found blocking issues. See $SCHEMA_REVIEW_OUT"
+        log_error "Step 1 found blocking issues. See $SCHEMA_REVIEW_OUT"
         $PYTHON -c "import json; d=json.load(open('$SCHEMA_REVIEW_OUT')); print('\n'.join(str(x) for x in d))" 2>/dev/null || cat "$SCHEMA_REVIEW_OUT"
         if [[ "$LLM_REVIEW" == "true" && "$AI_ADVISORY" == "true" ]]; then
           log_info "Advisory mode: treating AI blockers as non-blocking — continuing pipeline."
         else
+          emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
           exit 1
         fi
       else
-        log_warn "Step 0 failed (script error or missing output)"
+        log_warn "Step 1 failed (script error or missing output)"
+        emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
         exit 1
       fi
     fi
-    log_info "Step 0 completed in $(( $(date +%s) - STEP0_START ))s"
+    log_info "Step 1 completed in $(( $(date +%s) - STEP1_START ))s"
   else
     log_warn "Schema review script not found: $LLM_REVIEW_SCRIPT"
   fi
 fi
 
 # =============================================================================
-# Step 1: Run dc-import genmcf
+# Step 2: Run dc-import genmcf
 # =============================================================================
-STEP1_START=$(date +%s)
-echo "::STEP::1:DC Import Tool"
-log_info "Step 1: Running dc-import genmcf..."
+STEP2_START=$(date +%s)
+echo "::STEP::2:DC Import Tool"
+log_info "Step 2: Running dc-import genmcf..."
 
 # Resolve JAR: IMPORT_JAR_PATH -> bin/ -> download from GitHub
 if [[ -n "$IMPORT_JAR_PATH" && -f "$IMPORT_JAR_PATH" ]]; then
@@ -450,7 +519,8 @@ if [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] || [[ -n "$STAT_VARS_SCHEMA_
   LINT_FILES=("$TMCF" "$CSV")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LINT_FILES+=("$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LINT_FILES+=("$STAT_VARS_SCHEMA_MCF")
-  if java -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" 2>/dev/null; then
+  if java -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
+      --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" 2>/dev/null; then
     LINT_REPORT="$LINT_WITH_MCF_OUTPUT/report.json"
     if [[ -f "$LINT_REPORT" ]]; then
       log_info "Using lint report from schema MCF run: $LINT_REPORT"
@@ -464,8 +534,10 @@ fi
 GENMCF_FILES=("$TMCF" "$CSV")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
-java -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" || {
+java -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
+  --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
   log_error "dc-import genmcf failed"
+  emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
   exit 1
 }
 
@@ -474,14 +546,13 @@ if [[ ! -f "$STATS_SUMMARY" ]]; then
   exit 1
 fi
 log_info "Generated: $STATS_SUMMARY, report.json"
-log_info "Step 1 completed in $(( $(date +%s) - STEP1_START ))s"
+log_info "Step 2 completed in $(( $(date +%s) - STEP2_START ))s"
 
 # =============================================================================
-# Step 2: Run import_validation
+# Step 3: Run import_validation
 # =============================================================================
-# Step 1.9: Validate config template (structure and required keys)
-STEP2_START=$(date +%s)
-# =============================================================================
+# Validate config template (structure and required keys)
+STEP3_START=$(date +%s)
 VALIDATE_CONFIG_SCRIPT="$SCRIPT_DIR/scripts/validate_config_template.py"
 if [[ -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
   if ! $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" 2>/dev/null; then
@@ -491,9 +562,8 @@ if [[ -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
   fi
 fi
 
-# =============================================================================
-echo "::STEP::2:DC Import Validation"
-log_info "Step 2: Running import_validation (config: $(basename "$VALIDATION_CONFIG"))..."
+echo "::STEP::3:DC Import Validation"
+log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CONFIG"))..."
 
 # Validation output goes inside dataset folder for consistency
 mkdir -p "$DATASET_OUTPUT"
@@ -540,6 +610,26 @@ else
 fi
 
 # =============================================================================
+# Step 2.2: Merge row-count result (computed in Pre-Import Checks) into validation_output
+# =============================================================================
+if [[ -f "$VALIDATION_OUTPUT" && -f "$ROW_COUNT_RESULT" ]]; then
+  if $PYTHON -c "
+import json
+vo_path = '$VALIDATION_OUTPUT'
+rc_path = '$ROW_COUNT_RESULT'
+with open(vo_path) as f: vo = json.load(f)
+with open(rc_path) as f: rc = json.load(f)
+if isinstance(vo, list) and isinstance(rc, list) and rc:
+  vo.extend(rc)
+  with open(vo_path, 'w') as f: json.dump(vo, f, indent=2, default=str)
+" 2>/dev/null; then
+    :
+  else
+    log_warn "Failed to merge row_count_result.json into validation_output.json"
+  fi
+fi
+
+# =============================================================================
 # Step 2.25: Check counters match (StatVars/NumObservations vs report)
 # =============================================================================
 COUNTERS_CHECK_EXIT=0
@@ -572,16 +662,16 @@ fi
 if [[ "$COUNTERS_CHECK_EXIT" -ne 0 ]]; then
   VALIDATION_RESULT=1
 fi
-log_info "Step 2 completed in $(( $(date +%s) - STEP2_START ))s"
+log_info "Step 3 completed in $(( $(date +%s) - STEP3_START ))s"
 
 # =============================================================================
-# Step 3: Generate HTML report (pass overall result so report shows FAIL when run failed)
+# Step 4: Generate HTML report (pass overall result so report shows FAIL when run failed)
 # =============================================================================
-STEP3_START=$(date +%s)
+STEP4_START=$(date +%s)
 HTML_REPORT="$DATASET_OUTPUT/validation_report.html"
 if [[ -f "$VALIDATION_OUTPUT" ]]; then
-  echo "::STEP::3:Results"
-  log_info "Step 3: Generating HTML report..."
+  echo "::STEP::4:Results"
+  log_info "Step 4: Generating HTML report..."
   OVERALL_ARG="--overall=pass"
   [[ "$VALIDATION_RESULT" -ne 0 ]] && OVERALL_ARG="--overall=fail"
   AI_REVIEW_ARG=""
@@ -589,7 +679,7 @@ if [[ -f "$VALIDATION_OUTPUT" ]]; then
   if $PYTHON "$SCRIPT_DIR/scripts/generate_html_report.py" "$VALIDATION_OUTPUT" "$HTML_REPORT" --dataset="$DATASET" $OVERALL_ARG $AI_REVIEW_ARG; then
     log_info "HTML report: $HTML_REPORT"
   fi
-  log_info "Step 3 completed in $(( $(date +%s) - STEP3_START ))s"
+  log_info "Step 4 completed in $(( $(date +%s) - STEP4_START ))s"
 fi
 
 if [[ "$VALIDATION_RESULT" -eq 0 ]]; then

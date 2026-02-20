@@ -1234,11 +1234,15 @@
         <div id="status-banner" class="status-banner" style="display: none;"></div>
         <div id="progress-container" class="progress-container" style="display: none; margin-bottom: 12px;">
           <div id="progress-steps-row" class="progress-steps-row">
-            <span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span>
+            <span id="progress-pill-0" class="progress-step-pill">0. Pre-Import Checks</span>
             <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span>
+            <span id="progress-pill-1" class="progress-step-pill">1. Gemini Review</span>
             <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-3" class="progress-step-pill">3. Results</span>
+            <span id="progress-pill-2" class="progress-step-pill">2. DC Import Tool</span>
+            <span class="progress-step-sep" aria-hidden="true"></span>
+            <span id="progress-pill-3" class="progress-step-pill">3. DC Import Validation</span>
+            <span class="progress-step-sep" aria-hidden="true"></span>
+            <span id="progress-pill-4" class="progress-step-pill">4. Results</span>
           </div>
           <div class="progress-bar-wrap">
             <div id="progress-bar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -1265,6 +1269,7 @@
             <div id="report-actions" class="tab-actions" style="display: none;">
               <span id="report-timestamp" class="report-timestamp"></span>
               <span id="report-run-id-wrap" class="report-run-id-wrap" style="display: none;"><span class="report-run-id-label">Run ID:</span><span id="report-run-id" class="report-run-id-badge"></span></span>
+              <button id="copy-run-summary-btn" class="btn btn-sm" disabled title="Copy run summary to clipboard">Copy Run Summary</button>
               <a id="open-report-link" class="btn btn-sm" href="#" target="_blank" rel="noopener">Open Report ↗</a>
               <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download</button>
             </div>
@@ -1533,7 +1538,7 @@
       const status = document.getElementById('status');
       status.textContent = '—';
       status.className = 'status-badge';
-      document.getElementById('report-actions').style.display = 'none';
+      setReportActionsVisible(false, false);
       lastReportMtime = null;
       document.getElementById('report-timestamp').textContent = '';
       hideStatusBanner();
@@ -1593,15 +1598,36 @@
       if (presetTrigger) presetTrigger.disabled = false;
     }
 
-    function getFailureReason(output) {
-      if (!output || typeof output !== 'string') return null;
-      const m = output.match(/NumObservations sum \((\d+)\)\s*!=\s*NumNodeSuccesses \((\d+)\)/);
-      if (m) return `Observation count (${m[1]}) doesn't match node count (${m[2]})`;
-      // Check later failures first: if we continued past Gemini Review (advisory mode) then genmcf failed, attribute to Data processing
-      if (output.includes('CSV quality check failed') || output.includes('dc-import genmcf failed') || output.includes('Aborting prematurely')) return 'Data processing failed';
-      if (output.includes('dc-import lint failed')) return 'lint failed';
-      if (output.includes('Gemini review found issues') || output.includes('Step 0 found blocking issues')) return 'Gemini review found issues';
-      return null;
+    // Structured failure codes (prefer backend failure_code when present)
+    const FAILURE = {
+      ROW_COUNT_EXCEEDED: 'ROW_COUNT_EXCEEDED',
+      CSV_QUALITY_FAILED: 'CSV_QUALITY_FAILED',
+      PREFLIGHT_FAILED: 'PREFLIGHT_FAILED',
+      GEMINI_BLOCKING: 'GEMINI_BLOCKING',
+      DATA_PROCESSING_FAILED: 'DATA_PROCESSING_FAILED',
+      LINT_FAILED: 'LINT_FAILED',
+      OBSERVATION_COUNT_MISMATCH: 'OBSERVATION_COUNT_MISMATCH',
+    };
+    const PIPELINE_FAILURE_CODES = new Set([
+      FAILURE.ROW_COUNT_EXCEEDED,
+      FAILURE.CSV_QUALITY_FAILED,
+      FAILURE.PREFLIGHT_FAILED,
+      FAILURE.GEMINI_BLOCKING,
+      FAILURE.DATA_PROCESSING_FAILED,
+      FAILURE.LINT_FAILED,
+    ]);
+    /** Step index at which validation runs. Failures with step < this are "before validation". */
+    const VALIDATION_STEP_INDEX = 3;
+
+    /** Use structured failure from done payload only. No log parsing. Returns { code, message, step, limit } or null. */
+    function getFailureInfo(data) {
+      if (!data || !data.failure_code || !data.failure_message) return null;
+      return {
+        code: data.failure_code,
+        message: data.failure_message,
+        step: data.failure_step,
+        limit: data.failure_limit,
+      };
     }
 
     function showStatusBanner(data) {
@@ -1651,6 +1677,8 @@
       content.innerHTML = '';
 
       if (opts.cancelled) {
+        lastRunSummary = { dataset: currentDataset || null, run_id: opts.run_id ?? null, success: false, cancelled: true };
+        setReportActionsVisible(true, false);
         card.classList.add('outcome-fail');
         const outcome = document.createElement('div');
         outcome.className = 'summary-card-outcome';
@@ -1684,11 +1712,24 @@
         card.classList.add('outcome-fail');
         outcome.style.color = 'var(--fail)';
         let failLabel = '✖ Validation failed';
-        if (pipelineFailedBeforeValidation && opts.pipelineFailureReason === 'Gemini review found issues') failLabel = '✖ Run stopped: Gemini Review found issues';
-        else if (pipelineFailedBeforeValidation && (opts.pipelineFailureReason === 'Data processing failed' || opts.pipelineFailureReason === 'lint failed')) failLabel = '✖ Pipeline failed';
+        const code = opts.failure_code;
+        const msg = opts.failure_message || opts.pipeline_failure_reason || opts.run_failure_reason;
+        if (pipelineFailedBeforeValidation && code === FAILURE.GEMINI_BLOCKING) failLabel = '✖ Run stopped: Gemini Review found issues';
+        else if (pipelineFailedBeforeValidation && code === FAILURE.ROW_COUNT_EXCEEDED) failLabel = '✖ ' + (msg || 'CSV row count exceeds limit');
+        else if (pipelineFailedBeforeValidation && (code === FAILURE.CSV_QUALITY_FAILED || code === FAILURE.PREFLIGHT_FAILED)) failLabel = '✖ Pipeline failed (Pre-Import Checks)';
+        else if (pipelineFailedBeforeValidation && (code === FAILURE.DATA_PROCESSING_FAILED || code === FAILURE.LINT_FAILED)) failLabel = '✖ Pipeline failed';
+        else if (msg) failLabel = '✖ ' + msg;
         outcome.textContent = failLabel;
       }
       content.appendChild(outcome);
+
+      if (pipelineFailedBeforeValidation && !opts.success) {
+        const badge = document.createElement('div');
+        badge.className = 'summary-card-badge';
+        badge.style.cssText = 'font-size:0.85em;color:var(--text-muted);margin-top:2px;';
+        badge.textContent = '(Validation did not run)';
+        content.appendChild(badge);
+      }
 
       if (!pipelineFailedBeforeValidation && runCount > 0) {
         const countsParts = [];
@@ -1732,14 +1773,15 @@
         const failedRules = opts.failedRules || [];
         const warningRules = opts.warningRules || [];
         let listItems = [];
-        if (opts.runFailureReason && !opts.pipelineFailedBeforeValidation) {
-          listItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.runFailureReason) + '</li>');
+        if (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) {
+          listItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.run_failure_reason) + '</li>');
         }
         listItems = listItems.concat(failedRules.map(r => formatRuleItem(r, true))).concat(warningRules.map(r => formatRuleItem(r, false)));
         if (listItems.length === 0) {
-          if (opts.pipelineFailedBeforeValidation && opts.pipelineFailureReason) {
-            const stepLabel = opts.pipelineFailureReason === 'Gemini review found issues' ? 'Gemini Review found issues' : (opts.pipelineFailureReason === 'Data processing failed' ? 'Generate MCF failed' : (opts.pipelineFailureReason === 'lint failed' ? 'Lint failed' : opts.pipelineFailureReason));
-            listItems.push('<li style="color:var(--fail);">' + escapeHtml(stepLabel) + '</li>');
+          if (opts.pipelineFailedBeforeValidation && opts.failure_message) {
+            listItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
+          } else if (opts.failure_message) {
+            listItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
           } else {
             listItems.push('<li style="color:var(--text-muted);">All rules passed.</li>');
           }
@@ -1760,7 +1802,48 @@
       card.classList.add('visible');
     }
 
+    /** Canonical run outcome for Copy Run Summary. Set when a run completes (success or failed). */
+    let lastRunSummary = null;
+
+    const RUN_SUMMARY_STEP_NAMES = { 0: 'Pre-Import Checks', 1: 'Gemini Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
+
+    function getRunSummaryText() {
+      if (!lastRunSummary) return null;
+      const s = lastRunSummary;
+      const lines = [
+        'Dataset: ' + (s.dataset || '—'),
+        'Run ID: ' + (s.run_id || '—'),
+        'Status: ' + (s.cancelled ? 'CANCELLED' : (s.success ? 'PASSED' : 'FAILED')),
+      ];
+      if (s.durationSec != null) lines.push('Run time: ' + s.durationSec.toFixed(1) + 's');
+      if (s.cancelled) return lines.join('\n');
+      if (s.success) {
+        lines.push('Warnings: ' + (s.hasWarnings ? 'Yes' : 'None'));
+        if (s.runCount != null) lines.push('Rules: ' + s.runCount + ' run' + (s.runCount !== 1 ? 's' : '') + (s.warnCount ? ', ' + s.warnCount + ' warning' + (s.warnCount !== 1 ? 's' : '') : '') + ' (all passed or advisory)');
+      } else if (s.pipelineFailedBeforeValidation) {
+        const stepLabel = typeof s.failure_step === 'number' ? RUN_SUMMARY_STEP_NAMES[s.failure_step] || ('Step ' + s.failure_step) : '—';
+        lines.push('Failed step: ' + (typeof s.failure_step === 'number' ? stepLabel + ' (' + s.failure_step + ')' : '—'));
+        if (s.failure_code) lines.push('Failure code: ' + s.failure_code);
+        if (s.failure_message) lines.push('Message: ' + s.failure_message);
+      } else {
+        if (s.failCount != null) lines.push('Blocking rules: ' + s.failCount);
+        if (s.warnCount != null) lines.push('Warnings: ' + s.warnCount);
+        if (s.failedRules && s.failedRules.length > 0) {
+          lines.push('');
+          lines.push('Blocking rule details:');
+          s.failedRules.forEach(function (r) {
+            const msg = r.message ? String(r.message).replace(/\n/g, ' ') : '';
+            const truncated = msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
+            lines.push('  - ' + (r.validation_name || r.validation_id || 'Rule') + (truncated ? ': ' + truncated : ''));
+          });
+        }
+      }
+      return lines.join('\n');
+    }
+
     function hideSummaryCard() {
+      lastRunSummary = null;
+      setReportActionsVisible(false, false);
       const card = document.getElementById('summary-card');
       if (card) {
         card.classList.remove('visible', 'outcome-pass', 'outcome-warnings', 'outcome-fail');
@@ -2082,17 +2165,13 @@
     }
 
     const PROGRESS_STEPS = {
-      0: { pct: 10 },
-      1: { pct: 33 },
-      2: { pct: 66 },
-      3: { pct: 100 },
+      0: { pct: 8 },
+      1: { pct: 25 },
+      2: { pct: 50 },
+      3: { pct: 75 },
+      4: { pct: 100 },
     };
-    const PROGRESS_STEPS_NO_LLM = {
-      1: { pct: 33 },
-      2: { pct: 66 },
-      3: { pct: 100 },
-    };
-    const DEFAULT_STEP_LABELS = { 0: 'Gemini Review', 1: 'DC Import Tool', 2: 'DC Import Validation', 3: 'Results' };
+    const DEFAULT_STEP_LABELS = { 0: 'Pre-Import Checks', 1: 'Gemini Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
     let progressWithLLM = false;
     const MIN_STEP_DISPLAY_MS = 750;
     let lastLabelUpdateAt = 0;
@@ -2102,7 +2181,7 @@
     let elapsedTimerId = null;
     let stepLabels = {};
     let progressRunStartTime = null;
-    /** Current step index for label (0–3). Used to show "Step label · timer" during run; no numeric percent. */
+    /** Current step index for label (0–4). Used to show "Step label · timer" during run; no numeric percent. */
     let currentProgressStepIndex = 0;
 
     function formatElapsed(seconds) {
@@ -2131,10 +2210,9 @@
     }
 
     function updateStepPills(step) {
-      const start = progressWithLLM ? 0 : 1;
-      const end = 3;
-      const allDone = (step >= 4);
-      for (let i = start; i <= end; i++) {
+      const end = 4;
+      const allDone = step >= 5;
+      for (let i = 0; i <= end; i++) {
         const pill = document.getElementById('progress-pill-' + i);
         if (!pill) continue;
         pill.classList.remove('active', 'done', 'failed');
@@ -2149,17 +2227,15 @@
     }
 
     function setFailedStepPill(failedStep) {
-      const start = progressWithLLM ? 0 : 1;
-      const end = 3;
-      for (let i = start; i <= end; i++) {
+      const end = 4;
+      for (let i = 0; i <= end; i++) {
         const pill = document.getElementById('progress-pill-' + i);
         if (!pill) continue;
         pill.classList.remove('active', 'done', 'failed', 'skipped');
         pill.removeAttribute('aria-current');
         if (i < failedStep) pill.classList.add('done');
         else if (i === failedStep) pill.classList.add('failed');
-        else if (failedStep === 0 && progressWithLLM) pill.classList.add('skipped');  // steps 1–3 not run when run stopped because Gemini Review found issues
-        else pill.classList.add('failed');
+        else pill.classList.add('skipped');
       }
     }
 
@@ -2204,30 +2280,29 @@
       if (success) {
         if (pctEl) pctEl.textContent = '\u2713 Completed in ' + sec + 's';
       } else {
-        const stepLabel = stepLabels[failedStepIndex] ?? DEFAULT_STEP_LABELS[failedStepIndex] ?? ('step ' + failedStepIndex);
-        if (pctEl) pctEl.textContent = '✗ Failed at ' + stepLabel + ' in ' + sec + 's';
+        const stepLabel = (failedStepIndex != null && failedStepIndex >= 0 && failedStepIndex <= 4)
+          ? (stepLabels[failedStepIndex] ?? DEFAULT_STEP_LABELS[failedStepIndex] ?? ('step ' + failedStepIndex))
+          : null;
+        if (pctEl) pctEl.textContent = stepLabel ? '✗ Failed at ' + stepLabel + ' in ' + sec + 's' : '✗ Failed in ' + sec + 's';
       }
       container.classList.add('complete');
       if (!success) container.classList.add('fail');
     }
 
     function updateProgressStep(step) {
-      // When LLM is off, backend still runs "Step 0" (schema review) first; don't show that as pill 0 (we only have pills 1–3), so keep pill 1 active.
-      const pillStep = (!progressWithLLM && step === 0) ? 1 : step;
-      const steps = progressWithLLM ? PROGRESS_STEPS : PROGRESS_STEPS_NO_LLM;
-      const s = steps[step] || (progressWithLLM ? PROGRESS_STEPS[1] : PROGRESS_STEPS_NO_LLM[1]);
+      const s = PROGRESS_STEPS[step] || PROGRESS_STEPS[4];
       if (s) animateFillTo(s.pct);
       const now = Date.now();
       const elapsed = now - lastLabelUpdateAt;
       if (pendingStepTimer) clearTimeout(pendingStepTimer);
       if (elapsed >= MIN_STEP_DISPLAY_MS || lastLabelUpdateAt === 0) {
         lastLabelUpdateAt = now;
-        applyLabelAndPills(pillStep);
+        applyLabelAndPills(step);
       } else {
         const delay = MIN_STEP_DISPLAY_MS - elapsed;
         pendingStepTimer = setTimeout(() => {
           lastLabelUpdateAt = Date.now();
-          applyLabelAndPills(pillStep);
+          applyLabelAndPills(step);
           pendingStepTimer = null;
         }, delay);
       }
@@ -2236,11 +2311,9 @@
     function buildProgressPills(withLLM) {
       const row = document.getElementById('progress-steps-row');
       if (!row) return;
-      if (withLLM) {
-        row.innerHTML = '<span id="progress-pill-0" class="progress-step-pill">0. Gemini Review</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. Results</span>';
-      } else {
-        row.innerHTML = '<span id="progress-pill-1" class="progress-step-pill">1. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. Results</span>';
-      }
+      const step1Label = withLLM ? 'Gemini Review' : 'Schema Review';
+      row.innerHTML = '<span id="progress-pill-0" class="progress-step-pill">0. Pre-Import Checks</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-1" class="progress-step-pill">1. ' + step1Label + '</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-4" class="progress-step-pill">4. Results</span>';
+      if (!withLLM) stepLabels[1] = 'Schema Review';
     }
 
     function resetProgressBar() {
@@ -2251,7 +2324,7 @@
       elapsedTimerId = null;
       progressRunStartTime = null;
       stepLabels = {};
-      currentProgressStepIndex = progressWithLLM ? 0 : 1;
+      currentProgressStepIndex = 0;
       fillCurrentPct = 0;
       fillTargetPct = 0;
       const fillEl = document.getElementById('progress-fill');
@@ -2271,7 +2344,7 @@
       const barWrap = document.querySelector('.progress-bar-wrap');
       if (barWrap) barWrap.style.display = '';
       if (bar) bar.setAttribute('aria-valuenow', '0');
-      updateStepPills(progressWithLLM ? 0 : 1);
+      updateStepPills(0);
     }
 
     async function consumeStream(body, onMessage) {
@@ -2397,7 +2470,6 @@
         const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
         const llmReview = document.getElementById('llm-review-checkbox').checked;
         let r, data;
-        let lastStepReached = -1;
         if (currentDataset === 'custom') {
           if (!customTmcfFile || !customCsvFile) {
             setOutputContent('Please select both TMCF and CSV files.', false);
@@ -2438,13 +2510,12 @@
         data = await consumeStream(r.body, (msg) => {
           if (msg.t === 'step') {
             const s = msg.step ?? -1;
-            lastStepReached = Math.max(lastStepReached, s);
             if (msg.label != null && msg.label !== '') {
-              stepLabels[s] = msg.label;
+              stepLabels[s] = (s === 1 && !progressWithLLM) ? 'Schema Review' : msg.label;
               const pill = document.getElementById('progress-pill-' + s);
-              if (pill) pill.textContent = s + '. ' + msg.label;
+              if (pill) pill.textContent = s + '. ' + stepLabels[s];
             }
-            updateProgressStep(msg.step || 0);
+            if (typeof msg.step === 'number') updateProgressStep(msg.step);
           } else if (msg.t === 'line') {
             const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
             let next = msg.v ?? '';
@@ -2463,25 +2534,15 @@
             clearTimeout(pendingStepTimer);
             pendingStepTimer = null;
           }
-          // Green = step completed successfully; red = that step failed (Gemini review, genmcf/lint, or validation rules).
-          var failedStepIndex = 2;
+          // Failure step comes only from done payload (data.failure_step). No log parsing or default index.
+          const failedStepIndex = (typeof data.failure_step === 'number' && data.failure_step >= 0 && data.failure_step <= 4) ? data.failure_step : null;
           if (data.success) {
-            updateStepPills(4);
-          } else {
-            const reason = getFailureReason(data.output || '');
-            if (reason === 'Gemini review found issues') {
-              failedStepIndex = 0;
-              setFailedStepPill(0);
-            } else if (reason === 'Data processing failed' || reason === 'lint failed') {
-              failedStepIndex = 1;
-              setFailedStepPill(1);
-            } else {
-              failedStepIndex = 2;
-              setFailedStepPill(2);
-            }
+            updateStepPills(5);
+          } else if (failedStepIndex !== null) {
+            setFailedStepPill(failedStepIndex);
           }
           const durationSec = (Date.now() - runStartTime) / 1000;
-          finishProgressBar(data.success, durationSec, data.success ? 0 : failedStepIndex);
+          finishProgressBar(data.success, durationSec, failedStepIndex);
         }
         if (!data.cancelled) {
           const btn = document.getElementById('run-btn');
@@ -2502,14 +2563,34 @@
         if (!data.cancelled) {
           lastRunDurationSec = runStartTime != null ? (lastRunCompletedAt - runStartTime) / 1000 : null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
-          const failureReason = getFailureReason(data.output || '');
-          const pipelineFailedBeforeValidation = !data.success && (failureReason === 'Gemini review found issues' || failureReason === 'Data processing failed' || failureReason === 'lint failed');
+          const failureInfo = getFailureInfo(data);
+          // Use data.failure_step for pipeline classification so step 0 (e.g. row count) always gets summary
+          const pipelineFailedBeforeValidation = !data.success && (typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX);
           lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
           lastRunHadAiReview = llmReview;
           const runIdForResult = data.run_id || null;
           const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runIdForResult);
           const output = data.output || '';
           const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
+          const summaryPayload = {
+            dataset: currentDataset || null,
+            run_id: data.run_id ?? null,
+            success: data.success,
+            cancelled: false,
+            pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || false,
+            failure_code: data.failure_code ?? null,
+            failure_step: data.failure_step,
+            failure_message: data.failure_message ?? null,
+            runCount: counts.runCount,
+            failCount: counts.failCount,
+            warnCount: counts.warnCount,
+            failedRules: counts.failedRules || [],
+            warningRules: counts.warningRules || [],
+            durationSec: lastRunDurationSec,
+            hasWarnings: hasWarnings || false,
+          };
+          lastRunSummary = summaryPayload;
+          setReportActionsVisible(true, false);
           setSummaryCard({
             cancelled: false,
             success: data.success,
@@ -2522,8 +2603,13 @@
             durationSec: lastRunDurationSec,
             reportGenerated: lastRunReportGenerated,
             pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || undefined,
-            pipelineFailureReason: pipelineFailedBeforeValidation ? failureReason : undefined,
-            runFailureReason: !data.success && !pipelineFailedBeforeValidation ? failureReason : undefined,
+            pipeline_failure_reason: (failureInfo && failureInfo.message) || data.failure_message || undefined,
+            run_failure_reason: !data.success && !pipelineFailedBeforeValidation && (failureInfo && failureInfo.message) ? failureInfo.message : undefined,
+            failure_code: data.failure_code || undefined,
+            failure_step: data.failure_step,
+            failure_message: data.failure_message || undefined,
+            failure_limit: data.failure_limit,
+            run_id: data.run_id || undefined,
             aiReviewUsed: llmReview,
             geminiSkippedNoKey,
             completedAt: lastRunCompletedAt,
@@ -2548,14 +2634,15 @@
           lastRunDataset = currentDataset;
           lastRunReportId = data.run_id || null;
           localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, 'failed');
-          const reason = getFailureReason(data.output || '');
-          if (reason === 'Data processing failed' || reason === 'lint failed') {
+          const code = data.failure_code;
+          const pipelineFailed = typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX;
+          if (code && PIPELINE_FAILURE_CODES.has(code)) {
             clearValidationResults();
           } else {
             applyValidationResults(currentDataset, { ignoreStoredOutcome: true, runId: lastRunReportId });
           }
-          if (reason === 'Gemini review found issues' || reason === 'Data processing failed' || reason === 'lint failed') {
-            setReportInsightsPlaceholder('Validation did not run. Fix Gemini Review or pipeline issues and run again.');
+          if (pipelineFailed) {
+            setReportInsightsPlaceholder('Validation did not run. Fix Pre-Import Checks, Gemini Review, or pipeline issues and run again.');
           }
           loadReport();
           switchToReportTab({ scrollIntoView: true });
@@ -2678,8 +2765,11 @@
         return;
       }
       if (!data || !data.exists) {
-        container.style.display = 'none';
-        container.innerHTML = '';
+        container.style.display = '';
+        const placeholderMsg = (data && data.pipelineFailed === true)
+          ? 'This section did not execute due to earlier pipeline failure.'
+          : 'Run validation to see results.';
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">' + placeholderMsg + '</p>');
         updateReportHeadingStates();
         return;
       }
@@ -2743,9 +2833,28 @@
       }
     }
 
+    function setReportActionsVisible(showBar, hasReport, hasSummary) {
+      const reportActions = document.getElementById('report-actions');
+      const isReportTabActive = document.querySelector('.tab[data-tab="report"]')?.classList.contains('active');
+      const show = showBar && isReportTabActive;
+      if (reportActions) reportActions.style.display = show ? 'flex' : 'none';
+      const openLink = document.getElementById('open-report-link');
+      const downloadBtn = document.getElementById('download-report-btn');
+      const runIdWrap = document.getElementById('report-run-id-wrap');
+      const copyBtn = document.getElementById('copy-run-summary-btn');
+      if (openLink) openLink.style.display = hasReport ? '' : 'none';
+      if (downloadBtn) downloadBtn.style.display = hasReport ? '' : 'none';
+      if (runIdWrap) runIdWrap.style.display = hasReport && lastRunReportId && lastRunDataset === currentDataset ? 'inline-flex' : 'none';
+      if (copyBtn) copyBtn.disabled = !(hasSummary !== undefined ? hasSummary : (lastRunSummary != null));
+      if (!hasReport) {
+        const reportTimestamp = document.getElementById('report-timestamp');
+        if (reportTimestamp) reportTimestamp.textContent = '';
+      }
+    }
+
     async function loadReport() {
-      document.getElementById('report-actions').style.display = 'none';
       if (!currentDataset) {
+        setReportActionsVisible(false, false);
         setReportInsightsPlaceholder();
         renderLLMReportSection({ neutral: true });
         return;
@@ -2769,23 +2878,23 @@
           r = await fetch(API + `/report/${currentDataset}?t=${Date.now()}`);
         }
         if (!r.ok) {
-          document.getElementById('report-actions').style.display = 'none';
           lastReportMtime = null;
-          document.getElementById('report-timestamp').textContent = '';
-          const rw = document.getElementById('report-run-id-wrap');
-          if (rw) rw.style.display = 'none';
           const reportUnavailableMsg = (r.status === 404 && lastRunDataset === currentDataset && !lastRunReportGenerated)
             ? 'Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.'
             : (r.status === 404)
               ? "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds."
               : null;
           setReportInsightsPlaceholder(reportUnavailableMsg);
-          if (!reportRunId) renderLLMReportSection({ neutral: true });
+          if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
+            renderLLMReportSection({ pipelineFailed: true });
+          } else {
+            renderLLMReportSection({ neutral: true });
+          }
+          setReportActionsVisible(lastRunSummary != null, false);
           return;
         }
         await r.text();
         reportLoaded = true;
-        const reportActions = document.getElementById('report-actions');
         const link = document.getElementById('open-report-link');
         const reportUrl = (lastRunReportId && lastRunDataset === currentDataset)
           ? (API + `/report/${currentDataset}/${lastRunReportId}`)
@@ -2796,12 +2905,9 @@
         if (runIdWrap && runIdEl) {
           if (lastRunReportId && lastRunDataset === currentDataset) {
             runIdEl.textContent = lastRunReportId;
-            runIdWrap.style.display = 'inline-flex';
-          } else {
-            runIdWrap.style.display = 'none';
           }
         }
-        reportActions.style.display = document.querySelector('.tab[data-tab="report"]')?.classList.contains('active') ? 'flex' : 'none';
+        setReportActionsVisible(true, true);
         const reportRunId = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
         const reportInfoUrl = reportRunId
           ? API + `/api/report-info/${currentDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
@@ -2818,7 +2924,12 @@
         }
       } catch (e) {
         setReportInsightsPlaceholder();
-        if (!reportRunId) renderLLMReportSection({ neutral: true });
+        if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
+          renderLLMReportSection({ pipelineFailed: true });
+        } else {
+          renderLLMReportSection({ neutral: true });
+        }
+        setReportActionsVisible(lastRunSummary != null, false);
       }
       if (reportLoaded) {
         if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
@@ -2837,13 +2948,8 @@
       '</div>';
 
     function setReportRunningState() {
-      const reportActions = document.getElementById('report-actions');
-      if (reportActions) reportActions.style.display = 'none';
+      setReportActionsVisible(false, false);
       lastReportMtime = null;
-      const reportTimestamp = document.getElementById('report-timestamp');
-      if (reportTimestamp) reportTimestamp.textContent = '';
-      const runIdWrap = document.getElementById('report-run-id-wrap');
-      if (runIdWrap) runIdWrap.style.display = 'none';
       const fluctuationContainer = document.getElementById('fluctuation-samples-container');
       if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', REPORT_RUNNING_PLACEHOLDER_HTML);
       const ruleFailureContainer = document.getElementById('rule-failure-container');
@@ -2967,23 +3073,10 @@
               <div class="card-row values">Values: ${escapeHtml(values)}</div>
               <div class="card-row change-pct">${escapeHtml(changeLine)}</div>
               ${sourceRows ? `<div class="card-row source-rows">Source rows: ${escapeHtml(sourceRows)}</div>` : ''}
-              <button type="button" class="copy-justification-btn" data-copy-justification><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
             </div>`;
         }).join('');
         container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
         updateReportHeadingStates();
-        container.querySelectorAll('[data-copy-justification]').forEach(btn => {
-          const card = btn.closest('.fluctuation-sample-card');
-          const raw = card.getAttribute('data-justification');
-          const text = raw ? raw.replace(/&quot;/g, '"').replace(/&#10;/g, '\n') : '';
-          btn.addEventListener('click', () => {
-            navigator.clipboard.writeText(text).then(() => {
-              const origHtml = btn.innerHTML;
-              btn.textContent = 'Copied!';
-              setTimeout(() => { btn.innerHTML = origHtml; }, 1500);
-            });
-          });
-        });
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p><p style="color: var(--text-muted); margin: 0;">Could not load fluctuation samples.</p>');
         updateReportHeadingStates();
@@ -3036,7 +3129,6 @@
             return `<div class="rule-failure-card" data-summary="${summaryAttr}">
               <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
               <div class="card-row">Expected: ${escapeHtml(expected)}</div>
-              <button type="button" class="copy-summary-btn" data-copy-summary><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
             </div>`;
           }
           return `<div class="rule-failure-card" data-summary="${summaryAttr}">
@@ -3047,23 +3139,10 @@
             <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
             <div class="card-row">Expected: ${escapeHtml(expected)}</div>
             <div class="card-row">Source row: ${escapeHtml(sourceRow)}</div>
-            <button type="button" class="copy-summary-btn" data-copy-summary><span class="btn-icon">${COPY_ICON}</span> Copy summary</button>
           </div>`;
         }).join('');
         container.innerHTML = reportBox('blocking', '<details id="rule-failure-details" class="report-group-inner-details" open><summary>' + samples.length + ' blocking rule failure' + (samples.length !== 1 ? 's' : '') + '</summary><div id="rule-failure-content" class="fluctuation-samples-content">' + cards + '</div></details>');
         updateReportHeadingStates();
-        container.querySelectorAll('[data-copy-summary]').forEach(btn => {
-          const card = btn.closest('.rule-failure-card');
-          const raw = card.getAttribute('data-summary');
-          const text = raw ? raw.replace(/&quot;/g, '"').replace(/&#10;/g, '\n') : '';
-          btn.addEventListener('click', () => {
-            navigator.clipboard.writeText(text).then(() => {
-              const origHtml = btn.innerHTML;
-              btn.textContent = 'Copied!';
-              setTimeout(() => { btn.innerHTML = origHtml; }, 1500);
-            });
-          });
-        });
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p><p style="color: var(--text-muted); margin: 0;">Could not load rule failure samples.</p>');
         updateReportHeadingStates();
@@ -3080,7 +3159,7 @@
       if (logPanel) logPanel.classList.add('active');
       const logActions = document.getElementById('log-actions');
       if (logActions) logActions.style.display = 'flex';
-      document.getElementById('report-actions').style.display = 'none';
+      setReportActionsVisible(false, false);
       if (scrollIntoView) {
         const mainEl = document.querySelector('.main');
         const resultsSection = document.getElementById('results-section');
@@ -3149,7 +3228,7 @@
           if (!runAbortController) loadReport();
         } else {
           stopReportTimestampRefresh();
-          document.getElementById('report-actions').style.display = 'none';
+          setReportActionsVisible(false, false);
         }
       });
     });
@@ -3201,7 +3280,7 @@
         logTab.classList.add('active');
         document.getElementById('log-panel').classList.add('active');
         document.getElementById('log-actions').style.display = 'flex';
-        document.getElementById('report-actions').style.display = 'none';
+        setReportActionsVisible(false, false);
       }
 
       updateRunButtonState();
@@ -3400,6 +3479,18 @@
       } catch (err) {
         showToast('Could not open report');
       }
+    });
+
+    document.getElementById('copy-run-summary-btn').addEventListener('click', function () {
+      const text = getRunSummaryText();
+      if (!text) {
+        showToast('No run summary available. Run a validation first.');
+        return;
+      }
+      navigator.clipboard.writeText(text).then(function () {
+        const btn = document.getElementById('copy-run-summary-btn');
+        if (btn) { btn.textContent = 'Copied!'; setTimeout(function () { btn.textContent = 'Copy Run Summary'; }, 1500); }
+      }).catch(function () { showToast('Copy failed'); });
     });
 
     document.getElementById('download-report-btn').addEventListener('click', async () => {

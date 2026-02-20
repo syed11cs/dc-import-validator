@@ -18,6 +18,7 @@ Requirements:
   - ./run_e2e_test.sh and ./setup.sh already run once (venv, JAR, etc.)
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -98,13 +99,55 @@ def test_no_api_key_skips_llm() -> None:
 
 
 def test_step_protocol_labels() -> None:
-    """Output should contain formal step labels (::STEP::N:Label) when script is current."""
+    """Output should contain formal step labels (::STEP::N:Label) matching the pipeline."""
     code, out = run_e2e("child_birth", "--no-llm-review")
     assert code == 0, f"child_birth expected exit 0, got {code}"
-    assert "::STEP::0:Gemini Review" in out or "::STEP::0" in out, "Expected ::STEP::0 or ::STEP::0:Label"
-    assert "::STEP::1:DC Import Tool" in out or "::STEP::1" in out, "Expected ::STEP::1 or ::STEP::1:Label"
-    assert "::STEP::2:DC Import Validation" in out or "::STEP::2" in out, "Expected ::STEP::2 or ::STEP::2:Label"
-    assert "::STEP::3:Results" in out or "::STEP::3" in out, "Expected ::STEP::3 or ::STEP::3:Label"
+    assert "::STEP::0:Pre-Import Checks" in out, "Expected ::STEP::0:Pre-Import Checks"
+    assert "::STEP::1:Gemini Review" in out, "Expected ::STEP::1:Gemini Review"
+    assert "::STEP::2:DC Import Tool" in out, "Expected ::STEP::2:DC Import Tool"
+    assert "::STEP::3:DC Import Validation" in out, "Expected ::STEP::3:DC Import Validation"
+    assert "::STEP::4:Results" in out, "Expected ::STEP::4:Results"
+
+
+def test_deterministic_mode_no_existence_counters() -> None:
+    """With LOCAL + existence-checks=false, run passes and report has no existence-related lint counters."""
+    env = os.environ.copy()
+    env["IMPORT_RESOLUTION_MODE"] = "LOCAL"
+    env["IMPORT_EXISTENCE_CHECKS"] = "false"
+    code, out = run_e2e("child_birth", "--no-llm-review", env=env)
+    assert code == 0, f"deterministic mode expected exit 0, got {code}\n{out[-2000:]}"
+    assert "Validation PASSED" in out or "✓ Validation PASSED" in out
+
+    root = project_root()
+    report_path = root / "output" / "child_birth_genmcf" / "report.json"
+    assert report_path.exists(), f"report.json not found at {report_path}"
+
+    with open(report_path, encoding="utf-8") as f:
+        report = json.load(f)
+    cmd = report.get("commandArgs", {})
+    assert cmd.get("existenceChecks") is False, "expected existenceChecks=false in report commandArgs"
+
+    level_summary = report.get("levelSummary", {})
+    existence_related = []
+    for level, data in level_summary.items():
+        for key in (data.get("counters") or {}).keys():
+            if "existence" in key.lower():
+                existence_related.append(f"{level}.{key}")
+    assert not existence_related, (
+        f"expected no existence-related lint counters when existence-checks=false, found: {existence_related}"
+    )
+
+
+def test_full_mode_smoke() -> None:
+    """FULL resolution mode: pipeline runs to completion (smoke test; may require network)."""
+    env = os.environ.copy()
+    env["IMPORT_RESOLUTION_MODE"] = "FULL"
+    code, out = run_e2e("child_birth", "--no-llm-review", env=env)
+    assert code in (0, 1), f"FULL mode expected exit 0 or 1, got {code}\n{out[-2000:]}"
+    assert "::STEP::2:DC Import Tool" in out, "Expected Step 2 in output"
+    assert "::STEP::3:DC Import Validation" in out or "::STEP::4:Results" in out, (
+        "Expected Step 3 or 4 (pipeline progressed)"
+    )
 
 
 def main() -> int:
@@ -118,6 +161,8 @@ def main() -> int:
         ("child_birth_ai_demo (no LLM)", test_child_birth_ai_demo_no_llm),
         ("no API key skips LLM", test_no_api_key_skips_llm),
         ("step protocol labels", test_step_protocol_labels),
+        ("deterministic mode (LOCAL, no existence counters)", test_deterministic_mode_no_existence_counters),
+        ("FULL mode smoke", test_full_mode_smoke),
     ]
     failed = []
     for name, fn in tests:

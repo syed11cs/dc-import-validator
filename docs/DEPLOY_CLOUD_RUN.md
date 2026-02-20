@@ -99,9 +99,16 @@ uvicorn ui.server:app --host 0.0.0.0 --port ${PORT:-8080}
 | Variable | Purpose | Where to store |
 |----------|---------|----------------|
 | GEMINI_API_KEY | AI Review | Secret Manager (recommended) |
+| DC_API_KEY | Java import tool (FULL + existence checks) | Secret Manager (required when using FULL) |
 | GCS_REPORTS_BUCKET | Report storage | Environment variable |
 | LOG_LEVEL | Debugging | Environment variable |
 | VALIDATION_RUN_TIMEOUT_SEC | Run time limit | Environment variable |
+
+If `IMPORT_RESOLUTION_MODE=FULL` and `IMPORT_EXISTENCE_CHECKS=true`, then **DC_API_KEY must be configured** as a Secret in Cloud Run (the Java import tool uses it for Recon and existence-check API calls). Example:
+
+```bash
+--set-secrets="DC_API_KEY=dc-api-key:latest"
+```
 
 ### 4. Resource Limits
 
@@ -121,7 +128,7 @@ uvicorn ui.server:app --host 0.0.0.0 --port ${PORT:-8080}
 
 ## Data Repo Dependency (Important!)
 
-The pipeline needs `datacommonsorg/data` for import_validation. Here's how to handle it:
+The pipeline needs `datacommonsorg/data` for import_validation. The E2E script uses `DATA_REPO` when set (e.g. in Docker/Cloud Run); otherwise it defaults to `../datacommonsorg/data` relative to the script. Here's how to handle it:
 
 **Option A: Custom-only (Recommended)**
 
@@ -183,8 +190,8 @@ gcloud run deploy dc-import-validator \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars "GCS_REPORTS_BUCKET=dc-import-validator-reports" \
-  --set-secrets="GEMINI_API_KEY=gemini-key:latest" \
+  --set-env-vars "GCS_REPORTS_BUCKET=dc-import-validator-reports,IMPORT_RESOLUTION_MODE=FULL,IMPORT_EXISTENCE_CHECKS=true" \
+  --set-secrets="GEMINI_API_KEY=gemini-key:latest,DC_API_KEY=dc-api-key:latest" \
   --memory 2Gi \
   --timeout 600
 ```
