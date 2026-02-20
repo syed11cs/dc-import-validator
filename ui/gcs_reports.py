@@ -24,6 +24,11 @@ def _get_bucket():
     return name if name else None
 
 
+def is_gcs_configured() -> bool:
+    """True when GCS_REPORTS_BUCKET is set (Cloud Run / multi-instance mode). Report endpoints should prefer GCS and avoid local fallback when this is True and run_id is set."""
+    return _get_bucket() is not None
+
+
 class GCSAccessError(Exception):
     """Raised when GCS_REPORTS_BUCKET is set but the bucket is not accessible."""
 
@@ -57,7 +62,9 @@ def upload_reports_to_gcs(
     run_id: str,
     dataset: str,
 ) -> bool:
-    """Upload report HTML and JSON artifacts to GCS. Returns True if upload ran (and at least one file uploaded).
+    """Upload all existing per-run artifacts to GCS so any Cloud Run instance can serve them (stateless).
+    Uploads validation_report.html, summary_report.html, validation_output.json, report.json, schema_review.json, and input.csv when present.
+    Returns True if upload ran (and at least one file uploaded).
     Raises GCSAccessError if GCS_REPORTS_BUCKET is set but the bucket is not accessible (do not swallow)."""
     bucket_name = _get_bucket()
     if not bucket_name or not run_id or not dataset:

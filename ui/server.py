@@ -45,7 +45,7 @@ from ui.services.review_summary import (
     review_summary_to_markdown as _review_summary_to_markdown,
 )
 from ui import gcs_reports
-from ui.gcs_reports import GCSAccessError
+from ui.gcs_reports import GCSAccessError, is_gcs_configured
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_MB = 50
@@ -427,7 +427,7 @@ def _run_id_safe(run_id: str) -> bool:
 
 @app.get("/api/validation-result/{dataset}")
 def get_validation_result(dataset: str, run_id: str | None = Query(None)):
-    """Return per-rule validation results from validation_output.json. If run_id is set and GCS is configured, use GCS; else local per-run then canonical."""
+    """Return per-rule validation results from validation_output.json. When GCS is configured and run_id is set, read from GCS only (no local fallback) so any instance can serve."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     if run_id and _run_id_safe(run_id):
@@ -440,7 +440,9 @@ def get_validation_result(dataset: str, run_id: str | None = Query(None)):
                 return {"exists": True, "results": results}
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        # Local per-run fallback (e.g. run failed at Step 2; validation_output.json in run dir only)
+        if is_gcs_configured():
+            return {"exists": False, "results": []}
+        # Local per-run fallback (GCS not configured)
         per_run_path = OUTPUT_DIR / dataset / run_id / "validation_output.json"
         if per_run_path.exists():
             try:
@@ -490,7 +492,9 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
                 return _issues_to_response(issues)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        # Local per-run output (e.g. run failed at Step 0; schema_review.json exists in run dir)
+        if is_gcs_configured():
+            return {"exists": False, "issues": [], "passed": True}
+        # Local per-run output (GCS not configured)
         per_run_path = OUTPUT_DIR / dataset / run_id / "schema_review.json"
         if per_run_path.exists():
             try:
@@ -513,14 +517,20 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
 
 @app.get("/api/report-info/{dataset}")
 def report_info(dataset: str, run_id: str | None = Query(None)):
-    """Return report metadata including mtime for timestamp display. If run_id is set and GCS is configured, use GCS."""
+    """Return report metadata including mtime. When GCS is configured and run_id is set, use GCS only (validation_report.html or schema_review.json mtime) so any instance can serve."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     if run_id and _run_id_safe(run_id):
+        if is_gcs_configured():
+            mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "validation_report.html")
+            if mtime is None:
+                mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "schema_review.json")
+            if mtime is not None:
+                return {"exists": True, "mtime": mtime}
+            return {"exists": False}
         mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "validation_report.html")
         if mtime is not None:
             return {"exists": True, "mtime": mtime}
-        # Local per-run: use validation_report.html or schema_review.json mtime (e.g. run stopped at Step 0)
         per_run = OUTPUT_DIR / dataset / run_id
         for name in ("validation_report.html", "schema_review.json"):
             p = per_run / name
@@ -548,7 +558,8 @@ def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
                 return {"exists": True, "samples": samples}
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        # Local per-run fallback
+        if is_gcs_configured():
+            return {"exists": False, "samples": []}
         per_run_path = OUTPUT_DIR / dataset / run_id / "report.json"
         if per_run_path.exists():
             try:
@@ -628,7 +639,8 @@ def get_rule_failure_samples(dataset: str, run_id: str | None = Query(None)):
                 return {"exists": True, "samples": samples}
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
-        # Local per-run fallback
+        if is_gcs_configured():
+            return {"exists": False, "samples": []}
         per_run_dir = OUTPUT_DIR / dataset / run_id
         per_run_vo = per_run_dir / "validation_output.json"
         if per_run_vo.exists():
@@ -690,6 +702,8 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                 data = _build_review_summary_from_data(dataset, results, llm_issues, report)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        if data is None and run_id and is_gcs_configured():
+            raise HTTPException(status_code=404, detail="No validation result in GCS for this run. Run validation or try again shortly.")
     if data is None:
         output_dir = DATASET_OUTPUT_MAP[dataset]
         data = _build_review_summary(dataset, output_dir)
@@ -707,14 +721,18 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
 
 @app.get("/report/{dataset}/{run_id}", response_class=HTMLResponse)
 def serve_report_by_run_id(dataset: str, run_id: str):
-    """Serve validation report from GCS or local per-run (so Open Report works for local runs that completed Step 3)."""
+    """Serve validation report from GCS when configured (so any instance can serve); otherwise local per-run."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     if "/" in run_id or ".." in run_id:
         raise HTTPException(status_code=400, detail="Invalid run_id")
     content = gcs_reports.get_report_from_gcs(run_id, dataset, "validation_report.html")
     if content is None:
-        # Local per-run fallback (GCS not set or not uploaded yet)
+        if is_gcs_configured():
+            raise HTTPException(
+                status_code=404,
+                detail="Report not found. It may not have been uploaded to GCS yet.",
+            )
         per_run_path = OUTPUT_DIR / dataset / run_id / "validation_report.html"
         if per_run_path.exists():
             content = per_run_path.read_bytes()
@@ -757,12 +775,16 @@ def serve_report(dataset: str):
 
 @app.get("/summary-report/{dataset}/{run_id}", response_class=HTMLResponse)
 def serve_summary_report_by_run_id(dataset: str, run_id: str):
-    """Serve the import tool's summary_report.html from GCS or local per-run (counters, sample places, charts)."""
+    """Serve summary_report.html from GCS when configured (any instance); otherwise local per-run."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     content = gcs_reports.get_report_from_gcs(run_id, dataset, "summary_report.html")
     if content is None:
-        # Local per-run fallback (e.g. run without GCS; report exists in output/dataset/run_id/)
+        if is_gcs_configured():
+            raise HTTPException(
+                status_code=404,
+                detail="Summary report not found. It may not have been uploaded to GCS yet.",
+            )
         per_run_path = OUTPUT_DIR / dataset / run_id / "summary_report.html"
         if per_run_path.exists():
             content = per_run_path.read_bytes()
