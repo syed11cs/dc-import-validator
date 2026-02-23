@@ -2141,6 +2141,7 @@
       const clearPresets = document.getElementById('clear-presets-btn');
       if (section) section.classList.toggle('rules-section-locked', disabled);
       document.querySelectorAll('.rule-checkbox').forEach(cb => { cb.disabled = disabled; });
+      document.querySelectorAll('.rules-category-checkbox').forEach(cb => { cb.disabled = disabled; });
       if (presetTrigger) presetTrigger.disabled = disabled;
       if (selectAll) selectAll.disabled = disabled;
       if (deselectAll) deselectAll.disabled = disabled;
