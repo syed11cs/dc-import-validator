@@ -915,16 +915,25 @@
     .llm-report-table .severity-warning { color: var(--warn); font-weight: 500; }
     .llm-report-passed { padding: 12px 16px; background: rgba(30,158,74,0.08); border: 1px solid rgba(30,158,74,0.22); border-radius: 8px; color: var(--text-muted); font-size: 0.875rem; }
     .llm-report-empty { color: var(--text-muted); font-size: 0.85rem; }
+    .rules-summary-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
     .rules-summary {
       font-size: 0.8rem;
       color: var(--text-muted);
-      margin-bottom: 10px;
       padding: 8px 12px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 6px;
     }
     .rules-summary .count { font-weight: 600; color: var(--text); }
+    .rules-expand-collapse { font-size: 0.75rem; }
+    .rules-expand-collapse .btn-link { padding: 2px 4px; }
+    .rules-expand-collapse-sep { color: var(--text-muted); margin: 0 4px; user-select: none; }
     .fluctuation-samples-details {
       margin-bottom: 12px;
       padding: 14px 16px;
@@ -1322,7 +1331,14 @@
           <button type="button" id="select-all-rules">Select all</button>
           <button type="button" id="deselect-all-rules">Clear selection</button>
         </div>
-        <div id="rules-summary" class="rules-summary" style="display: none;"></div>
+        <div id="rules-summary-row" class="rules-summary-row" style="display: none;">
+          <div id="rules-summary" class="rules-summary"></div>
+          <div id="rules-expand-collapse" class="rules-expand-collapse">
+            <button type="button" class="btn-link" id="rules-expand-all">Expand all</button>
+            <span class="rules-expand-collapse-sep" aria-hidden="true">|</span>
+            <button type="button" class="btn-link" id="rules-collapse-all">Collapse all</button>
+          </div>
+        </div>
         <div id="rules" class="rules-list">
           <div class="rule-item" style="color: var(--text-muted);">Select a dataset to view rules</div>
         </div>
@@ -1729,6 +1745,7 @@
         populatePresetSelect();
         applyPreset(document.getElementById('rules-preset').value);
         updateCategoryCheckboxStates();
+        updateExpandCollapseVisibility();
         updateRunButtonState();
         updateRulesSummary();
         if (!options || !options.skipApplyValidationResults) applyValidationResults(dataset);
@@ -2081,6 +2098,8 @@
           }
         });
         if (runCount > 0) lastRunDataset = dataset;
+        expandCategoriesContainingFailedOrWarningRules();
+        updateExpandCollapseVisibility();
       } catch (_) {}
     }
 
@@ -2278,6 +2297,35 @@
       updateRuleIconStates();
     }
 
+    function expandCategoriesContainingFailedOrWarningRules() {
+      document.querySelectorAll('.rule-result-icon.failed, .rule-result-icon.warning').forEach(el => {
+        const details = el.closest('.rules-category');
+        if (details) details.open = true;
+      });
+    }
+
+    function updateExpandCollapseVisibility() {
+      const expandBtn = document.getElementById('rules-expand-all');
+      const collapseBtn = document.getElementById('rules-collapse-all');
+      const sep = document.querySelector('.rules-expand-collapse-sep');
+      const categories = document.querySelectorAll('.rules-category');
+      const openCount = document.querySelectorAll('.rules-category[open]').length;
+      if (!expandBtn || !collapseBtn || categories.length === 0) return;
+      if (openCount === 0) {
+        expandBtn.style.display = '';
+        collapseBtn.style.display = 'none';
+        if (sep) sep.style.display = 'none';
+      } else if (openCount === categories.length) {
+        expandBtn.style.display = 'none';
+        collapseBtn.style.display = '';
+        if (sep) sep.style.display = 'none';
+      } else {
+        expandBtn.style.display = '';
+        collapseBtn.style.display = '';
+        if (sep) sep.style.display = '';
+      }
+    }
+
     function updateCategoryCheckboxStates() {
       document.querySelectorAll('.rules-category').forEach(details => {
         const categoryCheckbox = details.querySelector('.rules-category-checkbox');
@@ -2292,14 +2340,15 @@
 
     function updateRulesSummary() {
       const el = document.getElementById('rules-summary');
-      if (!el) return;
+      const row = document.getElementById('rules-summary-row');
+      if (!el || !row) return;
       const total = document.querySelectorAll('.rule-checkbox').length;
       const checked = document.querySelectorAll('.rule-checkbox:checked').length;
       if (total === 0) {
-        el.style.display = 'none';
+        row.style.display = 'none';
         return;
       }
-      el.style.display = 'block';
+      row.style.display = 'flex';
       const icon = checked === 0 ? '⚠️' : '✅';
       const hint = checked === 0 ? ' — select at least one' : '';
       el.innerHTML = `<span class="count">${icon} ${checked} / ${total} rules enabled${hint}</span>`;
@@ -3601,6 +3650,17 @@
       updateRunButtonState();
       updateRulesSummary();
       updateRuleIconStates();
+    });
+    document.getElementById('rules-expand-all').addEventListener('click', () => {
+      document.querySelectorAll('.rules-category').forEach(d => { d.open = true; });
+      updateExpandCollapseVisibility();
+    });
+    document.getElementById('rules-collapse-all').addEventListener('click', () => {
+      document.querySelectorAll('.rules-category').forEach(d => { d.open = false; });
+      updateExpandCollapseVisibility();
+    });
+    document.getElementById('rules').addEventListener('toggle', (e) => {
+      if (e.target.matches && e.target.matches('.rules-category')) updateExpandCollapseVisibility();
     });
     document.getElementById('rules').addEventListener('change', (e) => {
       if (e.target.classList.contains('rules-category-checkbox')) {
