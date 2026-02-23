@@ -20,6 +20,7 @@ from pathlib import Path
 REQUIRED_TOP_LEVEL = ("rules",)
 OPTIONAL_TOP_LEVEL = ("schema_version",)
 REQUIRED_RULE_KEYS = ("rule_id", "description", "validator", "scope", "params")
+OPTIONAL_RULE_KEYS = ("enabled",)  # enabled: false to disable a rule without removing it
 VALID_DATA_SOURCES = ("stats", "lint", "differ")
 RULE_ID_PATTERN = r"^[a-z][a-z0-9_]*$"  # snake_case, starts with letter
 
@@ -78,8 +79,11 @@ def _validate_config(config: dict, path: str) -> list[str]:
             elif rk == "params":
                 if not isinstance(rv, dict):
                     errors.append(f"{prefix}: params must be an object")
-            elif rk not in REQUIRED_RULE_KEYS:
-                errors.append(f"{prefix}: unknown rule key '{rk}' (allowed: {list(REQUIRED_RULE_KEYS)})")
+            elif rk == "enabled":
+                if not isinstance(rv, bool):
+                    errors.append(f"{prefix}: enabled must be a boolean")
+            elif rk not in REQUIRED_RULE_KEYS and rk not in OPTIONAL_RULE_KEYS:
+                errors.append(f"{prefix}: unknown rule key '{rk}' (allowed: {list(REQUIRED_RULE_KEYS) + list(OPTIONAL_RULE_KEYS)})")
 
     if "schema_version" in config and not isinstance(config["schema_version"], str):
         errors.append(f"{path}: schema_version must be a string")

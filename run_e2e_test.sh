@@ -605,6 +605,15 @@ log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CON
 mkdir -p "$DATASET_OUTPUT"
 VALIDATION_OUTPUT="$DATASET_OUTPUT/validation_output.json"
 
+# Use project venv by default (self-contained), else PYTHON env var, else python3
+if [[ -z "$PYTHON" ]]; then
+  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
+fi
+
 # Build validation args - stats_summary, lint_report, differ_output may be optional per config
 VALIDATION_ARGS=(
   --validation_config="$VALIDATION_CONFIG"
@@ -630,16 +639,9 @@ else
   VALIDATION_ARGS+=(--differ_output=)
 fi
 
-cd "$DATA_REPO"
-# Use project venv by default (self-contained), else PYTHON env var, else python3
-if [[ -z "$PYTHON" ]]; then
-  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
-    PYTHON="$SCRIPT_DIR/.venv/bin/python"
-  else
-    PYTHON="python3"
-  fi
-fi
-if $PYTHON -m tools.import_validation.runner "${VALIDATION_ARGS[@]}"; then
+# Orchestrator runs DC framework rules + our custom rules (e.g. STRUCTURAL_LINT_ERROR_COUNT), writes validation_output.json once
+export DATA_REPO
+if $PYTHON "$SCRIPT_DIR/scripts/run_validation.py" "${VALIDATION_ARGS[@]}"; then
   RUNNER_EXIT=0
 else
   RUNNER_EXIT=1
