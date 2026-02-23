@@ -199,12 +199,24 @@ emit_failure() {
 }
 
 # Ensure validation_output.json and validation_report.html exist before exiting with failure (so GCS upload and /report/... work on Cloud Run).
+# Optional: ensure_failure_report "Stage Name" "Reason message" — writes pipeline_failure.json so the HTML report shows a clear "Pipeline failed at: ..." banner.
 ensure_failure_report() {
   [[ -z "$DATASET_OUTPUT" || -z "$DATASET" ]] && return
   local py="${PYTHON:-python3}"
   mkdir -p "$DATASET_OUTPUT"
   if [[ ! -f "$DATASET_OUTPUT/validation_output.json" ]]; then
     echo '[]' > "$DATASET_OUTPUT/validation_output.json"
+  fi
+  local stage="$1"
+  local reason="$2"
+  if [[ -n "$stage" && -n "$reason" ]]; then
+    stage="$stage" reason="$reason" out_path="$DATASET_OUTPUT/pipeline_failure.json" $py -c '
+import os, json
+s, r, p = os.environ.get("stage", ""), os.environ.get("reason", ""), os.environ.get("out_path", "")
+if s and r and p:
+  with open(p, "w") as f:
+    json.dump({"stage": s, "reason": r}, f)
+' 2>/dev/null || true
   fi
   local ai_arg=""
   [[ "${LLM_REVIEW:-}" == "true" ]] && ai_arg="--ai-review-enabled"
@@ -403,7 +415,7 @@ if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
     log_error "Preflight failed: required import files missing or wrong extension."
     emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed"
     $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" || true
-    ensure_failure_report
+    ensure_failure_report "Pre-Import Checks" "Preflight failed"
     exit 1
   fi
 fi
@@ -414,7 +426,7 @@ if [[ -f "$VALIDATE_CSV_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
     log_error "CSV quality check failed."
     emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed"
     $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value || true
-    ensure_failure_report
+    ensure_failure_report "Pre-Import Checks" "CSV quality check failed"
     exit 1
   fi
 fi
@@ -436,13 +448,13 @@ sys.exit(0 if 'check_csv_row_count' in rules else 1)
 " 2>/dev/null; then
           log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
           emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
-          ensure_failure_report
+          ensure_failure_report "Pre-Import Checks" "CSV row count exceeds limit (1000 rows max)"
           exit 1
         fi
       else
         log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
         emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
-        ensure_failure_report
+        ensure_failure_report "Pre-Import Checks" "CSV row count exceeds limit (1000 rows max)"
         exit 1
       fi
     fi
@@ -480,13 +492,13 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
         if [[ "$LLM_REVIEW" == "true" && "$AI_ADVISORY" == "true" ]]; then
           log_info "Advisory mode: treating AI blockers as non-blocking — continuing pipeline."
         else
-          ensure_failure_report
+          ensure_failure_report "Gemini Review" "Gemini review found issues"
           emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
           exit 1
         fi
       else
         log_warn "Step 1 failed (script error or missing output)"
-        ensure_failure_report
+        ensure_failure_report "Gemini Review" "Step 1 failed (script error or missing output)"
         emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
         exit 1
       fi
@@ -520,14 +532,14 @@ else
   else
     log_error "Import tool JAR not found. Run ./setup.sh first, or set IMPORT_JAR_PATH."
     log_error "Download URL: $IMPORT_JAR_URL"
-    ensure_failure_report
+    ensure_failure_report "Setup" "Import tool JAR not found"
     exit 1
   fi
 fi
 
 if [[ ! -f "$TMCF" || ! -f "$CSV" ]]; then
   log_error "Input files not found: TMCF=$TMCF, CSV=$CSV"
-  ensure_failure_report
+  ensure_failure_report "Setup" "Input files not found"
   exit 1
 fi
 
@@ -559,13 +571,13 @@ java -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
   log_error "dc-import genmcf failed"
   emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
-  ensure_failure_report
+  ensure_failure_report "Data Processing" "Data processing failed"
   exit 1
 }
 
 if [[ ! -f "$STATS_SUMMARY" ]]; then
   log_error "summary_report.csv not produced at $STATS_SUMMARY"
-  ensure_failure_report
+  ensure_failure_report "Data Processing" "summary_report.csv not produced"
   exit 1
 fi
 log_info "Generated: $STATS_SUMMARY, report.json"
@@ -581,7 +593,7 @@ if [[ -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
   if ! $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" 2>/dev/null; then
     log_error "Validation config failed template check. Run: $PYTHON $VALIDATE_CONFIG_SCRIPT $VALIDATION_CONFIG"
     $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" || true
-    ensure_failure_report
+    ensure_failure_report "Validation Config" "Validation config failed template check"
     exit 1
   fi
 fi

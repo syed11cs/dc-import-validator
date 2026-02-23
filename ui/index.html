@@ -2867,23 +2867,36 @@
       }
       let reportLoaded = false;
       try {
-        let r;
-        const useGcsUrl = lastRunReportId && lastRunDataset === currentDataset;
-        if (useGcsUrl) {
-          r = await fetch(API + `/report/${currentDataset}/${lastRunReportId}?t=${Date.now()}`);
-        } else {
-          r = await fetch(API + `/report/${currentDataset}?t=${Date.now()}`);
+        const reportInfoUrl = reportRunId
+          ? API + `/api/report-info/${currentDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
+          : API + `/api/report-info/${currentDataset}?t=${Date.now()}`;
+        const infoRes = await fetch(reportInfoUrl);
+        if (infoRes.ok) {
+          const info = await infoRes.json();
+          if (info.exists) {
+            reportLoaded = true;
+            const link = document.getElementById('open-report-link');
+            const reportUrl = (lastRunReportId && lastRunDataset === currentDataset)
+              ? (API + `/report/${currentDataset}/${lastRunReportId}`)
+              : (API + `/report/${currentDataset}`);
+            link.href = reportUrl;
+            const runIdWrap = document.getElementById('report-run-id-wrap');
+            const runIdEl = document.getElementById('report-run-id');
+            if (runIdWrap && runIdEl) {
+              if (lastRunReportId && lastRunDataset === currentDataset) {
+                runIdEl.textContent = lastRunReportId;
+              }
+            }
+            setReportActionsVisible(true, true);
+            lastReportMtime = info.mtime != null ? info.mtime : null;
+            document.getElementById('report-timestamp').textContent = lastReportMtime ? `Generated ${formatTimeAgo(lastReportMtime)}` : '';
+          }
         }
-        if (!r.ok && useGcsUrl) {
-          r = await fetch(API + `/report/${currentDataset}?t=${Date.now()}`);
-        }
-        if (!r.ok) {
+        if (!reportLoaded) {
           lastReportMtime = null;
-          const reportUnavailableMsg = (r.status === 404 && lastRunDataset === currentDataset && !lastRunReportGenerated)
+          const reportUnavailableMsg = (lastRunDataset === currentDataset && !lastRunReportGenerated)
             ? 'Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.'
-            : (r.status === 404)
-              ? "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds."
-              : null;
+            : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
           setReportInsightsPlaceholder(reportUnavailableMsg);
           if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
             renderLLMReportSection({ pipelineFailed: true });
@@ -2892,35 +2905,6 @@
           }
           setReportActionsVisible(lastRunSummary != null, false);
           return;
-        }
-        await r.text();
-        reportLoaded = true;
-        const link = document.getElementById('open-report-link');
-        const reportUrl = (lastRunReportId && lastRunDataset === currentDataset)
-          ? (API + `/report/${currentDataset}/${lastRunReportId}`)
-          : (API + `/report/${currentDataset}`);
-        link.href = reportUrl;
-        const runIdWrap = document.getElementById('report-run-id-wrap');
-        const runIdEl = document.getElementById('report-run-id');
-        if (runIdWrap && runIdEl) {
-          if (lastRunReportId && lastRunDataset === currentDataset) {
-            runIdEl.textContent = lastRunReportId;
-          }
-        }
-        setReportActionsVisible(true, true);
-        const reportRunId = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
-        const reportInfoUrl = reportRunId
-          ? API + `/api/report-info/${currentDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
-          : API + `/api/report-info/${currentDataset}?t=${Date.now()}`;
-        const infoRes = await fetch(reportInfoUrl);
-        if (infoRes.ok) {
-          const info = await infoRes.json();
-          const mtime = info.mtime;
-          lastReportMtime = mtime != null ? mtime : null;
-          document.getElementById('report-timestamp').textContent = lastReportMtime ? `Generated ${formatTimeAgo(lastReportMtime)}` : '';
-        } else {
-          lastReportMtime = null;
-          document.getElementById('report-timestamp').textContent = '';
         }
       } catch (e) {
         setReportInsightsPlaceholder();

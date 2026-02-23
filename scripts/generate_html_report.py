@@ -85,6 +85,21 @@ def _load_llm_review(output_dir: str):
         return None
 
 
+def _load_pipeline_failure(output_dir: str) -> dict | None:
+    """Load pipeline_failure.json from output dir. Returns None if not found or invalid."""
+    path = os.path.join(output_dir, "pipeline_failure.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("stage") and data.get("reason"):
+            return data
+        return None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _extract_rule_failure_samples(results: list) -> list[dict]:
     """Parse validation results and return structured rule failure samples."""
     samples = []
@@ -875,6 +890,17 @@ def generate_html(
     output_dir = os.path.dirname(validation_output_path)
     report = _load_report_json(output_dir)
     stats_df = _load_summary_csv(output_dir)
+    pipeline_failure = _load_pipeline_failure(output_dir)
+    pipeline_failure_banner_html = ""
+    if pipeline_failure:
+        stage = _escape_html(str(pipeline_failure.get("stage", "")))
+        reason = _escape_html(str(pipeline_failure.get("reason", "")))
+        pipeline_failure_banner_html = (
+            f'<div class="pipeline-failure-banner" role="alert">'
+            f'<strong>Pipeline failed at:</strong> <span class="stage">{stage}</span><br>'
+            f'<strong>Reason:</strong> {reason}'
+            f"</div>"
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -968,6 +994,14 @@ def generate_html(
     .empty {{ color: var(--text-muted); font-style: italic; font-size: 0.875rem; }}
     .advisory-note {{ font-size: 0.8125rem; color: var(--text-muted); font-style: italic; margin-bottom: 12px; }}
     .hero-note {{ font-size: 0.8125rem; color: var(--text-muted); margin-top: 10px; }}
+    .pipeline-failure-banner {{
+      margin: 0; padding: 16px 32px;
+      border-bottom: 1px solid var(--border);
+      background: var(--fail-bg); border-left: 4px solid var(--fail);
+      font-size: 0.9375rem;
+    }}
+    .pipeline-failure-banner strong {{ color: var(--fail); }}
+    .pipeline-failure-banner .stage {{ font-weight: 600; color: var(--text); }}
     .contents {{ margin-bottom: 28px; }}
     .contents-title {{ font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 10px; }}
     .nav-links {{ display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 0.8125rem; }}
@@ -1012,6 +1046,7 @@ def generate_html(
       </div>
       <p class="hero-note">Overall is based on validation rules only; Gemini Review is advisory and does not affect pass/fail.</p>
     </header>
+    {pipeline_failure_banner_html}
 """
     # Compact summary block
     llm_issues = _load_llm_review(output_dir) or []
