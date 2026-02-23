@@ -88,6 +88,40 @@ def _load_summary_csv(output_dir: str):
         return None
 
 
+def _format_unit_display(raw: str) -> str:
+    """Format unit value for display: avoid raw [] or [, x]. Empty/missing → (missing), one value → as-is, multiple → comma-joined."""
+    if raw is None or not isinstance(raw, str):
+        return "(missing)"
+    s = raw.strip()
+    if not s or s in ("—", "[]"):
+        return "(missing)"
+    if s.startswith("["):
+        inner = s[1:].rstrip("]").strip()
+        parts = [p.strip() for p in inner.split(",") if p.strip()]
+        if not parts:
+            return "(missing)"
+        return ", ".join(parts)
+    return s
+
+
+def _load_summary_statvar_units(output_dir: str) -> list[tuple[str, str]]:
+    """Load (StatVar, Units) from summary_report.csv. Returns [] if not found or no Units column."""
+    df = _load_summary_csv(output_dir)
+    if df is None or df.empty:
+        return []
+    sv_col = "StatVar" if "StatVar" in df.columns else "stat_var"
+    unit_col = "Units" if "Units" in df.columns else "units"
+    if sv_col not in df.columns or unit_col not in df.columns:
+        return []
+    out = []
+    for _, row in df.iterrows():
+        sv = str(row.get(sv_col, "") or "").strip()
+        unit = str(row.get(unit_col, "") or "").strip()
+        if sv:
+            out.append((sv, unit or "—"))
+    return out
+
+
 def _load_llm_review(output_dir: str):
     """Load schema_review.json from output dir (schema + optional Gemini review issues). Returns None if not found or invalid."""
     path = os.path.join(output_dir, "schema_review.json")
@@ -144,11 +178,14 @@ def _extract_rule_failure_samples(results: list) -> list[dict]:
                     "message": message,
                 })
         elif rule == "check_unit_consistency":
+            units_seen = details.get("units") or details.get("unit_values") or details.get("units_seen")
+            if units_seen is not None and not isinstance(units_seen, str):
+                units_seen = str(units_seen)
             samples.append({
                 "statVar": None,
                 "rule": rule,
-                "expected": "consistent units",
-                "value": None,
+                "expected": "consistent units (one unit per StatVar)",
+                "value": _format_unit_display(units_seen or ""),
                 "message": message,
             })
         elif rule == "check_scaling_factor_consistency":
@@ -166,6 +203,14 @@ def _extract_rule_failure_samples(results: list) -> list[dict]:
                     "value": value if value is not None else "—",
                     "message": message,
                 })
+        elif rule == "check_structural_lint_error_count":
+            samples.append({
+                "statVar": None,
+                "rule": rule,
+                "expected": "0 structural lint errors",
+                "value": None,
+                "message": message,
+            })
         else:
             # Generic fallback for rules without custom handling.
             samples.append({
@@ -457,6 +502,29 @@ def _enrich_rule_failure_samples(samples: list[dict], output_dir: str, results: 
                 s["sourceRow"] = f"{csv_basename}:{i + 2}"
                 break
 
+    # Expand check_unit_consistency into one sample per StatVar with its unit (when summary_report.csv exists)
+    expanded = []
+    for s in samples:
+        if (s.get("rule") or "") == "check_unit_consistency":
+            statvar_units = _load_summary_statvar_units(output_dir)
+            if statvar_units:
+                msg = s.get("message") or ""
+                expected = s.get("expected") or "consistent units (one unit per StatVar)"
+                for stat_var, unit in statvar_units:
+                    expanded.append({
+                        "statVar": stat_var,
+                        "rule": s["rule"],
+                        "expected": expected,
+                        "value": _format_unit_display(unit),
+                        "message": msg,
+                    })
+            else:
+                expanded.append(s)
+        else:
+            expanded.append(s)
+    samples.clear()
+    samples.extend(expanded)
+
 
 def _render_rule_failure_section(results: list, output_dir: str) -> str:
     """Render Rule failure samples section from validation results (enriched with CSV when available)."""
@@ -469,12 +537,23 @@ def _render_rule_failure_section(results: list, output_dir: str) -> str:
     if not samples:
         html += "      <p class='empty'>No validation rule failures detected.</p>\n"
     else:
-        html += f"      <p>{len(samples)} rule failure(s).</p>\n"
+        rule_count = len({s.get("rule") for s in samples if s.get("rule")})
+        if rule_count == 1 and len(samples) == 1:
+            html += "      <p>1 blocking rule failed.</p>\n"
+        elif len(samples) != rule_count:
+            html += f"      <p>{rule_count} blocking rules failed ({len(samples)} affected entries).</p>\n"
+        else:
+            html += f"      <p>{rule_count} blocking rules failed.</p>\n"
         html += "      <table class='details lint-table'><thead><tr><th>Rule</th><th>StatVar</th><th>Expected</th><th>Value</th><th>Location</th><th>Source row</th><th>Message</th></tr></thead><tbody>\n"
         for s in samples:
             loc = s.get("location") or "—"
             src = s.get("sourceRow") or "—"
-            html += f"        <tr><td>{_escape_html(s.get('rule') or '—')}</td><td>{_escape_html(str(s.get('statVar') or '—'))}</td><td>{_escape_html(str(s.get('expected') or '—'))}</td><td>{_escape_html(str(s.get('value') or '—'))}</td><td>{_escape_html(str(loc))}</td><td>{_escape_html(str(src))}</td><td>{_escape_html(str(s.get('message') or '')[:80])}</td></tr>\n"
+            val = s.get("value") or "—"
+            if (s.get("rule") or "") == "check_unit_consistency":
+                val_cell = "Unit: " + _escape_html(str(val))
+            else:
+                val_cell = _escape_html(str(val))
+            html += f"        <tr><td>{_escape_html(s.get('rule') or '—')}</td><td>{_escape_html(str(s.get('statVar') or '—'))}</td><td>{_escape_html(str(s.get('expected') or '—'))}</td><td>{val_cell}</td><td>{_escape_html(str(loc))}</td><td>{_escape_html(str(src))}</td><td>{_escape_html(str(s.get('message') or '')[:80])}</td></tr>\n"
         html += "      </tbody></table>\n"
     html += "    </section>\n"
     return html

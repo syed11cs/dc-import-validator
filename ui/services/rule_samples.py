@@ -59,6 +59,49 @@ def _row_val_float(row: dict, key_candidates: list[str]) -> float | None:
     return None
 
 
+def _format_unit_display(raw: str) -> str:
+    """Format unit value for display: avoid raw [] or [, x]. Empty/missing → (missing), one value → as-is, multiple → comma-joined."""
+    if raw is None or not isinstance(raw, str):
+        return "(missing)"
+    s = raw.strip()
+    if not s or s in ("—", "[]"):
+        return "(missing)"
+    if s.startswith("["):
+        # Parse list-like string: strip brackets, split by comma, clean, join
+        inner = s[1:].rstrip("]").strip()
+        parts = [p.strip() for p in inner.split(",") if p.strip()]
+        if not parts:
+            return "(missing)"
+        return ", ".join(parts)
+    return s
+
+
+def _load_summary_statvar_units(output_dir: Path) -> list[tuple[str, str]]:
+    """Load (StatVar, Units) from summary_report.csv. Returns [] if not found or no Units column."""
+    path = output_dir / "summary_report.csv"
+    if not path.exists():
+        return []
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    except (OSError, csv.Error):
+        return []
+    if not rows:
+        return []
+    sv_col = "StatVar" if "StatVar" in rows[0] else "stat_var"
+    unit_col = "Units" if "Units" in rows[0] else "units"
+    if sv_col not in rows[0] or unit_col not in rows[0]:
+        return []
+    out = []
+    for row in rows:
+        sv = (row.get(sv_col) or "").strip()
+        unit = (row.get(unit_col) or "").strip()
+        if sv:
+            out.append((sv, unit or "—"))
+    return out
+
+
 def enrich_rule_failure_samples(samples: list[dict], output_dir: Path, results: list) -> None:
     """Enrich samples with location, date, sourceRow from CSV when possible. Mutates samples in place."""
     csv_path = get_csv_path(output_dir)
@@ -113,6 +156,32 @@ def enrich_rule_failure_samples(samples: list[dict], output_dir: Path, results: 
                 s["sourceRow"] = f"{csv_basename}:{i + 2}"
                 break
 
+    # Expand check_unit_consistency into one sample per StatVar with its unit (when summary_report.csv exists)
+    expanded = []
+    for s in samples:
+        if (s.get("rule") or "") == "check_unit_consistency":
+            statvar_units = _load_summary_statvar_units(output_dir)
+            if statvar_units:
+                msg = s.get("message") or ""
+                expected = s.get("expected") or "consistent units (one unit per StatVar)"
+                for stat_var, unit in statvar_units:
+                    expanded.append({
+                        "statVar": stat_var,
+                        "location": None,
+                        "date": None,
+                        "value": _format_unit_display(unit),
+                        "rule": s["rule"],
+                        "expected": expected,
+                        "sourceRow": None,
+                        "message": msg,
+                    })
+            else:
+                expanded.append(s)
+        else:
+            expanded.append(s)
+    samples.clear()
+    samples.extend(expanded)
+
 
 def extract_rule_failure_samples(results: list) -> list[dict]:
     """Parse validation_output.json results and return structured failure samples for failed rules."""
@@ -152,7 +221,7 @@ def extract_rule_failure_samples(results: list) -> list[dict]:
                 "statVar": None,
                 "location": None,
                 "date": None,
-                "value": units_seen if units_seen else None,
+                "value": _format_unit_display(units_seen or ""),
                 "rule": rule,
                 "expected": "consistent units (one unit per StatVar)",
                 "sourceRow": None,
@@ -180,6 +249,17 @@ def extract_rule_failure_samples(results: list) -> list[dict]:
                     "sourceRow": None,
                     "message": message,
                 })
+        elif rule == "check_structural_lint_error_count":
+            samples.append({
+                "statVar": None,
+                "location": None,
+                "date": None,
+                "value": None,
+                "rule": rule,
+                "expected": "0 structural lint errors",
+                "sourceRow": None,
+                "message": message,
+            })
         else:
             samples.append({
                 "statVar": None,

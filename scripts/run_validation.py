@@ -4,7 +4,7 @@
 This script is the single entry point for "Step 3" validation. It:
   - Loads the full validation config.
   - Runs the DC runner with a filtered config (only rules the DC framework knows;
-    LINT_ERROR_COUNT and STRUCTURAL_LINT_ERROR_COUNT are excluded).
+    LINT_ERROR_COUNT (legacy; not in config) and STRUCTURAL_LINT_ERROR_COUNT are excluded).
   - Runs custom validators (e.g. STRUCTURAL_LINT_ERROR_COUNT) in this repo.
   - Merges results and writes validation_output.json once (no post-processing).
 

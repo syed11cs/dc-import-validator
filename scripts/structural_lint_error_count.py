@@ -3,7 +3,7 @@
 
 Counts LEVEL_ERROR counters in the lint report EXCLUDING any counter whose key
 starts with Existence_FailedDcCall_ (resolution diagnostics). Applies the same
-threshold logic as LINT_ERROR_COUNT. Returns a result dict matching the
+threshold semantics as DC's LINT_ERROR_COUNT (structural errors only; we exclude Existence_FailedDcCall_*). Returns a result dict matching the
 validation_output.json schema for integration with the HTML report and pipeline.
 
 Used by run_validation.py; can be run standalone for testing.
@@ -59,10 +59,7 @@ def run(
         return {
             "validation_name": rule_id,
             "status": "FAILED",
-            "message": (
-                f"Found {lint_error_count} structural schema/MCF lint errors "
-                f"(non-resolution), which exceeds the threshold of {threshold}."
-            ),
+            "message": f"Found {lint_error_count} structural lint errors",
             "details": {"lint_error_count": lint_error_count},
             "validation_params": params,
         }

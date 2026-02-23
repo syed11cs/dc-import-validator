@@ -253,8 +253,8 @@ Control which failures block the pipeline in `validation_configs/warn_only_rules
 
 ```json
 {
-  "child_birth": ["check_lint_error_count"],
-  "custom": ["check_lint_error_count", "check_data_fluctuation"]
+  "child_birth": ["check_max_date_latest"],
+  "custom": ["check_max_date_latest"]
 }
 ```
 

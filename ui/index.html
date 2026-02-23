@@ -208,9 +208,11 @@
       min-height: unset;
     }
     .rule-result-icon.passed { color: var(--success); }
-    .rule-result-icon.failed { color: var(--fail); }
-    .rule-result-icon.warning { color: var(--warn); }
+    .rule-result-icon.failed { color: var(--fail); background: rgba(244,63,94,0.12); padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+    .rule-result-icon.warning { color: var(--warn); background: rgba(245,158,11,0.18); padding: 2px 8px; border-radius: 4px; font-weight: 500; }
     .rule-result-icon.skipped { color: var(--text-muted); opacity: 0.6; }
+    .rule-item-disabled { opacity: 0.75; }
+    .rule-item-disabled .rule-badge-disabled { font-size: 0.75rem; color: var(--text-muted); background: var(--bg-elevated); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
     .rule-result-icon .rule-result-hint { font-size: 0.7rem; color: var(--text-muted); display: block; margin-top: 2px; }
     .rule-result-icon.has-hint { flex-direction: column; align-items: flex-end; text-align: right; }
     .rules-section-locked .rule-item { opacity: 0.6; pointer-events: none; }
@@ -721,16 +723,41 @@
     #output.clear-fade-out,
     .review-insights.clear-fade-out,
     .rules-list.clear-fade-out { opacity: 0; }
-    .summary-card.outcome-pass { border-color: rgba(16,185,129,0.4); }
-    .summary-card.outcome-warnings { border-color: rgba(245,158,11,0.4); }
-    .summary-card.outcome-fail { border-color: rgba(244,63,94,0.4); }
+    .summary-card.outcome-pass {
+      border-color: rgba(16,185,129,0.45);
+      background: rgba(16,185,129,0.06);
+      border-left: 4px solid rgba(16,185,129,0.7);
+    }
+    .summary-card.outcome-warnings {
+      border-color: rgba(245,158,11,0.45);
+      background: rgba(245,158,11,0.06);
+      border-left: 4px solid rgba(245,158,11,0.7);
+    }
+    .summary-card.outcome-fail {
+      border-color: rgba(244,63,94,0.45);
+      background: rgba(244,63,94,0.07);
+      border-left: 4px solid rgba(244,63,94,0.8);
+    }
     .summary-card-outcome {
-      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 1.05rem;
       margin-bottom: 4px;
       overflow-wrap: break-word;
       word-break: break-word;
       white-space: normal;
     }
+    .summary-card-status-dot {
+      flex-shrink: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .summary-card-status-dot--pass { background: var(--success); }
+    .summary-card-status-dot--fail { background: var(--fail); }
+    .summary-card-status-dot--warn { background: var(--warn); }
     .summary-card-rules { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; margin-bottom: 6px; }
     .summary-card-details { margin-top: 10px; font-size: 0.85rem; }
     .summary-card-details-summary { cursor: pointer; list-style: none; text-decoration: none; }
@@ -750,6 +777,33 @@
     .summary-card-meta { font-size: 0.8rem; color: var(--text-muted); opacity: 0.85; font-weight: 400; }
     .summary-card-gemini-hint { font-size: 0.8rem; color: rgba(180, 140, 0, 0.95); margin-top: 6px; font-weight: 400; }
     .summary-card .warning-details-list { margin-top: 8px; padding-left: 18px; font-size: 0.85rem; list-style: disc; color: var(--text-muted); }
+    .summary-card .warning-details-list .rule-detail-item { margin-bottom: 6px; }
+    .summary-card-metrics { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 16px; font-size: 0.72rem; }
+    .summary-card-metrics .metric-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
+    .summary-card-metrics .metric-chip--blocking { background: rgba(244,63,94,0.2); color: var(--fail); }
+    .summary-card-metrics .metric-chip--warning { background: rgba(245,158,11,0.22); color: var(--warn); }
+    .summary-card-metrics .metric-chip--runtime { background: rgba(113,113,122,0.12); color: var(--text-muted); font-weight: 400; }
+    .metric-chip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .metric-chip-dot--blocking { background: var(--fail); }
+    .metric-chip-dot--warning { background: var(--warn); }
+    .summary-card-details { border-top: 1px solid rgba(0,0,0,0.08); padding-top: 16px; margin-top: 16px; }
+    .summary-card-details-section { margin-top: 16px; }
+    .summary-card-details-section:first-of-type { margin-top: 0; }
+    .summary-card-details-section--blocking { border-top: 1px solid rgba(244,63,94,0.35); padding-top: 12px; margin-top: 16px; }
+    .summary-card-details-section-title { font-weight: 600; font-size: 0.85rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .summary-card-details-section-title--blocking { color: var(--fail); }
+    .summary-card-details-section-title--warnings { color: var(--warn); }
+    .section-title-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .section-title-dot--blocking { background: var(--fail); }
+    .section-title-dot--warnings { background: var(--warn); }
+    .summary-card-warnings-details { margin-top: 16px; }
+    .summary-card-warnings-details summary { cursor: pointer; list-style: none; }
+    .summary-card-warnings-details summary::-webkit-details-marker { display: none; }
+    .summary-card-warnings-details summary::marker { content: none; }
+    .summary-card-warnings-details summary::after { content: ' ▾'; font-size: 0.85em; opacity: 0.8; }
+    .summary-card-warnings-details[open] summary::after { content: ' ▴'; }
+    .summary-card .rule-item-id { font-weight: 700; font-family: ui-monospace, monospace; font-size: 0.8rem; display: block; margin-bottom: 2px; }
+    .summary-card .rule-item-msg { font-size: 0.85rem; color: var(--text-muted); margin-left: 0; }
     .ai-review-section {
       margin-top: 14px;
       padding: 16px 18px;
@@ -933,6 +987,14 @@
     .rule-failure-card .copy-summary-btn:hover {
       border-color: var(--accent);
       color: var(--accent);
+    }
+    .rule-failure-group { margin-top: 16px; }
+    .rule-failure-group:first-child { margin-top: 0; }
+    .rule-failure-group-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
     }
     .tabs { display: flex; gap: 6px; }
     .tab {
@@ -1276,7 +1338,6 @@
             <div id="report-actions" class="tab-actions" style="display: none;">
               <span id="report-timestamp" class="report-timestamp"></span>
               <span id="report-run-id-wrap" class="report-run-id-wrap" style="display: none;"><span class="report-run-id-label">Run ID:</span><span id="report-run-id" class="report-run-id-badge"></span></span>
-              <button id="copy-run-summary-btn" class="btn btn-sm" disabled title="Copy run summary to clipboard">Copy Run Summary</button>
               <a id="open-report-link" class="btn btn-sm" href="#" target="_blank" rel="noopener">Open Report ↗</a>
               <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download</button>
             </div>
@@ -1576,7 +1637,20 @@
         const r = await fetch(API + `/api/config/${dataset}`);
         const config = await r.json();
         const rules = config.rules || [];
-        const html = rules.map(rule => `
+        const enabledRules = rules.filter(r => r.enabled !== false);
+        const html = rules.map(rule => {
+          const isDisabled = rule.enabled === false;
+          if (isDisabled) {
+            return `
+          <div class="rule-item rule-item-disabled" data-rule-id="${escapeHtml(rule.rule_id)}" data-enabled="false">
+            <label style="cursor: default;">
+              <div class="rule-id">${escapeHtml(rule.rule_id)}</div>
+              <div class="rule-desc">${escapeHtml(rule.description || '')}</div>
+            </label>
+            <span class="rule-badge-disabled">Disabled (config)</span>
+          </div>`;
+          }
+          return `
           <div class="rule-item">
             <input type="checkbox" id="rule-${escapeHtml(rule.rule_id)}" class="rule-checkbox" data-rule-id="${escapeHtml(rule.rule_id)}" checked>
             <label for="rule-${escapeHtml(rule.rule_id)}">
@@ -1585,11 +1659,12 @@
             </label>
             <span class="rule-result-icon" data-rule-id="${escapeHtml(rule.rule_id)}"></span>
           </div>
-        `).join('');
+        `;
+        }).join('');
         document.getElementById('rules').innerHTML = html || '<div class="rule-item" style="color: var(--text-muted);">No rules</div>';
-        currentRuleIds = rules.map(r => r.rule_id);
-        document.getElementById('rules-actions').style.display = rules.length > 0 ? 'block' : 'none';
-        document.getElementById('rules-preset-row').style.display = rules.length > 0 ? 'block' : 'none';
+        currentRuleIds = enabledRules.map(r => r.rule_id);
+        document.getElementById('rules-actions').style.display = enabledRules.length > 0 ? 'block' : 'none';
+        document.getElementById('rules-preset-row').style.display = enabledRules.length > 0 ? 'block' : 'none';
         populatePresetSelect();
         applyPreset(document.getElementById('rules-preset').value);
         updateRunButtonState();
@@ -1711,55 +1786,63 @@
 
       const outcome = document.createElement('div');
       outcome.className = 'summary-card-outcome';
+      const statusDot = document.createElement('span');
+      statusDot.className = 'summary-card-status-dot';
+      const outcomeText = document.createElement('span');
       if (opts.success) {
         card.classList.add(opts.hasWarnings ? 'outcome-warnings' : 'outcome-pass');
-        outcome.style.color = 'var(--success)';
-        outcome.textContent = '✔ Validation passed';
+        statusDot.classList.add('summary-card-status-dot--pass');
+        outcomeText.style.color = 'var(--success)';
+        outcomeText.textContent = 'Validation PASSED';
       } else {
         card.classList.add('outcome-fail');
-        outcome.style.color = 'var(--fail)';
-        let failLabel = '✖ Validation failed';
+        statusDot.classList.add('summary-card-status-dot--fail');
+        outcomeText.style.color = 'var(--fail)';
+        let failLabel = 'Validation FAILED';
         const code = opts.failure_code;
         const msg = opts.failure_message || opts.pipeline_failure_reason || opts.run_failure_reason;
-        if (pipelineFailedBeforeValidation && code === FAILURE.GEMINI_BLOCKING) failLabel = '✖ Run stopped: Gemini Review found issues';
-        else if (pipelineFailedBeforeValidation && code === FAILURE.ROW_COUNT_EXCEEDED) failLabel = '✖ ' + (msg || 'CSV row count exceeds limit');
-        else if (pipelineFailedBeforeValidation && (code === FAILURE.CSV_QUALITY_FAILED || code === FAILURE.PREFLIGHT_FAILED)) failLabel = '✖ Pipeline failed (Pre-Import Checks)';
-        else if (pipelineFailedBeforeValidation && (code === FAILURE.DATA_PROCESSING_FAILED || code === FAILURE.LINT_FAILED)) failLabel = '✖ Pipeline failed';
-        else if (msg) failLabel = '✖ ' + msg;
-        outcome.textContent = failLabel;
+        if (pipelineFailedBeforeValidation && code === FAILURE.GEMINI_BLOCKING) failLabel = 'Pipeline stopped at Gemini Review';
+        else if (pipelineFailedBeforeValidation && (code === FAILURE.ROW_COUNT_EXCEEDED || code === FAILURE.CSV_QUALITY_FAILED || code === FAILURE.PREFLIGHT_FAILED)) failLabel = 'Pre-Import Check Failed';
+        else if (pipelineFailedBeforeValidation && (code === FAILURE.DATA_PROCESSING_FAILED || code === FAILURE.LINT_FAILED)) failLabel = 'Pipeline failed';
+        else if (msg) failLabel = msg;
+        outcomeText.textContent = failLabel;
       }
+      outcome.appendChild(statusDot);
+      outcome.appendChild(outcomeText);
       content.appendChild(outcome);
 
       if (pipelineFailedBeforeValidation && !opts.success) {
         const badge = document.createElement('div');
         badge.className = 'summary-card-badge';
         badge.style.cssText = 'font-size:0.85em;color:var(--text-muted);margin-top:2px;';
-        badge.textContent = '(Validation did not run)';
+        badge.textContent = 'Validation did not run.';
         content.appendChild(badge);
       }
 
       if (!pipelineFailedBeforeValidation && runCount > 0) {
-        const countsParts = [];
-        if (failCount > 0) countsParts.push(failCount + ' blocking issue' + (failCount !== 1 ? 's' : ''));
-        if (warnCount > 0) countsParts.push(warnCount + ' warning' + (warnCount !== 1 ? 's' : ''));
-        if (countsParts.length === 0) countsParts.push('0 blocking issues');
-        const counts = document.createElement('div');
-        counts.className = 'summary-card-rules';
-        counts.textContent = countsParts.join(' · ');
-        content.appendChild(counts);
+        const blocking = opts.failCount ?? 0;
+        const warnings = opts.warnCount ?? 0;
+        const runTimeStr = opts.durationSec != null ? opts.durationSec.toFixed(1) + 's' : (opts.completedAt != null || lastRunCompletedAt ? formatRunTimestamp(opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt) : '—');
+        const metricsRow = document.createElement('div');
+        metricsRow.className = 'summary-card-metrics';
+        metricsRow.innerHTML =
+          '<span class="metric-chip metric-chip--blocking"><span class="metric-chip-dot metric-chip-dot--blocking"></span>' + blocking + ' Blocking</span>' +
+          '<span class="metric-chip metric-chip--warning"><span class="metric-chip-dot metric-chip-dot--warning"></span>' + warnings + ' Warning' + (warnings !== 1 ? 's' : '') + '</span>' +
+          '<span class="metric-chip metric-chip--runtime">' + escapeHtml(runTimeStr) + '</span>';
+        content.appendChild(metricsRow);
+      } else if (opts.durationSec != null || (opts.completedAt != null || lastRunCompletedAt)) {
+        const meta = document.createElement('div');
+        meta.className = 'summary-card-meta';
+        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+        if (opts.durationSec != null) {
+          meta.textContent = 'Run time: ' + opts.durationSec.toFixed(1) + 's';
+        } else if (runTime) {
+          meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
+        } else {
+          meta.textContent = '—';
+        }
+        content.appendChild(meta);
       }
-
-      const meta = document.createElement('div');
-      meta.className = 'summary-card-meta';
-      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
-      if (opts.durationSec != null) {
-        meta.textContent = 'Run time: ' + opts.durationSec.toFixed(1) + 's';
-      } else if (runTime) {
-        meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
-      } else {
-        meta.textContent = '—';
-      }
-      content.appendChild(meta);
       if (opts.geminiSkippedNoKey) {
         const hint = document.createElement('div');
         hint.className = 'summary-card-gemini-hint';
@@ -1774,78 +1857,104 @@
           .replace(/(Found )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3')
           .replace(/(^| )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3');
         const color = isFailed ? ' style="color:var(--fail);"' : '';
-        return '<li' + color + '>' + rule + (msg ? ' – ' + msg : '') + '</li>';
+        const msgPart = msg ? '<div class="rule-item-msg">' + msg + '</div>' : '';
+        return '<li class="rule-detail-item"' + color + '><span class="rule-item-id">[' + rule + ']</span>' + msgPart + '</li>';
       }
       if (showDetailsToggle) {
         const failedRules = opts.failedRules || [];
         const warningRules = opts.warningRules || [];
-        let listItems = [];
-        if (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) {
-          listItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.run_failure_reason) + '</li>');
-        }
-        listItems = listItems.concat(failedRules.map(r => formatRuleItem(r, true))).concat(warningRules.map(r => formatRuleItem(r, false)));
-        if (listItems.length === 0) {
-          if (opts.pipelineFailedBeforeValidation && opts.failure_message) {
-            listItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
-          } else if (opts.failure_message) {
-            listItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
-          } else {
-            listItems.push('<li style="color:var(--text-muted);">All rules passed.</li>');
-          }
-        }
         const details = document.createElement('details');
         details.className = 'summary-card-details';
         const summary = document.createElement('summary');
         summary.className = 'summary-card-details-summary';
         summary.textContent = opts.success ? 'View details' : 'View failure details';
         details.appendChild(summary);
-        const listEl = document.createElement('ul');
-        listEl.className = 'warning-details-list';
-        listEl.innerHTML = listItems.join('');
-        details.appendChild(listEl);
+
+        const hasBlocking = failedRules.length > 0 || (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) || (opts.pipelineFailedBeforeValidation && opts.failure_message);
+        const blockingListItems = [];
+        if (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) {
+          blockingListItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.run_failure_reason) + '</li>');
+        }
+        const isGeminiBlocking = pipelineFailedBeforeValidation && opts.failure_code === FAILURE.GEMINI_BLOCKING;
+        const isPreImportBlocking = pipelineFailedBeforeValidation && (opts.failure_code === FAILURE.ROW_COUNT_EXCEEDED || opts.failure_code === FAILURE.CSV_QUALITY_FAILED || opts.failure_code === FAILURE.PREFLIGHT_FAILED);
+        if (isPreImportBlocking && opts.failure_message) {
+          blockingListItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
+        }
+        blockingListItems.push(...failedRules.map(r => formatRuleItem(r, true)));
+        const showBlockingSection = hasBlocking && (blockingListItems.length > 0 || pipelineFailedBeforeValidation);
+        if (showBlockingSection) {
+          let blockingTitle = 'Blocking Issues (' + blockingListItems.length + ')';
+          if (isGeminiBlocking) {
+            blockingTitle = 'Pipeline Stopped: Gemini Review';
+          } else if (blockingListItems.length === 1 && opts.failure_code === FAILURE.ROW_COUNT_EXCEEDED) {
+            blockingTitle = 'Blocking Issues (Pre-Import)';
+          } else if (isPreImportBlocking) {
+            blockingTitle = 'Blocking Issues (Pre-Import)';
+          }
+          const blockingSection = document.createElement('div');
+          blockingSection.className = 'summary-card-details-section summary-card-details-section--blocking';
+          blockingSection.innerHTML = '<div class="summary-card-details-section-title summary-card-details-section-title--blocking"><span class="section-title-dot section-title-dot--blocking"></span> ' + escapeHtml(blockingTitle) + '</div>';
+          if (isGeminiBlocking) {
+            const findingsEl = document.createElement('p');
+            findingsEl.className = 'summary-card-gemini-findings';
+            findingsEl.style.cssText = 'font-size:0.85rem;color:var(--text-muted);margin:0 0 8px 0;';
+            findingsEl.textContent = 'Gemini Findings (see Gemini Review section)';
+            blockingSection.appendChild(findingsEl);
+          }
+          if (blockingListItems.length > 0) {
+            const blockingUl = document.createElement('ul');
+            blockingUl.className = 'warning-details-list';
+            blockingUl.innerHTML = blockingListItems.join('');
+            blockingSection.appendChild(blockingUl);
+          }
+          details.appendChild(blockingSection);
+        }
+
+        if (warningRules.length > 0) {
+          const warnUl = document.createElement('ul');
+          warnUl.className = 'warning-details-list';
+          warnUl.innerHTML = warningRules.map(r => formatRuleItem(r, false)).join('');
+          if (!opts.success) {
+            const warnDetails = document.createElement('details');
+            warnDetails.className = 'summary-card-warnings-details';
+            const warnSummary = document.createElement('summary');
+            warnSummary.className = 'summary-card-details-section-title summary-card-details-section-title--warnings';
+            warnSummary.innerHTML = '<span class="section-title-dot section-title-dot--warnings"></span> Warnings (' + warningRules.length + ')';
+            warnDetails.appendChild(warnSummary);
+            warnDetails.appendChild(warnUl);
+            details.appendChild(warnDetails);
+          } else {
+            const warnSection = document.createElement('div');
+            warnSection.className = 'summary-card-details-section';
+            warnSection.innerHTML = '<div class="summary-card-details-section-title summary-card-details-section-title--warnings"><span class="section-title-dot section-title-dot--warnings"></span> Warnings (' + warningRules.length + ')</div>';
+            warnSection.appendChild(warnUl);
+            details.appendChild(warnSection);
+          }
+        }
+
+        if (!hasBlocking && warningRules.length === 0) {
+          const emptyEl = document.createElement('p');
+          emptyEl.className = 'summary-card-details-section';
+          emptyEl.style.cssText = 'margin-top:8px;color:var(--text-muted);font-size:0.85rem;';
+          emptyEl.textContent = opts.failure_message ? '' : '✅ All validation rules passed successfully.';
+          if (opts.failure_message) {
+            const singleList = document.createElement('ul');
+            singleList.className = 'warning-details-list';
+            singleList.innerHTML = '<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>';
+            details.appendChild(singleList);
+          } else {
+            details.appendChild(emptyEl);
+          }
+        }
+
         content.appendChild(details);
       }
 
       card.classList.add('visible');
     }
 
-    /** Canonical run outcome for Copy Run Summary. Set when a run completes (success or failed). */
+    /** Canonical run outcome. Set when a run completes (success or failed). */
     let lastRunSummary = null;
-
-    const RUN_SUMMARY_STEP_NAMES = { 0: 'Pre-Import Checks', 1: 'Gemini Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
-
-    function getRunSummaryText() {
-      if (!lastRunSummary) return null;
-      const s = lastRunSummary;
-      const lines = [
-        'Dataset: ' + (s.dataset || '—'),
-        'Run ID: ' + (s.run_id || '—'),
-        'Status: ' + (s.cancelled ? 'CANCELLED' : (s.success ? 'PASSED' : 'FAILED')),
-      ];
-      if (s.durationSec != null) lines.push('Run time: ' + s.durationSec.toFixed(1) + 's');
-      if (s.cancelled) return lines.join('\n');
-      if (s.success) {
-        lines.push('Warnings: ' + (s.hasWarnings ? 'Yes' : 'None'));
-        if (s.runCount != null) lines.push('Rules: ' + s.runCount + ' run' + (s.runCount !== 1 ? 's' : '') + (s.warnCount ? ', ' + s.warnCount + ' warning' + (s.warnCount !== 1 ? 's' : '') : '') + ' (all passed or advisory)');
-      } else if (s.pipelineFailedBeforeValidation) {
-        const stepLabel = typeof s.failure_step === 'number' ? RUN_SUMMARY_STEP_NAMES[s.failure_step] || ('Step ' + s.failure_step) : '—';
-        lines.push('Failed step: ' + (typeof s.failure_step === 'number' ? stepLabel + ' (' + s.failure_step + ')' : '—'));
-        if (s.failure_code) lines.push('Failure code: ' + s.failure_code);
-        if (s.failure_message) lines.push('Message: ' + s.failure_message);
-      } else {
-        if (s.failCount != null) lines.push('Blocking rules: ' + s.failCount);
-        if (s.warnCount != null) lines.push('Warnings: ' + s.warnCount);
-        if (s.failedRules && s.failedRules.length > 0) {
-          lines.push('');
-          lines.push('Blocking rule details:');
-          s.failedRules.forEach(function (r) {
-            const msg = r.message ? String(r.message).replace(/\n/g, ' ') : '';
-            lines.push('  - ' + (r.validation_name || r.validation_id || 'Rule') + (msg ? ': ' + msg : ''));
-          });
-        }
-      }
-      return lines.join('\n');
-    }
 
     function hideSummaryCard() {
       lastRunSummary = null;
@@ -2648,7 +2757,7 @@
             applyValidationResults(currentDataset, { ignoreStoredOutcome: true, runId: lastRunReportId });
           }
           if (pipelineFailed) {
-            setReportInsightsPlaceholder('Validation did not run. Fix Pre-Import Checks, Gemini Review, or pipeline issues and run again.');
+            setReportInsightsPlaceholder('Validation was not executed for this run.');
           }
           loadReport();
           switchToReportTab({ scrollIntoView: true });
@@ -2773,7 +2882,7 @@
       if (!data || !data.exists) {
         container.style.display = '';
         const placeholderMsg = (data && data.pipelineFailed === true)
-          ? 'This section did not execute due to earlier pipeline failure.'
+          ? 'Validation was not executed for this run.'
           : 'Run validation to see results.';
         container.innerHTML = reportBox('muted', '<p class="report-group-success">' + placeholderMsg + '</p>');
         updateReportHeadingStates();
@@ -2847,11 +2956,9 @@
       const openLink = document.getElementById('open-report-link');
       const downloadBtn = document.getElementById('download-report-btn');
       const runIdWrap = document.getElementById('report-run-id-wrap');
-      const copyBtn = document.getElementById('copy-run-summary-btn');
       if (openLink) openLink.style.display = hasReport ? '' : 'none';
       if (downloadBtn) downloadBtn.style.display = hasReport ? '' : 'none';
       if (runIdWrap) runIdWrap.style.display = hasReport && lastRunReportId && lastRunDataset === currentDataset ? 'inline-flex' : 'none';
-      if (copyBtn) copyBtn.disabled = !(hasSummary !== undefined ? hasSummary : (lastRunSummary != null));
       if (!hasReport) {
         const reportTimestamp = document.getElementById('report-timestamp');
         if (reportTimestamp) reportTimestamp.textContent = '';
@@ -2901,7 +3008,7 @@
         if (!reportLoaded) {
           lastReportMtime = null;
           const reportUnavailableMsg = (lastRunDataset === currentDataset && !lastRunReportGenerated)
-            ? 'Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.'
+            ? 'Validation was not executed for this run.'
             : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
           setReportInsightsPlaceholder(reportUnavailableMsg);
           if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
@@ -2923,7 +3030,8 @@
       }
       if (reportLoaded) {
         if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
-          setReportInsightsPlaceholder('Validation did not run in the latest run. Fix Gemini Review or pipeline issues and run again.');
+          setReportInsightsPlaceholder('Validation was not executed for this run.');
+          renderLLMReportSection({ pipelineFailed: true });
         } else {
           loadFluctuationSamples(currentDataset, reportRunId);
           loadRuleFailureSamples(currentDataset, reportRunId);
@@ -3074,11 +3182,14 @@
     }
 
     function buildRuleFailureSummaryBlock(s) {
+      const isUnitRule = (s.rule || '') === 'check_unit_consistency';
+      const valueLabel = isUnitRule ? 'Unit' : 'Value';
+      const valueStr = s.value != null ? String(s.value) : '—';
       const lines = [
         'StatVar: ' + (s.statVar != null && s.statVar !== '' ? stripDcid(s.statVar) : '—'),
         'Location: ' + (s.location != null && s.location !== '' ? stripDcid(s.location) : '—'),
         'Date: ' + (s.date != null && s.date !== '' ? s.date : '—'),
-        'Value: ' + (s.value != null ? String(s.value) : '—'),
+        valueLabel + ': ' + valueStr,
         'Rule: ' + (s.rule || '—'),
         'Expected: ' + (s.expected || '—'),
         'Source row: ' + (s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—')
@@ -3104,7 +3215,7 @@
           updateReportHeadingStates();
           return;
         }
-        const cards = samples.map((s) => {
+        function buildRuleFailureCard(s) {
           const hasDetails = (s.statVar != null && s.statVar !== '') || (s.location != null && s.location !== '') || (s.date != null && s.date !== '') || (s.value != null) || (s.sourceRow != null && s.sourceRow !== '');
           const statVar = s.statVar != null && s.statVar !== '' ? stripDcid(s.statVar) : '—';
           const location = s.location != null && s.location !== '' ? stripDcid(s.location) : '—';
@@ -3113,25 +3224,58 @@
           const rule = s.rule || '—';
           const expected = s.expected != null && s.expected !== '' ? s.expected : '—';
           const sourceRow = s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—';
+          const isUnitRule = rule === 'check_unit_consistency';
+          const valueLabel = isUnitRule ? 'Unit' : 'Value';
           const summary = buildRuleFailureSummaryBlock(s);
           const summaryAttr = escapeHtml(summary.replace(/"/g, '&quot;').replace(/\n/g, '&#10;'));
           if (!hasDetails) {
-            return `<div class="rule-failure-card" data-summary="${summaryAttr}">
-              <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
-              <div class="card-row">Expected: ${escapeHtml(expected)}</div>
-            </div>`;
+            return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
+              '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
+              '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+            '</div>';
           }
-          return `<div class="rule-failure-card" data-summary="${summaryAttr}">
-            <div class="card-row stat-var">${escapeHtml(statVar)}</div>
-            <div class="card-row location">Location: ${escapeHtml(location)}</div>
-            <div class="card-row">Date: ${escapeHtml(date)}</div>
-            <div class="card-row">Value: ${escapeHtml(value)}</div>
-            <div class="card-row rule-name">Rule: ${escapeHtml(rule)}</div>
-            <div class="card-row">Expected: ${escapeHtml(expected)}</div>
-            <div class="card-row">Source row: ${escapeHtml(sourceRow)}</div>
-          </div>`;
-        }).join('');
-        container.innerHTML = reportBox('blocking', '<details id="rule-failure-details" class="report-group-inner-details" open><summary>' + samples.length + ' blocking rule failure' + (samples.length !== 1 ? 's' : '') + '</summary><div id="rule-failure-content" class="fluctuation-samples-content">' + cards + '</div></details>');
+          if (isUnitRule) {
+            return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
+              '<div class="card-row stat-var">' + escapeHtml(statVar) + '</div>' +
+              '<div class="card-row">' + escapeHtml(valueLabel) + ': ' + escapeHtml(value) + '</div>' +
+              '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
+              '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+            '</div>';
+          }
+          return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
+            '<div class="card-row stat-var">' + escapeHtml(statVar) + '</div>' +
+            '<div class="card-row location">Location: ' + escapeHtml(location) + '</div>' +
+            '<div class="card-row">Date: ' + escapeHtml(date) + '</div>' +
+            '<div class="card-row">' + escapeHtml(valueLabel) + ': ' + escapeHtml(value) + '</div>' +
+            '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
+            '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+            '<div class="card-row">Source row: ' + escapeHtml(sourceRow) + '</div>' +
+          '</div>';
+        }
+        function getRuleImpactLabel(ruleId, count) {
+          if (count === 1) return '1 issue';
+          if (ruleId === 'check_unit_consistency') return count + ' StatVars affected';
+          return count + ' entries affected';
+        }
+        const ruleCount = new Set(samples.map(function(s) { return s.rule; })).size;
+        const summaryText = ruleCount === 1 ? '1 blocking rule failed' : ruleCount + ' blocking rules failed';
+        const byRule = {};
+        samples.forEach(function(s) {
+          const r = s.rule || '—';
+          if (!byRule[r]) byRule[r] = [];
+          byRule[r].push(s);
+        });
+        let contentHtml = '';
+        Object.keys(byRule).sort().forEach(function(ruleId) {
+          const group = byRule[ruleId];
+          const impactLabel = getRuleImpactLabel(ruleId, group.length);
+          contentHtml += '<div class="rule-failure-group">';
+          contentHtml += '<div class="rule-failure-group-title">' + escapeHtml(ruleId) + ' — ' + impactLabel + '</div>';
+          contentHtml += '<div class="rule-failure-group-cards fluctuation-samples-content">';
+          group.forEach(function(s) { contentHtml += buildRuleFailureCard(s); });
+          contentHtml += '</div></div>';
+        });
+        container.innerHTML = reportBox('blocking', '<details id="rule-failure-details" class="report-group-inner-details" open><summary>' + summaryText + '</summary><div id="rule-failure-content">' + contentHtml + '</div></details>');
         updateReportHeadingStates();
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p><p style="color: var(--text-muted); margin: 0;">Could not load rule failure samples.</p>');
@@ -3469,18 +3613,6 @@
       } catch (err) {
         showToast('Could not open report');
       }
-    });
-
-    document.getElementById('copy-run-summary-btn').addEventListener('click', function () {
-      const text = getRunSummaryText();
-      if (!text) {
-        showToast('No run summary available. Run a validation first.');
-        return;
-      }
-      navigator.clipboard.writeText(text).then(function () {
-        const btn = document.getElementById('copy-run-summary-btn');
-        if (btn) { btn.textContent = 'Copied!'; setTimeout(function () { btn.textContent = 'Copy Run Summary'; }, 1500); }
-      }).catch(function () { showToast('Copy failed'); });
     });
 
     document.getElementById('download-report-btn').addEventListener('click', async () => {

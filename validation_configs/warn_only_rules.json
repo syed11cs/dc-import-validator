@@ -1,8 +1,8 @@
 {
-  "child_birth": [],
-  "child_birth_fail_min_value": [],
-  "child_birth_fail_units": [],
-  "child_birth_fail_scaling_factor": [],
-  "child_birth_ai_demo": [],
-  "custom": []
+  "child_birth": ["check_max_date_latest"],
+  "child_birth_fail_min_value": ["check_max_date_latest"],
+  "child_birth_fail_units": ["check_max_date_latest"],
+  "child_birth_fail_scaling_factor": ["check_max_date_latest"],
+  "child_birth_ai_demo": ["check_max_date_latest"],
+  "custom": ["check_max_date_latest"]
 }

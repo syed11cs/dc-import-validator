@@ -37,7 +37,7 @@
 # Examples:
 #   ./run_e2e_test.sh child_birth
 #   ./run_e2e_test.sh child_birth --rules=check_min_value,check_unit_consistency
-#   ./run_e2e_test.sh child_birth --skip-rules=check_lint_error_count
+#   ./run_e2e_test.sh child_birth --skip-rules=check_max_date_latest
 #
 
 set -e
