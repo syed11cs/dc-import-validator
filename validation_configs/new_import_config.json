@@ -17,7 +17,7 @@
     },
     {
       "rule_id": "check_lint_error_count",
-      "description": "Checks that the error count in report.json is zero.",
+      "description": "Fails if structural (non-resolution) lint errors exist in the import tool report (schema/MCF issues).",
       "validator": "LINT_ERROR_COUNT",
       "scope": { "data_source": "lint" },
       "params": { "threshold": 0 }

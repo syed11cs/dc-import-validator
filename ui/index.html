@@ -711,6 +711,7 @@
       border-radius: var(--radius-lg);
       font-size: 0.9375rem;
       box-shadow: var(--shadow);
+      min-width: 0;
     }
     .summary-card.visible { display: block; }
     .summary-card, #output, .review-insights, .rules-list {
@@ -723,7 +724,13 @@
     .summary-card.outcome-pass { border-color: rgba(16,185,129,0.4); }
     .summary-card.outcome-warnings { border-color: rgba(245,158,11,0.4); }
     .summary-card.outcome-fail { border-color: rgba(244,63,94,0.4); }
-    .summary-card-outcome { font-weight: 700; margin-bottom: 4px; }
+    .summary-card-outcome {
+      font-weight: 700;
+      margin-bottom: 4px;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      white-space: normal;
+    }
     .summary-card-rules { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; margin-bottom: 6px; }
     .summary-card-details { margin-top: 10px; font-size: 0.85rem; }
     .summary-card-details-summary { cursor: pointer; list-style: none; text-decoration: none; }
@@ -1287,15 +1294,15 @@
         <div id="report-panel" class="panel">
           <div class="review-insights">
             <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">AI Review (Gemini)</h4>
+              <h4 id="report-heading-ai" class="report-group-heading">Gemini Review</h4>
               <div id="llm-report-container"></div>
             </div>
             <div class="report-group">
-              <h4 id="report-heading-validation" class="report-group-heading">Automated Validation (Blocking)</h4>
+              <h4 id="report-heading-validation" class="report-group-heading">Blocking Validation Rules</h4>
               <div id="rule-failure-container"></div>
             </div>
             <div class="report-group">
-              <h4 id="report-heading-statistical" class="report-group-heading">Statistical Anomalies (Advisory)</h4>
+              <h4 id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</h4>
               <div id="fluctuation-samples-container"></div>
             </div>
           </div>
@@ -1762,7 +1769,7 @@
 
       function formatRuleItem(r, isFailed) {
         const rule = escapeHtml(r.validation_name || r.validation_id || '');
-        let msg = r.message ? String(r.message).slice(0, 80) : '';
+        let msg = r.message ? String(r.message) : '';
         msg = escapeHtml(msg)
           .replace(/(Found )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3')
           .replace(/(^| )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3');
@@ -1833,8 +1840,7 @@
           lines.push('Blocking rule details:');
           s.failedRules.forEach(function (r) {
             const msg = r.message ? String(r.message).replace(/\n/g, ' ') : '';
-            const truncated = msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
-            lines.push('  - ' + (r.validation_name || r.validation_id || 'Rule') + (truncated ? ': ' + truncated : ''));
+            lines.push('  - ' + (r.validation_name || r.validation_id || 'Rule') + (msg ? ': ' + msg : ''));
           });
         }
       }

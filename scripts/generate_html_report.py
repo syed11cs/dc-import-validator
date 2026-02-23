@@ -23,6 +23,22 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fluctuation_utils import extract_fluctuation_samples
 
+# Counter names with this prefix are resolution diagnostics (DC API dependent); grouped separately in report.
+LINT_RESOLUTION_DIAGNOSTICS_PREFIX = "Existence_FailedDcCall_"
+
+# Rule IDs treated as system-level checks (e.g. pre-import safeguards). Excluded from "Validation" counts; shown under "System Checks".
+SYSTEM_CHECK_IDS = frozenset({"check_csv_row_count"})
+
+
+def _rule_id(r: dict) -> str:
+    """Return the rule/validation identifier for grouping (validation_name or validation_id)."""
+    return (r.get("validation_name") or r.get("validation_id") or "").strip()
+
+
+def _is_system_check(r: dict) -> bool:
+    """True if this result is a system-level check (excluded from Validation section)."""
+    return _rule_id(r) in SYSTEM_CHECK_IDS
+
 
 def _escape_html(s):
     """Escape HTML special characters."""
@@ -221,22 +237,28 @@ def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) ->
 def _render_compact_summary_block(
     overall: str,
     overall_class: str,
-    n_blockers: int,
-    n_warnings: int,
-    n_passed: int,
+    n_val_blockers: int,
+    n_val_warnings: int,
+    n_val_passed: int,
+    n_sys_blockers: int,
+    n_sys_warnings: int,
+    n_sys_passed: int,
     gemini_review_enabled: bool,
     gemini_review_count: int,
     fluctuation_count: int,
     rule_failure_count: int,
 ) -> str:
-    """Render summary stat strip at top of report."""
+    """Render summary stat strip at top of report. Validation row = config-defined rules only; System Checks = system-level safeguards."""
     if gemini_review_enabled:
         ai_val = f"{gemini_review_count} advisory issue{'s' if gemini_review_count != 1 else ''}"
     else:
         ai_val = "Not enabled for this run"
+    val_str = f"{n_val_blockers} failed · {n_val_warnings} warning{'s' if n_val_warnings != 1 else ''} · {n_val_passed} passed"
+    sys_str = f"{n_sys_blockers} failed · {n_sys_warnings} warning{'s' if n_sys_warnings != 1 else ''} · {n_sys_passed} passed"
     return (
         "<div class='summary-strip'>"
-        f"<div class='summary-stat'><span class='summary-label'>Validation</span><span class='summary-val'>{n_blockers} failed · {n_warnings} warning{'s' if n_warnings != 1 else ''} · {n_passed} passed</span></div>"
+        f"<div class='summary-stat'><span class='summary-label'>Validation</span><span class='summary-val'>{val_str}</span></div>"
+        f"<div class='summary-stat'><span class='summary-label'>System Checks</span><span class='summary-val'>{sys_str}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>Gemini Review</span><span class='summary-val'>{ai_val}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>Fluctuation</span><span class='summary-val'>{fluctuation_count}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>Rule failures</span><span class='summary-val'>{rule_failure_count}</span></div>"
@@ -643,7 +665,10 @@ def _render_lint_summary(report: dict) -> str:
 
 
 def _render_counter_breakdown_section(report: dict) -> str:
-    """Render all counters with counts, collapsible (details/summary)."""
+    """Render all counters with counts, collapsible (details/summary).
+    For LEVEL_ERROR, counters are grouped into Structural Errors (blocking) vs
+    Resolution Diagnostics (Existence_FailedDcCall_*).
+    """
     if not report:
         return ""
     level_summary = report.get("levelSummary", {})
@@ -655,17 +680,42 @@ def _render_counter_breakdown_section(report: dict) -> str:
             continue
         label = level.replace("LEVEL_", "")
         total = sum(int(v) for v in counters.values() if str(v).isdigit())
-        rows = []
-        for name, count in sorted(
+        sorted_items = sorted(
             counters.items(),
             key=lambda x: (-int(x[1]) if str(x[1]).isdigit() else 0, x[0]),
-        ):
-            rows.append(f"<tr><td>{_escape_html(name)}</td><td>{_escape_html(str(count))}</td></tr>")
-        if rows:
-            parts.append(
+        )
+        if level == "LEVEL_ERROR":
+            structural = [(n, c) for n, c in sorted_items if not n.startswith(LINT_RESOLUTION_DIAGNOSTICS_PREFIX)]
+            resolution = [(n, c) for n, c in sorted_items if n.startswith(LINT_RESOLUTION_DIAGNOSTICS_PREFIX)]
+            rows = []
+            if structural:
+                rows.append(
+                    f"<tr class='counter-level-header'><td colspan='2'><strong>{_escape_html(label)}</strong> (total {total})</td></tr>"
+                )
+                rows.append(
+                    f"<tr class='counter-group-header'><td colspan='2'>Structural errors (blocking)</td></tr>"
+                )
+                for name, count in structural:
+                    rows.append(f"<tr><td>{_escape_html(name)}</td><td>{_escape_html(str(count))}</td></tr>")
+            if resolution:
+                if not rows:
+                    rows.append(
+                        f"<tr class='counter-level-header'><td colspan='2'><strong>{_escape_html(label)}</strong> (total {total})</td></tr>"
+                    )
+                rows.append(
+                    f"<tr class='counter-group-header'><td colspan='2'>Resolution diagnostics (Existence_FailedDcCall_*)</td></tr>"
+                )
+                for name, count in resolution:
+                    rows.append(f"<tr><td>{_escape_html(name)}</td><td>{_escape_html(str(count))}</td></tr>")
+        else:
+            rows = []
+            rows.append(
                 f"<tr class='counter-level-header'><td colspan='2'><strong>{_escape_html(label)}</strong> (total {total})</td></tr>"
-                + "".join(rows)
             )
+            for name, count in sorted_items:
+                rows.append(f"<tr><td>{_escape_html(name)}</td><td>{_escape_html(str(count))}</td></tr>")
+        if rows:
+            parts.append("".join(rows))
     if not parts:
         return ""
     table = f"<table class='details counter-breakdown-table'><tbody>{''.join(parts)}</tbody></table>"
@@ -768,7 +818,7 @@ def _lint_line_number(loc: dict) -> int:
 
 
 def _render_top_lint_section(report: dict) -> str:
-    """Render Top Lint Issues: first 10, then collapsible full list with 'Show all' / 'Hide'."""
+    """Render Top Lint Issues: first 10, then collapsible full list grouped into Structural vs Resolution."""
     if not report:
         return ""
     entries = report.get("entries", [])
@@ -788,6 +838,14 @@ def _render_top_lint_section(report: dict) -> str:
             _lint_line_number(e.get("location") or {}),
         ),
     )
+    structural_entries = [
+        e for e in sorted_entries
+        if not (e.get("counterKey") or "").startswith(LINT_RESOLUTION_DIAGNOSTICS_PREFIX)
+    ]
+    resolution_entries = [
+        e for e in sorted_entries
+        if (e.get("counterKey") or "").startswith(LINT_RESOLUTION_DIAGNOSTICS_PREFIX)
+    ]
     total_entries = len(sorted_entries)
     summary_totals = _get_lint_summary_totals(report)
     summary_sum = summary_totals["ERROR"] + summary_totals["WARNING"] + summary_totals["INFO"]
@@ -795,15 +853,34 @@ def _render_top_lint_section(report: dict) -> str:
         summary_note = f" Lint Summary totals by level: {summary_totals['ERROR']} ERROR, {summary_totals['WARNING']} WARNING, {summary_totals['INFO']} INFO (counter aggregation; entry list may differ)."
     else:
         summary_note = ""
-    top_entries = sorted_entries[:10]
+    # Preview: up to 5 structural first, then fill up to 10 total with resolution (more representative when both exist).
+    top_structural = structural_entries[:5]
+    remaining_slots = 10 - len(top_structural)
+    top_resolution = resolution_entries[:remaining_slots]
+    top_entries = top_structural + top_resolution
     top_rows = _lint_entries_to_rows(top_entries)
-    all_rows = _lint_entries_to_rows(sorted_entries)
     table_header = (
         "<table class='details lint-table'><thead><tr>"
         "<th>File</th><th>Line</th><th>Level</th><th>Counter</th><th>Message</th></tr></thead>"
     )
     top_table = table_header + f"<tbody>{''.join(top_rows)}</tbody></table>"
-    full_table = table_header + f"<tbody>{''.join(all_rows)}</tbody></table>"
+    structural_rows = _lint_entries_to_rows(structural_entries)
+    resolution_rows = _lint_entries_to_rows(resolution_entries)
+    structural_table = ""
+    if structural_entries:
+        structural_table = (
+            "<h3 class='top-lint-group-heading'>Structural errors (blocking)</h3>"
+            + table_header
+            + f"<tbody>{''.join(structural_rows)}</tbody></table>"
+        )
+    resolution_table = ""
+    if resolution_entries:
+        resolution_table = (
+            "<h3 class='top-lint-group-heading'>Resolution diagnostics (Existence_FailedDcCall_*)</h3>"
+            + table_header
+            + f"<tbody>{''.join(resolution_rows)}</tbody></table>"
+        )
+    full_tables_grouped = structural_table + resolution_table
     show_all_label = f"Show all lint issues ({total_entries})"
     hide_label = "Hide full lint list"
     return f"""
@@ -813,7 +890,7 @@ def _render_top_lint_section(report: dict) -> str:
       {top_table}
       <details class="full-lint-details" id="full-lint-details">
         <summary id="full-lint-summary">{_escape_html(show_all_label)}</summary>
-        <div class="full-lint-table-wrap">{full_table}</div>
+        <div class="full-lint-table-wrap">{full_tables_grouped}</div>
       </details>
       <script>
         (function() {{
@@ -852,12 +929,32 @@ def generate_html(
         print(f"Error reading {validation_output_path}: {e}", file=sys.stderr)
         return False
 
+    # Split into validation rules (config-defined) vs system checks (e.g. check_csv_row_count) for display.
+    validation_results = [r for r in results if not _is_system_check(r)]
+    system_check_results = [r for r in results if _is_system_check(r)]
+
     blockers = [r for r in results if r.get("status") == "FAILED"]
     warnings = [r for r in results if r.get("status") == "WARNING"]
     passed = [r for r in results if r.get("status") == "PASSED"]
     other = [r for r in results if r.get("status") not in ("FAILED", "PASSED", "WARNING")]
 
-    # Only Errors (FAILED) block; Warnings do not. Use overall_override when run failed for other reasons (e.g. counters check).
+    # Validation-section: only config-defined rules (exclude system checks).
+    val_blockers = [r for r in validation_results if r.get("status") == "FAILED"]
+    val_warnings = [r for r in validation_results if r.get("status") == "WARNING"]
+    val_passed = [r for r in validation_results if r.get("status") == "PASSED"]
+    n_val_blockers = len(val_blockers)
+    n_val_warnings = len(val_warnings)
+    n_val_passed = len(val_passed)
+
+    # System checks: separate counts for summary and section.
+    sys_blockers = [r for r in system_check_results if r.get("status") == "FAILED"]
+    sys_warnings = [r for r in system_check_results if r.get("status") == "WARNING"]
+    sys_passed = [r for r in system_check_results if r.get("status") == "PASSED"]
+    n_sys_blockers = len(sys_blockers)
+    n_sys_warnings = len(sys_warnings)
+    n_sys_passed = len(sys_passed)
+
+    # Overall pass/fail still uses all results (validation logic unchanged).
     n_blockers = len(blockers)
     n_warnings = len(warnings)
     n_passed = len(passed)
@@ -991,6 +1088,7 @@ def generate_html(
     .details tr:last-child td {{ border-bottom: none; }}
     .details td:first-child {{ font-weight: 500; width: 140px; color: var(--text-muted); }}
     .statvar-table .details td:first-child, .lint-table td:first-child {{ font-weight: 500; }}
+    .counter-breakdown-table .counter-group-header td {{ font-size: 0.75rem; color: var(--text-muted); padding-left: 24px; font-style: italic; }}
     .empty {{ color: var(--text-muted); font-style: italic; font-size: 0.875rem; }}
     .advisory-note {{ font-size: 0.8125rem; color: var(--text-muted); font-style: italic; margin-bottom: 12px; }}
     .hero-note {{ font-size: 0.8125rem; color: var(--text-muted); margin-top: 10px; }}
@@ -1027,6 +1125,8 @@ def generate_html(
     .ai-interpretation-text {{ margin: 0; line-height: 1.4; }}
     .ai-interpretation-unavailable {{ margin: 0; font-style: italic; color: var(--text-muted); }}
     .top-lint-summary {{ margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }}
+    .top-lint-group-heading {{ font-size: 0.9375rem; font-weight: 600; margin: 20px 0 8px 0; color: var(--text); }}
+    .top-lint-group-heading:first-child {{ margin-top: 0; }}
     .full-lint-details {{ margin-top: 12px; }}
     .full-lint-details summary {{ cursor: pointer; font-size: 0.875rem; color: #0969da; }}
     .full-lint-details summary:hover {{ text-decoration: underline; }}
@@ -1056,7 +1156,9 @@ def generate_html(
     fluctuation_samples = extract_fluctuation_samples(report) if report else []
     rule_failure_samples = _extract_rule_failure_samples(results)
     html += _render_compact_summary_block(
-        overall, overall_class, n_blockers, n_warnings, n_passed,
+        overall, overall_class,
+        n_val_blockers, n_val_warnings, n_val_passed,
+        n_sys_blockers, n_sys_warnings, n_sys_passed,
         gemini_review_enabled, gemini_review_count, len(fluctuation_samples), len(rule_failure_samples),
     )
     html += """
@@ -1067,6 +1169,7 @@ def generate_html(
         <a href="#blocking-failures">Blocking Validation Failures</a>
         <a href="#warnings">Warnings</a>
         <a href="#passed">Passed</a>
+        <a href="#system-checks">System Checks</a>
         <a href="#ai-review">Gemini Review</a>
         <a href="#fluctuation">Fluctuation</a>
         <a href="#rule-failures">Rule failures</a>
@@ -1095,8 +1198,8 @@ def generate_html(
       <p class="section-desc">Validation rules that failed (must be fixed to pass).</p>
 """
 
-    if blockers:
-        for r in blockers:
+    if val_blockers:
+        for r in val_blockers:
             html += f"""
       <div class="card blocker">
         <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
@@ -1115,8 +1218,8 @@ def generate_html(
       <p class="section-desc">Non-blocking; import can still pass.</p>
 """
 
-    if warnings:
-        for r in warnings:
+    if val_warnings:
+        for r in val_warnings:
             html += f"""
       <div class="card warn">
         <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
@@ -1135,8 +1238,8 @@ def generate_html(
       <p class="section-desc">Validation rules that passed.</p>
 """
 
-    if passed:
-        for r in passed:
+    if val_passed:
+        for r in val_passed:
             html += f"""
       <div class="card passed">
         <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
@@ -1147,6 +1250,43 @@ def generate_html(
     else:
         html += '      <p class="empty">None</p>\n'
 
+    html += "    </section>\n"
+
+    # System Checks (e.g. check_csv_row_count) — separate from config-defined validation rules
+    html += """
+    <section class="report-section" id="system-checks">
+      <h2>System Checks</h2>
+      <p class="section-desc">Pre-import and system-level safeguards (e.g. row count).</p>
+"""
+    if sys_blockers:
+        for r in sys_blockers:
+            html += f"""
+      <div class="card blocker">
+        <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
+        <div class="message">{_escape_html(r.get("message", ""))}</div>
+        {_render_details(r.get("details", {}))}
+      </div>
+"""
+    if sys_warnings:
+        for r in sys_warnings:
+            html += f"""
+      <div class="card warn">
+        <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
+        <div class="message">{_escape_html(r.get("message", ""))}</div>
+        {_render_details(r.get("details", {}))}
+      </div>
+"""
+    if sys_passed:
+        for r in sys_passed:
+            html += f"""
+      <div class="card passed">
+        <h3>{_escape_html(r.get("validation_name", "?"))}</h3>
+        <div class="message">{_escape_html(r.get("message", "") or "OK")}</div>
+        {_render_details(r.get("details", {}))}
+      </div>
+"""
+    if not sys_blockers and not sys_warnings and not sys_passed:
+        html += '      <p class="empty">None run for this import.</p>\n'
     html += "    </section>\n"
 
     # Import tool details (after validation results)
