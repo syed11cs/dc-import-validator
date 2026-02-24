@@ -3234,41 +3234,61 @@
       return s.replace(/^dcid:/i, '');
     }
 
-    function buildJustificationBlock(s) {
-      const points = s.problemPoints || [];
+    /** Single source of truth for fluctuation period, values, threshold, change line, and source rows. */
+    function buildFluctuationDisplayModel(sample) {
+      const points = sample.problemPoints || [];
       const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
       const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
-      const pctStr = s.percentDifference != null && typeof s.percentDifference === 'number' ? formatChangePct(s.percentDifference) : '—';
-      const displayThreshold = s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (s.percentDifference != null && typeof s.percentDifference === 'number' && s.percentDifference > 200 ? '200%' : '100%') : '');
-      const changeLine = displayThreshold ? 'Change: ' + pctStr + ' (exceeds ' + displayThreshold + ' threshold)' : 'Change: ' + pctStr;
+      const pctStr = sample.percentDifference != null && typeof sample.percentDifference === 'number'
+        ? formatChangePct(sample.percentDifference)
+        : (sample.percentDifference != null ? String(sample.percentDifference) : '—');
+      const thresholdLabel = sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (sample.percentDifference != null && typeof sample.percentDifference === 'number' && sample.percentDifference > 200 ? '200%' : '100%') : '');
+      const changeLine = thresholdLabel ? 'Change: ' + pctStr + ' (exceeds ' + thresholdLabel + ' threshold)' : 'Change: ' + pctStr;
       const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
-      let sourceStr = '';
+      let sourceRows = '';
       if (locs.length) {
         const byFile = {};
         locs.forEach(({ file, line }) => { if (!byFile[file]) byFile[file] = []; byFile[file].push(line); });
-        sourceStr = Object.entries(byFile).map(([f, lines]) => {
+        sourceRows = Object.entries(byFile).map(([f, lines]) => {
           lines.sort((a, b) => a - b);
           const ranges = [];
           let start = lines[0], end = lines[0];
           for (let i = 1; i <= lines.length; i++) {
             if (i < lines.length && lines[i] === end + 1) end = lines[i];
-            else { ranges.push(start === end ? `${start}` : `${start}-${end}`); if (i < lines.length) start = end = lines[i]; }
+            else { ranges.push(start === end ? '' + start : start + '-' + end); if (i < lines.length) start = end = lines[i]; }
           }
           return f + ':' + ranges.join(',');
         }).join(', ');
       }
-      const freq = s.observationPeriod ? 'Frequency: ' + s.observationPeriod : '';
-      const lines = [
-        'StatVar: ' + stripDcid(s.statVar || '—'),
-        'Location: ' + stripDcid(s.location || '—'),
-        'Period: ' + period,
-        freq,
-        'Values: ' + values,
+      return {
+        period,
+        values,
+        thresholdLabel,
         changeLine,
-        sourceStr ? 'Source: ' + sourceStr : '',
+        sourceRows,
+        statVar: stripDcid(sample.statVar || '—'),
+        location: stripDcid(sample.location || '—'),
+        observationPeriod: sample.observationPeriod || ''
+      };
+    }
+
+    function formatJustificationFromModel(m) {
+      const freq = m.observationPeriod ? 'Frequency: ' + m.observationPeriod : '';
+      const lines = [
+        'StatVar: ' + m.statVar,
+        'Location: ' + m.location,
+        'Period: ' + m.period,
+        freq,
+        'Values: ' + m.values,
+        m.changeLine,
+        m.sourceRows ? 'Source: ' + m.sourceRows : '',
         'Note: Fluctuation observed in source dataset.'
       ].filter(Boolean).join('\n');
       return lines;
+    }
+
+    function buildJustificationBlock(s) {
+      return formatJustificationFromModel(buildFluctuationDisplayModel(s));
     }
 
     async function loadFluctuationSamples(dataset, runId) {
@@ -3290,41 +3310,18 @@
           return;
         }
         const cards = samples.map((s) => {
-            const points = s.problemPoints || [];
-            const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
-            const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
-            const pctStr = s.percentDifference != null && typeof s.percentDifference === 'number'
-              ? formatChangePct(s.percentDifference)
-              : (s.percentDifference != null ? String(s.percentDifference) : '—');
-            const displayThreshold = s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (s.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (s.percentDifference != null && typeof s.percentDifference === 'number' && s.percentDifference > 200 ? '200%' : '100%') : '');
-            const changeLine = displayThreshold ? 'Change: ' + pctStr + ' (exceeds ' + displayThreshold + ' threshold)' : 'Change: ' + pctStr;
-            const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
-            let sourceRows = '';
-            if (locs.length) {
-              const byFile = {};
-              locs.forEach(({ file, line }) => { if (!byFile[file]) byFile[file] = []; byFile[file].push(line); });
-              sourceRows = Object.entries(byFile).map(([f, lines]) => {
-                lines.sort((a, b) => a - b);
-                const ranges = [];
-                let start = lines[0], end = lines[0];
-                for (let i = 1; i <= lines.length; i++) {
-                  if (i < lines.length && lines[i] === end + 1) end = lines[i];
-                  else { ranges.push(start === end ? '' + start : start + '-' + end); if (i < lines.length) start = end = lines[i]; }
-                }
-                return f + ':' + ranges.join(',');
-              }).join(', ');
-            }
-            const justification = buildJustificationBlock(s);
+            const m = buildFluctuationDisplayModel(s);
+            const justification = formatJustificationFromModel(m);
             const justificationAttr = escapeHtml(justification.replace(/"/g, '&quot;').replace(/\n/g, '&#10;'));
-            const freqRow = s.observationPeriod ? `<div class="card-row">Frequency: ${escapeHtml(s.observationPeriod)}</div>` : '';
+            const freqRow = m.observationPeriod ? `<div class="card-row">Frequency: ${escapeHtml(m.observationPeriod)}</div>` : '';
             return `<div class="fluctuation-sample-card" data-justification="${justificationAttr}">
-              <div class="card-row stat-var">${escapeHtml(stripDcid(s.statVar || '—'))}</div>
-              <div class="card-row location">Location: ${escapeHtml(stripDcid(s.location || '—'))}</div>
-              <div class="card-row period">Period: ${escapeHtml(period)}</div>
+              <div class="card-row stat-var">${escapeHtml(m.statVar)}</div>
+              <div class="card-row location">Location: ${escapeHtml(m.location)}</div>
+              <div class="card-row period">Period: ${escapeHtml(m.period)}</div>
               ${freqRow}
-              <div class="card-row values">Values: ${escapeHtml(values)}</div>
-              <div class="card-row change-pct">${escapeHtml(changeLine)}</div>
-              ${sourceRows ? `<div class="card-row source-rows">Source rows: ${escapeHtml(sourceRows)}</div>` : ''}
+              <div class="card-row values">Values: ${escapeHtml(m.values)}</div>
+              <div class="card-row change-pct">${escapeHtml(m.changeLine)}</div>
+              ${m.sourceRows ? `<div class="card-row source-rows">Source rows: ${escapeHtml(m.sourceRows)}</div>` : ''}
             </div>`;
         }).join('');
         container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
@@ -3333,6 +3330,23 @@
         container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p><p style="color: var(--text-muted); margin: 0;">Could not load fluctuation samples.</p>');
         updateReportHeadingStates();
       }
+    }
+
+    /** Human-readable expectations for rules that do not define a numeric threshold (backend may send expected: ""). */
+    const RULE_EXPECTATION_LABELS = {
+      check_num_places_consistent: 'same number of places per StatVar',
+      check_num_places_count: 'consistent place count across sources',
+      check_num_observations: 'consistent observation count',
+      check_max_date_latest: 'data up to date (max date is latest)',
+      check_max_date_consistent: 'consistent max date across StatVars',
+      check_max_value_percent: 'value within max percent threshold',
+      check_missing_refs_count: 'no missing refs'
+    };
+    function getExpectedDisplay(s) {
+      const raw = s.expected != null && s.expected !== '' ? String(s.expected).trim() : '';
+      if (raw && raw !== '—') return raw;
+      const rule = s.rule || '';
+      return RULE_EXPECTATION_LABELS[rule] || null;
     }
 
     function buildRuleFailureSummaryBlock(s) {
@@ -3345,9 +3359,10 @@
         'Date: ' + (s.date != null && s.date !== '' ? s.date : '—'),
         valueLabel + ': ' + valueStr,
         'Rule: ' + (s.rule || '—'),
-        'Expected: ' + (s.expected || '—'),
-        'Source row: ' + (s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—')
       ];
+      const expectedDisplay = getExpectedDisplay(s);
+      if (expectedDisplay != null) lines.push('Expected: ' + expectedDisplay);
+      lines.push('Source row: ' + (s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—'));
       return lines.join('\n');
     }
 
@@ -3376,7 +3391,8 @@
           const date = s.date != null && s.date !== '' ? s.date : '—';
           const value = s.value != null ? String(s.value) : '—';
           const rule = s.rule || '—';
-          const expected = s.expected != null && s.expected !== '' ? s.expected : '—';
+          const expectedDisplay = getExpectedDisplay(s);
+          const expectedRow = expectedDisplay != null ? '<div class="card-row">Expected: ' + escapeHtml(expectedDisplay) + '</div>' : '';
           const sourceRow = s.sourceRow != null && s.sourceRow !== '' ? s.sourceRow : '—';
           const isUnitRule = rule === 'check_unit_consistency';
           const valueLabel = isUnitRule ? 'Unit' : 'Value';
@@ -3385,7 +3401,7 @@
           if (!hasDetails) {
             return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
               '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
-              '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+              expectedRow +
             '</div>';
           }
           if (isUnitRule) {
@@ -3393,7 +3409,7 @@
               '<div class="card-row stat-var">' + escapeHtml(statVar) + '</div>' +
               '<div class="card-row">' + escapeHtml(valueLabel) + ': ' + escapeHtml(value) + '</div>' +
               '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
-              '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+              expectedRow +
             '</div>';
           }
           return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
@@ -3402,7 +3418,7 @@
             '<div class="card-row">Date: ' + escapeHtml(date) + '</div>' +
             '<div class="card-row">' + escapeHtml(valueLabel) + ': ' + escapeHtml(value) + '</div>' +
             '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
-            '<div class="card-row">Expected: ' + escapeHtml(expected) + '</div>' +
+            expectedRow +
             '<div class="card-row">Source row: ' + escapeHtml(sourceRow) + '</div>' +
           '</div>';
         }
