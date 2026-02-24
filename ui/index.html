@@ -3136,7 +3136,10 @@
             ? 'Validation was not executed for this run.'
             : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
           setReportInsightsPlaceholder(reportUnavailableMsg);
-          if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
+          const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
+          if (isGeminiBlocking) {
+            /* Leave LLM report as already rendered by loadLLMReportSection; do not overwrite with generic message. */
+          } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
             renderLLMReportSection({ pipelineFailed: true });
           } else {
             renderLLMReportSection({ neutral: true });
@@ -3146,7 +3149,10 @@
         }
       } catch (e) {
         setReportInsightsPlaceholder();
-        if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
+        const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
+        if (isGeminiBlocking) {
+          /* Leave LLM report as-is; do not overwrite. */
+        } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
           renderLLMReportSection({ pipelineFailed: true });
         } else {
           renderLLMReportSection({ neutral: true });
@@ -3155,8 +3161,11 @@
       }
       if (reportLoaded) {
         if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
-          setReportInsightsPlaceholder('Validation was not executed for this run.');
-          renderLLMReportSection({ pipelineFailed: true });
+          const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
+          if (!isGeminiBlocking) {
+            setReportInsightsPlaceholder('Validation was not executed for this run.');
+            renderLLMReportSection({ pipelineFailed: true });
+          }
         } else {
           loadFluctuationSamples(currentDataset, reportRunId);
           loadRuleFailureSamples(currentDataset, reportRunId);
