@@ -2036,7 +2036,7 @@
     let lastRunSummary = null;
 
     function hideSummaryCard() {
-      lastRunSummary = null;
+      /* Do not clear lastRunSummary here: loadReport() uses it when lastRunDataset === currentDataset (e.g. after switching back to a dataset). */
       setReportActionsVisible(false, false);
       const card = document.getElementById('summary-card');
       if (card) {
