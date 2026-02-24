@@ -3132,7 +3132,17 @@
         }
         if (!reportLoaded) {
           lastReportMtime = null;
-          const reportUnavailableMsg = (lastRunDataset === currentDataset && !lastRunReportGenerated)
+          const sameDataset = lastRunDataset === currentDataset;
+          if (!sameDataset) {
+            /* No in-memory run for this dataset: show neutral "no runs yet" and hide report actions. */
+            const noRunsMsg = 'No runs yet for this dataset. Run validation to generate a report.';
+            setReportInsightsPlaceholder(noRunsMsg);
+            renderLLMReportSection({ neutral: true });
+            setReportActionsVisible(false, false);
+            return;
+          }
+          /* Same-dataset run exists but no stored report: use run-specific messaging. */
+          const reportUnavailableMsg = !lastRunReportGenerated
             ? 'Validation was not executed for this run.'
             : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
           setReportInsightsPlaceholder(reportUnavailableMsg);
@@ -3144,20 +3154,26 @@
           } else {
             renderLLMReportSection({ neutral: true });
           }
-          setReportActionsVisible(lastRunSummary != null, false);
+          setReportActionsVisible(true, false);
           return;
         }
       } catch (e) {
         setReportInsightsPlaceholder();
-        const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
-        if (isGeminiBlocking) {
-          /* Leave LLM report as-is; do not overwrite. */
-        } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
-          renderLLMReportSection({ pipelineFailed: true });
-        } else {
+        const sameDataset = lastRunDataset === currentDataset;
+        if (!sameDataset) {
           renderLLMReportSection({ neutral: true });
+          setReportActionsVisible(false, false);
+        } else {
+          const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
+          if (isGeminiBlocking) {
+            /* Leave LLM report as-is; do not overwrite. */
+          } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
+            renderLLMReportSection({ pipelineFailed: true });
+          } else {
+            renderLLMReportSection({ neutral: true });
+          }
+          setReportActionsVisible(lastRunSummary != null, false);
         }
-        setReportActionsVisible(lastRunSummary != null, false);
       }
       if (reportLoaded) {
         if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
