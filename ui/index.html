@@ -1804,11 +1804,11 @@
       if (llmBanner) llmBanner.style.display = 'none';
     }
 
-    async function fetchValidationCounts(runId) {
-      if (!currentDataset) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+    async function fetchValidationCounts(dataset, runId) {
+      if (!dataset) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
       try {
         const runIdParam = runId ? '&run_id=' + encodeURIComponent(runId) : '';
-        const r = await fetch(API + '/api/validation-result/' + currentDataset + '?t=' + Date.now() + runIdParam);
+        const r = await fetch(API + '/api/validation-result/' + dataset + '?t=' + Date.now() + runIdParam);
         const json = await r.json();
         if (!json.exists || !json.results) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
         let runCount = 0, failCount = 0, warnCount = 0;
@@ -2810,7 +2810,7 @@
           lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
           lastRunHadAiReview = llmReview;
           const runIdForResult = data.run_id || null;
-          const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runIdForResult);
+          const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
           const output = data.output || '';
           const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
           const summaryPayload = {
@@ -3098,31 +3098,32 @@
         renderLLMReportSection({ neutral: true });
         return;
       }
-      const reportRunId = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
-      if (lastRunDataset === currentDataset && !lastRunHadAiReview) {
+      const reportDataset = currentDataset;
+      const reportRunId = (lastRunReportId && lastRunDataset === reportDataset) ? lastRunReportId : null;
+      if (lastRunDataset === reportDataset && !lastRunHadAiReview) {
         renderLLMReportSection({ notRun: true });
       } else {
-        await loadLLMReportSection(currentDataset, { runId: reportRunId });
+        await loadLLMReportSection(reportDataset, { runId: reportRunId });
       }
       let reportLoaded = false;
       try {
         const reportInfoUrl = reportRunId
-          ? API + `/api/report-info/${currentDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
-          : API + `/api/report-info/${currentDataset}?t=${Date.now()}`;
+          ? API + `/api/report-info/${reportDataset}?run_id=${encodeURIComponent(reportRunId)}&t=${Date.now()}`
+          : API + `/api/report-info/${reportDataset}?t=${Date.now()}`;
         const infoRes = await fetch(reportInfoUrl);
         if (infoRes.ok) {
           const info = await infoRes.json();
           if (info.exists) {
             reportLoaded = true;
             const link = document.getElementById('open-report-link');
-            const reportUrl = (lastRunReportId && lastRunDataset === currentDataset)
-              ? (API + `/report/${currentDataset}/${lastRunReportId}`)
-              : (API + `/report/${currentDataset}`);
+            const reportUrl = (lastRunReportId && lastRunDataset === reportDataset)
+              ? (API + `/report/${reportDataset}/${lastRunReportId}`)
+              : (API + `/report/${reportDataset}`);
             link.href = reportUrl;
             const runIdWrap = document.getElementById('report-run-id-wrap');
             const runIdEl = document.getElementById('report-run-id');
             if (runIdWrap && runIdEl) {
-              if (lastRunReportId && lastRunDataset === currentDataset) {
+              if (lastRunReportId && lastRunDataset === reportDataset) {
                 runIdEl.textContent = lastRunReportId;
               }
             }
@@ -3133,8 +3134,8 @@
         }
         if (!reportLoaded) {
           lastReportMtime = null;
-          const sameDataset = lastRunDataset === currentDataset;
-          const runStateForThisDataset = sameDataset && lastRunSummary && lastRunSummary.dataset === currentDataset;
+          const sameDataset = lastRunDataset === reportDataset;
+          const runStateForThisDataset = sameDataset && lastRunSummary && lastRunSummary.dataset === reportDataset;
           if (!runStateForThisDataset) {
             /* No in-memory run for this dataset, or run state is from another dataset: show neutral state. */
             const noRunsMsg = 'No runs yet for this dataset. Run validation to generate a report.';
@@ -3161,7 +3162,7 @@
         }
       } catch (e) {
         setReportInsightsPlaceholder();
-        const runStateForThisDataset = lastRunDataset === currentDataset && lastRunSummary && lastRunSummary.dataset === currentDataset;
+        const runStateForThisDataset = lastRunDataset === reportDataset && lastRunSummary && lastRunSummary.dataset === reportDataset;
         if (!runStateForThisDataset) {
           renderLLMReportSection({ neutral: true });
           setReportActionsVisible(false, false);
@@ -3178,7 +3179,7 @@
         }
       }
       if (reportLoaded) {
-        const runStateForThisDataset = lastRunDataset === currentDataset && lastRunSummary && lastRunSummary.dataset === currentDataset && !lastRunReportGenerated;
+        const runStateForThisDataset = lastRunDataset === reportDataset && lastRunSummary && lastRunSummary.dataset === reportDataset && !lastRunReportGenerated;
         if (runStateForThisDataset) {
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (!isGeminiBlocking) {
@@ -3186,8 +3187,8 @@
             renderLLMReportSection({ pipelineFailed: true });
           }
         } else {
-          loadFluctuationSamples(currentDataset, reportRunId);
-          loadRuleFailureSamples(currentDataset, reportRunId);
+          loadFluctuationSamples(reportDataset, reportRunId);
+          loadRuleFailureSamples(reportDataset, reportRunId);
         }
       }
     }
