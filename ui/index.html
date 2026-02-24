@@ -1838,7 +1838,7 @@
       content.innerHTML = '';
 
       if (opts.cancelled) {
-        lastRunSummary = { dataset: currentDataset || null, run_id: opts.run_id ?? null, success: false, cancelled: true };
+        lastRunSummary = { dataset: (opts.dataset != null ? opts.dataset : currentDataset) || null, run_id: opts.run_id ?? null, success: false, cancelled: true };
         setReportActionsVisible(true, false);
         card.classList.add('outcome-fail');
         const outcome = document.createElement('div');
@@ -2632,6 +2632,7 @@
 
     async function runValidation() {
       if (!currentDataset) return;
+      const runDataset = currentDataset;
       const btn = document.getElementById('run-btn');
       const status = document.getElementById('status');
       const output = document.getElementById('output');
@@ -2710,7 +2711,7 @@
         const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
         const llmReview = document.getElementById('llm-review-checkbox').checked;
         let r, data;
-        if (currentDataset === 'custom') {
+        if (runDataset === 'custom') {
           if (!customTmcfFile || !customCsvFile) {
             setOutputContent('Please select both TMCF and CSV files.', false);
             status.textContent = 'Error';
@@ -2735,7 +2736,7 @@
             signal: runAbortController.signal,
           });
         } else {
-          let url = `${API}/api/run/${currentDataset}?stream=true`;
+          let url = `${API}/api/run/${runDataset}?stream=true`;
           if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
           if (llmReview) {
             url += '&llm_review=1';
@@ -2798,7 +2799,7 @@
         const completedEl = document.getElementById('log-completed-at');
         completedEl.textContent = 'Completed at ' + formatRunTimestamp(lastRunCompletedAt);
         completedEl.style.display = 'block';
-        if (llmReview) await loadLLMReportSection(currentDataset);
+        if (llmReview) await loadLLMReportSection(runDataset);
         else renderLLMReportSection({ notRun: true });
         if (!data.cancelled) {
           lastRunDurationSec = runStartTime != null ? (lastRunCompletedAt - runStartTime) / 1000 : null;
@@ -2813,7 +2814,7 @@
           const output = data.output || '';
           const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
           const summaryPayload = {
-            dataset: currentDataset || null,
+            dataset: runDataset || null,
             run_id: data.run_id ?? null,
             success: data.success,
             cancelled: false,
@@ -2856,30 +2857,30 @@
           });
         } else if (data.cancelled) {
           if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
-          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt });
+          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
         }
         if (!data.cancelled && data.success) {
-          lastRunDataset = currentDataset;
+          lastRunDataset = runDataset;
           lastRunReportId = data.run_id || null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
-          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
           loadReport();
-          applyValidationResults(currentDataset, { runId: lastRunReportId });
+          applyValidationResults(runDataset, { runId: lastRunReportId });
           switchToReportTab({ scrollIntoView: true });
         } else if (data.cancelled) {
           lastRunReportId = null;
-          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, 'cancelled');
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
           clearValidationResults();
         } else {
-          lastRunDataset = currentDataset;
+          lastRunDataset = runDataset;
           lastRunReportId = data.run_id || null;
-          localStorage.setItem(LAST_OUTCOME_KEY + currentDataset, 'failed');
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'failed');
           const code = data.failure_code;
           const pipelineFailed = typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX;
           if (code && PIPELINE_FAILURE_CODES.has(code)) {
             clearValidationResults();
           } else {
-            applyValidationResults(currentDataset, { ignoreStoredOutcome: true, runId: lastRunReportId });
+            applyValidationResults(runDataset, { ignoreStoredOutcome: true, runId: lastRunReportId });
           }
           if (pipelineFailed) {
             setReportInsightsPlaceholder('Validation was not executed for this run.');
@@ -2895,7 +2896,7 @@
           status.textContent = 'Cancelled';
           status.className = 'status-badge';
           showStatusBanner({ cancelled: true });
-          setSummaryCard({ cancelled: true });
+          setSummaryCard({ cancelled: true, dataset: runDataset });
           const cancelMsg = document.getElementById('progress-cancel-msg');
           if (cancelMsg) cancelMsg.textContent = 'Cancelled';
           progressHideDeferred = true;
@@ -3133,15 +3134,16 @@
         if (!reportLoaded) {
           lastReportMtime = null;
           const sameDataset = lastRunDataset === currentDataset;
-          if (!sameDataset) {
-            /* No in-memory run for this dataset: show neutral "no runs yet" and hide report actions. */
+          const runStateForThisDataset = sameDataset && lastRunSummary && lastRunSummary.dataset === currentDataset;
+          if (!runStateForThisDataset) {
+            /* No in-memory run for this dataset, or run state is from another dataset: show neutral state. */
             const noRunsMsg = 'No runs yet for this dataset. Run validation to generate a report.';
             setReportInsightsPlaceholder(noRunsMsg);
             renderLLMReportSection({ neutral: true });
             setReportActionsVisible(false, false);
             return;
           }
-          /* Same-dataset run exists but no stored report: use run-specific messaging. */
+          /* Run state belongs to current dataset: use run-specific messaging. */
           const reportUnavailableMsg = !lastRunReportGenerated
             ? 'Validation was not executed for this run.'
             : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
@@ -3159,8 +3161,8 @@
         }
       } catch (e) {
         setReportInsightsPlaceholder();
-        const sameDataset = lastRunDataset === currentDataset;
-        if (!sameDataset) {
+        const runStateForThisDataset = lastRunDataset === currentDataset && lastRunSummary && lastRunSummary.dataset === currentDataset;
+        if (!runStateForThisDataset) {
           renderLLMReportSection({ neutral: true });
           setReportActionsVisible(false, false);
         } else {
@@ -3172,11 +3174,12 @@
           } else {
             renderLLMReportSection({ neutral: true });
           }
-          setReportActionsVisible(lastRunSummary != null, false);
+          setReportActionsVisible(true, false);
         }
       }
       if (reportLoaded) {
-        if (lastRunDataset === currentDataset && !lastRunReportGenerated) {
+        const runStateForThisDataset = lastRunDataset === currentDataset && lastRunSummary && lastRunSummary.dataset === currentDataset && !lastRunReportGenerated;
+        if (runStateForThisDataset) {
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (!isGeminiBlocking) {
             setReportInsightsPlaceholder('Validation was not executed for this run.');
