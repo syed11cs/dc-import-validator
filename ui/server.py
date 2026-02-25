@@ -55,21 +55,17 @@ CONFIG_DIR = APP_ROOT / "validation_configs"
 
 DATASET_OUTPUT_MAP = {
     "child_birth": OUTPUT_DIR / "child_birth_genmcf",
-    "child_birth_fail_min_value": OUTPUT_DIR / "child_birth_fail_min_value_genmcf",
-    "child_birth_fail_units": OUTPUT_DIR / "child_birth_fail_units_genmcf",
-    "child_birth_fail_scaling_factor": OUTPUT_DIR / "child_birth_fail_scaling_factor_genmcf",
-    "child_birth_ai_demo": OUTPUT_DIR / "child_birth_ai_demo_genmcf",
-    "child_birth_over_1000": OUTPUT_DIR / "child_birth_over_1000_genmcf",
+    "statistics_poland": OUTPUT_DIR / "statistics_poland_genmcf",
+    "finland_census": OUTPUT_DIR / "finland_census_genmcf",
+    "uae_population": OUTPUT_DIR / "uae_population_genmcf",
     "custom": OUTPUT_DIR / "custom_input",
 }
 
 DATASET_CONFIG_MAP = {
     "child_birth": "new_import_config.json",
-    "child_birth_fail_min_value": "new_import_config.json",
-    "child_birth_fail_units": "new_import_config.json",
-    "child_birth_fail_scaling_factor": "new_import_config.json",
-    "child_birth_ai_demo": "new_import_config.json",
-    "child_birth_over_1000": "new_import_config.json",
+    "statistics_poland": "new_import_config.json",
+    "finland_census": "new_import_config.json",
+    "uae_population": "new_import_config.json",
     "custom": "new_import_config.json",
 }
 
@@ -172,12 +168,10 @@ def llm_status():
 def list_datasets():
     return {
         "datasets": [
-            {"id": "child_birth", "label": "Child Birth", "description": "DC repo, clean (expect PASS)"},
-            {"id": "child_birth_fail_min_value", "label": "Child Birth — fail min value", "description": "One negative value (−1) and two large fluctuations → check_min_value FAIL; Data Fluctuation: 100%, 200%, 500%"},
-            {"id": "child_birth_fail_units", "label": "Child Birth — fail units", "description": "Mixed units → check_unit_consistency FAIL"},
-            {"id": "child_birth_fail_scaling_factor", "label": "Child Birth — fail scaling factor", "description": "Inconsistent scaling → check_scaling_factor_consistency FAIL"},
-            {"id": "child_birth_ai_demo", "label": "Child Birth — AI demo", "description": "TMCF with schema issues & typos (missing dcs:, duplicate, typo) → Gemini Review finds issues"},
-            {"id": "child_birth_over_1000", "label": "Child Birth — over 1000 rows", "description": "1001 data rows → check_csv_row_count FAIL (sample limit)."},
+            {"id": "child_birth", "label": "Child Birth", "description": "Sample dataset (sample_data/child_birth/: TMCF, CSV, stat_vars.mcf). Expect PASS."},
+            {"id": "statistics_poland", "label": "Statistics Poland", "description": "Sample dataset from data repo statvar_imports/statistics_poland/test/ (TMCF, CSV, stat_vars, stat_vars_schema)."},
+            {"id": "finland_census", "label": "Finland Census", "description": "Sample dataset from data repo statvar_imports/finland_census/test_data/ (TMCF, CSV, stat_vars, stat_vars_schema)."},
+            {"id": "uae_population", "label": "UAE Population", "description": "Sample dataset from data repo uae_bayanat/uae_population/test_data/ (TMCF, CSV)."},
             {"id": "custom", "label": "Custom (Upload your own files)", "description": "Upload TMCF + CSV files to validate."},
         ]
     }
@@ -205,7 +199,6 @@ async def run_custom_validation_stream(
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
-    ai_advisory: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
     script = SCRIPT_DIR / "run_e2e_test.sh"
@@ -267,8 +260,6 @@ async def run_custom_validation_stream(
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
-        if ai_advisory:
-            args.append("--ai-advisory")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
@@ -295,7 +286,6 @@ async def run_custom_validation(
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
-    ai_advisory: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs."""
     script = SCRIPT_DIR / "run_e2e_test.sh"
@@ -357,8 +347,6 @@ async def run_custom_validation(
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
-        if ai_advisory:
-            args.append("--ai-advisory")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
@@ -383,7 +371,6 @@ async def run_validation(
     stream: bool = Query(False),
     llm_review: str | None = Query(None),
     llm_model: str | None = Query(None),
-    ai_advisory: str | None = Query(None),
 ):
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
@@ -404,8 +391,6 @@ async def run_validation(
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
-        if ai_advisory:
-            args.append("--ai-advisory")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / dataset / request_id) if request_id else DATASET_OUTPUT_MAP[dataset]
         canonical_output_dir = DATASET_OUTPUT_MAP[dataset]
@@ -482,7 +467,8 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
                 return False
             return t in ("typo", "schema", "naming", "unknown_statvar", "parse_error", "error")
         blockers = [i for i in issues if is_blocker(i)]
-        return {"exists": True, "issues": issues, "passed": len(blockers) == 0}
+        ai_advisory_count = len(issues) - len(blockers)
+        return {"exists": True, "issues": issues, "passed": len(blockers) == 0, "ai_advisory_count": ai_advisory_count}
 
     if run_id and _run_id_safe(run_id):
         raw = gcs_reports.get_report_from_gcs(run_id, dataset, "schema_review.json")
@@ -493,7 +479,7 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
         if is_gcs_configured():
-            return {"exists": False, "issues": [], "passed": True}
+            return {"exists": False, "issues": [], "passed": True, "ai_advisory_count": 0}
         # Local per-run output (GCS not configured)
         per_run_path = OUTPUT_DIR / dataset / run_id / "schema_review.json"
         if per_run_path.exists():
@@ -506,12 +492,12 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
     output_dir = DATASET_OUTPUT_MAP[dataset]
     path = output_dir / "schema_review.json"
     if not path.exists():
-        return {"exists": False, "issues": [], "passed": True}
+        return {"exists": False, "issues": [], "passed": True, "ai_advisory_count": 0}
     try:
         with open(path, encoding="utf-8") as f:
             issues = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return {"exists": True, "issues": [], "passed": False}
+        return {"exists": True, "issues": [], "passed": False, "ai_advisory_count": 0}
     return _issues_to_response(issues)
 
 

@@ -92,8 +92,7 @@ def main():
         sys.exit(1)
 
     if converted:
-        msg = f"1 failure(s) converted to warning(s)" if converted == 1 else f"{converted} failure(s) converted to warning(s)"
-        print(f"[INFO] {msg}", file=sys.stderr)
+        print("Converted rule failures to warnings (warn_only configuration)", file=sys.stderr)
 
     if args.check_blockers and has_blockers(args.validation_output):
         sys.exit(1)

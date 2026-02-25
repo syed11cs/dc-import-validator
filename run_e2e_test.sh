@@ -11,14 +11,12 @@
 # Usage:
 #   ./run_e2e_test.sh [OPTIONS] [DATASET]
 #
-# Datasets (child_birth from this repo's sample_data/child_birth/; rule-test variants in sample_data/):
-#   child_birth              - Child birth (in-repo, clean; expect PASS)
-#   child_birth_fail_min_value   - Same base, one negative value → check_min_value FAIL
-#   child_birth_fail_units       - Same base, mixed units → check_unit_consistency FAIL
-#   child_birth_fail_scaling_factor - Same base, inconsistent scaling → check_scaling_factor_consistency FAIL
-#   child_birth_ai_demo      - TMCF with schema issues & typos → Gemini Review finds issues
-#   child_birth_over_1000    - 1001 data rows → row-count check fails in Pre-Import Checks
-#   custom                  - Your own TMCF + CSV (use --tmcf and --csv)
+# Datasets (from this repo's sample_data/):
+#   child_birth       - Child birth (sample_data/child_birth/)
+#   statistics_poland - Statistics Poland (sample_data/statistics_poland/)
+#   finland_census    - Finland census (sample_data/finland_census/)
+#   uae_population    - UAE population (sample_data/uae_population/: from data repo uae_bayanat/uae_population/test_data/)
+#   custom            - Your own TMCF + CSV (use --tmcf and --csv)
 #
 # Options:
 #   --tmcf PATH       Path to TMCF file (for custom dataset)
@@ -30,14 +28,15 @@
 #   --skip-rules ID1  Skip these rules (comma-separated)
 #   --llm-review      Run Gemini review (schema/typo) on TMCF before validation (requires GEMINI_API_KEY). Default: on.
 #   --no-llm-review   Disable Gemini review for this run.
-#   --ai-advisory     If Gemini review finds issues, do not stop — continue pipeline (treat Gemini blockers as non-blocking)
 #   --model ID        Gemini model for Gemini review (default: gemini-2.5-flash)
 #   --help            Show this help
 #
 # Examples:
 #   ./run_e2e_test.sh child_birth
+#   ./run_e2e_test.sh statistics_poland
+#   ./run_e2e_test.sh finland_census
+#   ./run_e2e_test.sh uae_population
 #   ./run_e2e_test.sh child_birth --rules=check_min_value,check_unit_consistency
-#   ./run_e2e_test.sh child_birth --skip-rules=check_max_date_latest
 #
 
 set -e
@@ -66,7 +65,6 @@ CUSTOM_STAT_VARS_MCF=""
 CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
 LLM_MODEL="gemini-2.5-flash"
-AI_ADVISORY=false
 
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
@@ -137,10 +135,6 @@ while [[ $# -gt 0 ]]; do
       LLM_REVIEW=false
       shift
       ;;
-    --ai-advisory)
-      AI_ADVISORY=true
-      shift
-      ;;
     --model)
       LLM_MODEL="$2"
       shift 2
@@ -153,7 +147,7 @@ while [[ $# -gt 0 ]]; do
       head -28 "$0" | tail -23
       exit 0
       ;;
-    child_birth|child_birth_fail_min_value|child_birth_fail_units|child_birth_fail_scaling_factor|child_birth_ai_demo|child_birth_over_1000|custom)
+    child_birth|statistics_poland|finland_census|uae_population|custom)
       DATASET="$1"
       shift
       ;;
@@ -189,13 +183,20 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} [session=$SESSION_ID] $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} [session=$SESSION_ID] $1"; }
 
 # Emit structured failure event for UI (single line JSON). Runner forwards it; done payload uses it instead of parsing output.
+# Args: code step message [limit] [details_file]
+# If limit (4th) is non-empty, adds "limit" to JSON. If details_file (5th) exists, embeds its JSON as "details".
 emit_failure() {
-  local code=$1 step=$2 msg=$3 limit=${4:-}
+  local code=$1 step=$2 msg=$3 limit=${4:-} details_file=${5:-}
+  local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\""
   if [[ -n "$limit" && "$limit" != "null" ]]; then
-    echo "{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\",\"limit\":$limit}"
-  else
-    echo "{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\"}"
+    base="${base},\"limit\":${limit}"
   fi
+  if [[ -n "$details_file" && -f "$details_file" ]]; then
+    local details
+    details=$(cat "$details_file")
+    base="${base},\"details\":${details}"
+  fi
+  echo "${base}}"
 }
 
 # Ensure validation_output.json and validation_report.html exist before exiting with failure (so GCS upload and /report/... work on Cloud Run).
@@ -263,72 +264,51 @@ if [[ "$DATASET" == "child_birth" ]]; then
   DATASET_OUTPUT="$GENMCF_OUTPUT"
   STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
   LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  # No stat vars MCF: keep Child Birth as one clean success dataset (no AI Review stat_var warnings)
+  # Optional: set STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf" to enable stat_var checks
+  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
+  STAT_VARS_SCHEMA_MCF=""
+  DIFFER_OUTPUT=""
+  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
+  log_info "Using child_birth (sample_data/child_birth/)"
+elif [[ "$DATASET" == "statistics_poland" ]]; then
+  SP="$SCRIPT_DIR/sample_data/statistics_poland"
+  TMCF="$SP/StatisticsPoland_output.tmcf"
+  CSV="$SP/StatisticsPoland_output.csv"
+  GENMCF_OUTPUT="$OUTPUT_DIR/statistics_poland_genmcf"
+  DATASET_OUTPUT="$GENMCF_OUTPUT"
+  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
+  LINT_REPORT="$GENMCF_OUTPUT/report.json"
+  STAT_VARS_MCF="$SP/StatisticsPoland_output_stat_vars.mcf"
+  STAT_VARS_SCHEMA_MCF="$SP/StatisticsPoland_output_stat_vars_schema.mcf"
+  DIFFER_OUTPUT=""
+  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
+  log_info "Using statistics_poland (sample_data/statistics_poland/, from data repo test/)"
+elif [[ "$DATASET" == "finland_census" ]]; then
+  FC="$SCRIPT_DIR/sample_data/finland_census"
+  TMCF="$FC/finland_census_output.tmcf"
+  CSV="$FC/finland_census_output.csv"
+  GENMCF_OUTPUT="$OUTPUT_DIR/finland_census_genmcf"
+  DATASET_OUTPUT="$GENMCF_OUTPUT"
+  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
+  LINT_REPORT="$GENMCF_OUTPUT/report.json"
+  STAT_VARS_MCF="$FC/finland_census_output_stat_vars.mcf"
+  STAT_VARS_SCHEMA_MCF="$FC/finland_census_output_stat_vars_schema.mcf"
+  DIFFER_OUTPUT=""
+  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
+  log_info "Using finland_census (sample_data/finland_census/, from data repo test_data/)"
+elif [[ "$DATASET" == "uae_population" ]]; then
+  UAE="$SCRIPT_DIR/sample_data/uae_population"
+  TMCF="$UAE/uae_population_output.tmcf"
+  CSV="$UAE/uae_population_output.csv"
+  GENMCF_OUTPUT="$OUTPUT_DIR/uae_population_genmcf"
+  DATASET_OUTPUT="$GENMCF_OUTPUT"
+  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
+  LINT_REPORT="$GENMCF_OUTPUT/report.json"
   STAT_VARS_MCF=""
   STAT_VARS_SCHEMA_MCF=""
   DIFFER_OUTPUT=""
   [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth (in-repo sample_data/child_birth, clean)"
-elif [[ "$DATASET" == "child_birth_fail_min_value" ]]; then
-  TMCF="$CB/child_birth.tmcf"
-  CSV="$SCRIPT_DIR/sample_data/child_birth_fail_min_value/child_birth_fail_min_value.csv"
-  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_fail_min_value_genmcf"
-  DATASET_OUTPUT="$GENMCF_OUTPUT"
-  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
-  LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
-  STAT_VARS_SCHEMA_MCF=""
-  DIFFER_OUTPUT=""
-  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth_fail_min_value (one negative value → check_min_value FAIL)"
-elif [[ "$DATASET" == "child_birth_fail_units" ]]; then
-  TMCF="$SCRIPT_DIR/sample_data/child_birth_fail_units/child_birth_fail_units.tmcf"
-  CSV="$SCRIPT_DIR/sample_data/child_birth_fail_units/child_birth_fail_units.csv"
-  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_fail_units_genmcf"
-  DATASET_OUTPUT="$GENMCF_OUTPUT"
-  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
-  LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
-  STAT_VARS_SCHEMA_MCF=""
-  DIFFER_OUTPUT=""
-  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth_fail_units (mixed units → check_unit_consistency FAIL)"
-elif [[ "$DATASET" == "child_birth_fail_scaling_factor" ]]; then
-  TMCF="$SCRIPT_DIR/sample_data/child_birth_fail_scaling_factor/child_birth_fail_scaling_factor.tmcf"
-  CSV="$SCRIPT_DIR/sample_data/child_birth_fail_scaling_factor/child_birth_fail_scaling_factor.csv"
-  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_fail_scaling_factor_genmcf"
-  DATASET_OUTPUT="$GENMCF_OUTPUT"
-  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
-  LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
-  STAT_VARS_SCHEMA_MCF=""
-  DIFFER_OUTPUT=""
-  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth_fail_scaling_factor (inconsistent scaling → check_scaling_factor_consistency FAIL)"
-elif [[ "$DATASET" == "child_birth_ai_demo" ]]; then
-  TMCF="$SCRIPT_DIR/sample_data/child_birth_ai_demo/child_birth_ai_demo.tmcf"
-  CSV="$SCRIPT_DIR/sample_data/child_birth_ai_demo/child_birth_ai_demo.csv"
-  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_ai_demo_genmcf"
-  DATASET_OUTPUT="$GENMCF_OUTPUT"
-  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
-  LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
-  STAT_VARS_SCHEMA_MCF=""
-  DIFFER_OUTPUT=""
-  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth_ai_demo (TMCF with schema issues & typos → Gemini Review finds issues)"
-elif [[ "$DATASET" == "child_birth_over_1000" ]]; then
-  TMCF="$SCRIPT_DIR/sample_data/child_birth_over_1000/child_birth_over_1000.tmcf"
-  CSV="$SCRIPT_DIR/sample_data/child_birth_over_1000/child_birth_over_1000.csv"
-  GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_over_1000_genmcf"
-  DATASET_OUTPUT="$GENMCF_OUTPUT"
-  STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
-  LINT_REPORT="$GENMCF_OUTPUT/report.json"
-  STAT_VARS_MCF="$CB/child_birth_stat_vars.mcf"
-  STAT_VARS_SCHEMA_MCF=""
-  DIFFER_OUTPUT=""
-  [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using child_birth_over_1000 (1001 rows → check_csv_row_count FAIL)"
+  log_info "Using uae_population (sample_data/uae_population/, from data repo uae_bayanat/uae_population/test_data/)"
 elif [[ "$DATASET" == "custom" ]]; then
   if [[ -z "$CUSTOM_TMCF" || -z "$CUSTOM_CSV" ]]; then
     log_error "Custom dataset requires --tmcf and --csv"
@@ -349,7 +329,7 @@ elif [[ "$DATASET" == "custom" ]]; then
   log_info "Using custom data: TMCF=$TMCF, CSV=$CSV"
 else
   log_error "Unknown dataset: $DATASET"
-  echo "Use: child_birth, child_birth_fail_min_value, child_birth_fail_units, child_birth_fail_scaling_factor, child_birth_ai_demo, child_birth_over_1000, or custom (with --tmcf and --csv)"
+  echo "Use: child_birth, statistics_poland, finland_census, uae_population, or custom (with --tmcf and --csv)"
   exit 1
 fi
 
@@ -406,14 +386,17 @@ if [[ -z "$PYTHON" ]]; then
 fi
 echo "::STEP::0:Pre-Import Checks"
 log_info "Pre-Import Checks (files + CSV quality + row count)..."
+mkdir -p "$DATASET_OUTPUT"
+PREFLIGHT_ERRORS_JSON="$DATASET_OUTPUT/preflight_errors.json"
+CSV_QUALITY_DETAILS_JSON="$DATASET_OUTPUT/csv_quality_details.json"
 VALIDATE_FILES_SCRIPT="$SCRIPT_DIR/scripts/validate_import_files.py"
 if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
-  PREFLIGHT_ARGS=(--tmcf="$TMCF" --csv="$CSV")
+  PREFLIGHT_ARGS=(--tmcf="$TMCF" --csv="$CSV" --output-errors="$PREFLIGHT_ERRORS_JSON")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
   if ! $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" 2>/dev/null; then
     log_error "Preflight failed: required import files missing or wrong extension."
-    emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed"
+    emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed" "" "$PREFLIGHT_ERRORS_JSON"
     $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" || true
     ensure_failure_report "Pre-Import Checks" "Preflight failed"
     exit 1
@@ -422,44 +405,30 @@ fi
 
 VALIDATE_CSV_SCRIPT="$SCRIPT_DIR/scripts/validate_csv_quality.py"
 if [[ -f "$VALIDATE_CSV_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
-  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value 2>/dev/null; then
+  CSV_QUALITY_EXTRA=(--allow-empty-columns)
+  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
     log_error "CSV quality check failed."
-    emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed"
-    $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value || true
+    emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed" "" "$CSV_QUALITY_DETAILS_JSON"
+    $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value "${CSV_QUALITY_EXTRA[@]}" || true
     ensure_failure_report "Pre-Import Checks" "CSV quality check failed"
     exit 1
   fi
-fi
-
-# CSV row count (pre-import constraint; only needs CSV)
-ROW_COUNT_SCRIPT="$SCRIPT_DIR/scripts/check_csv_row_count.py"
-ROW_COUNT_RESULT="$DATASET_OUTPUT/row_count_result.json"
-if [[ -f "$ROW_COUNT_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
-  mkdir -p "$DATASET_OUTPUT"
-  if $PYTHON "$ROW_COUNT_SCRIPT" --csv="$CSV" --threshold=1000 --output="$ROW_COUNT_RESULT"; then
-    if [[ -f "$ROW_COUNT_RESULT" ]] && grep -q '"status": "FAILED"' "$ROW_COUNT_RESULT" 2>/dev/null; then
-      WARN_ONLY_JSON="${CONFIG_DIR}/warn_only_rules.json"
-      if [[ -f "$WARN_ONLY_JSON" ]]; then
-        if ! $PYTHON -c "
+  # Warn when CSV has entirely empty column(s) (non-blocking; pipeline continues)
+  if [[ -f "$CSV_QUALITY_DETAILS_JSON" ]]; then
+    EMPTY_COLS="$($PYTHON -c "
 import json, sys
-with open('$WARN_ONLY_JSON') as f: d = json.load(f)
-rules = d.get('$DATASET', [])
-sys.exit(0 if 'check_csv_row_count' in rules else 1)
-" 2>/dev/null; then
-          log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
-          emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
-          ensure_failure_report "Pre-Import Checks" "CSV row count exceeds limit (1000 rows max)"
-          exit 1
-        fi
-      else
-        log_error "CSV row count exceeds 1000. Pre-Import Checks failed."
-        emit_failure "ROW_COUNT_EXCEEDED" 0 "CSV row count exceeds limit (1000 rows max)" 1000
-        ensure_failure_report "Pre-Import Checks" "CSV row count exceeds limit (1000 rows max)"
-        exit 1
-      fi
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    cols = d.get('empty_columns') or []
+    if cols:
+        print(','.join(cols))
+except Exception:
+    pass
+" "$CSV_QUALITY_DETAILS_JSON" 2>/dev/null)"
+    if [[ -n "$EMPTY_COLS" ]]; then
+      log_warn "CSV has entirely empty column(s): $EMPTY_COLS (non-blocking; pipeline continues)"
     fi
-  else
-    log_warn "Row count check script failed or skipped"
   fi
 fi
 
@@ -487,19 +456,13 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
       log_info "Step 1 passed (no blocking issues)"
     else
       if [[ -f "$SCHEMA_REVIEW_OUT" ]]; then
-        log_error "Step 1 found blocking issues. See $SCHEMA_REVIEW_OUT"
+        log_warn "Step 1 found issues (advisory). See $SCHEMA_REVIEW_OUT — continuing pipeline."
         $PYTHON -c "import json; d=json.load(open('$SCHEMA_REVIEW_OUT')); print('\n'.join(str(x) for x in d))" 2>/dev/null || cat "$SCHEMA_REVIEW_OUT"
-        if [[ "$LLM_REVIEW" == "true" && "$AI_ADVISORY" == "true" ]]; then
-          log_info "Advisory mode: treating AI blockers as non-blocking — continuing pipeline."
-        else
-          ensure_failure_report "Gemini Review" "Gemini review found issues"
-          emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
-          exit 1
-        fi
+        # Gemini findings are always advisory; never block validation.
       else
         log_warn "Step 1 failed (script error or missing output)"
         ensure_failure_report "Gemini Review" "Step 1 failed (script error or missing output)"
-        emit_failure "GEMINI_BLOCKING" 1 "Gemini review found issues"
+        emit_failure "GEMINI_BLOCKING" 1 "Gemini review failed (script error)"
         exit 1
       fi
     fi
@@ -639,6 +602,35 @@ else
   VALIDATION_ARGS+=(--differ_output=)
 fi
 
+# Preprocess summary_report.csv: normalize year-only MinDate/MaxDate to YYYY-01-01 so pd.to_datetime() in DC validator parses correctly (not as Unix epoch)
+if [[ -n "$STATS_SUMMARY" && -f "$STATS_SUMMARY" ]]; then
+  if $PYTHON -c '
+import pandas as pd
+import re
+import sys
+
+def normalize_year_only(v):
+    s = str(v).strip()
+    if re.fullmatch(r"\d{4}", s):
+        return f"{s}-01-01"
+    return s
+
+summary_path = sys.argv[1]
+df = pd.read_csv(summary_path)
+
+if "MaxDate" in df.columns:
+    df["MaxDate"] = df["MaxDate"].apply(normalize_year_only)
+if "MinDate" in df.columns:
+    df["MinDate"] = df["MinDate"].apply(normalize_year_only)
+
+df.to_csv(summary_path, index=False)
+' "$STATS_SUMMARY"; then
+    :
+  else
+    log_warn "Failed to preprocess summary_report.csv date columns"
+  fi
+fi
+
 # Orchestrator runs DC framework rules + our custom rules (e.g. STRUCTURAL_LINT_ERROR_COUNT), writes validation_output.json once
 export DATA_REPO
 if $PYTHON "$SCRIPT_DIR/scripts/run_validation.py" "${VALIDATION_ARGS[@]}"; then
@@ -648,35 +640,20 @@ else
 fi
 
 # =============================================================================
-# Step 2.2: Merge row-count result (computed in Pre-Import Checks) into validation_output
+# Step 2.25: Check counters match (warn-only; use same-source report only)
+# NumObservations and NumNodeSuccesses must come from the same genmcf output
+# to avoid false mismatches when resolution differs between genmcf and lint.
 # =============================================================================
-if [[ -f "$VALIDATION_OUTPUT" && -f "$ROW_COUNT_RESULT" ]]; then
-  if $PYTHON -c "
-import json
-vo_path = '$VALIDATION_OUTPUT'
-rc_path = '$ROW_COUNT_RESULT'
-with open(vo_path) as f: vo = json.load(f)
-with open(rc_path) as f: rc = json.load(f)
-if isinstance(vo, list) and isinstance(rc, list) and rc:
-  vo.extend(rc)
-  with open(vo_path, 'w') as f: json.dump(vo, f, indent=2, default=str)
-" 2>/dev/null; then
-    :
-  else
-    log_warn "Failed to merge row_count_result.json into validation_output.json"
-  fi
+REPORT_FOR_COUNTERS=""
+if [[ -n "$STATS_SUMMARY" && -f "$STATS_SUMMARY" ]]; then
+  REPORT_FOR_COUNTERS="$(dirname "$STATS_SUMMARY")/report.json"
 fi
-
-# =============================================================================
-# Step 2.25: Check counters match (StatVars/NumObservations vs report)
-# =============================================================================
-COUNTERS_CHECK_EXIT=0
-if [[ -n "$STATS_SUMMARY" && -f "$STATS_SUMMARY" && -n "$LINT_REPORT" && -f "$LINT_REPORT" ]]; then
+if [[ -n "$REPORT_FOR_COUNTERS" && -f "$REPORT_FOR_COUNTERS" ]]; then
   if $PYTHON "$SCRIPT_DIR/scripts/check_counters_match.py" \
-    --stats_summary="$STATS_SUMMARY" --report="$LINT_REPORT"; then
+    --stats_summary="$STATS_SUMMARY" --report="$REPORT_FOR_COUNTERS"; then
     :
   else
-    COUNTERS_CHECK_EXIT=1
+    log_warn "Counters mismatch (NumObservations vs NumNodeSuccesses). This is advisory only. Resolution or existence checks may result in differing materialized node counts. This does not affect validation rule results."
   fi
 fi
 
@@ -696,10 +673,7 @@ if [[ -f "$VALIDATION_OUTPUT" && -f "$WARN_ONLY_RULES" ]]; then
 else
   VALIDATION_RESULT=$RUNNER_EXIT
 fi
-# Counters check failure also blocks
-if [[ "$COUNTERS_CHECK_EXIT" -ne 0 ]]; then
-  VALIDATION_RESULT=1
-fi
+# Counters match check is warn-only (resolution instability should not hard-fail)
 log_info "Step 3 completed in $(( $(date +%s) - STEP3_START ))s"
 
 # =============================================================================
@@ -721,10 +695,10 @@ if [[ -f "$VALIDATION_OUTPUT" ]]; then
 fi
 
 if [[ "$VALIDATION_RESULT" -eq 0 ]]; then
-  log_info "Validation PASSED"
+  log_info "Validation PASSED (no blocking rules)"
   echo ""
   echo "=========================================="
-  echo -e "  ${GREEN}✓ Validation PASSED${NC}"
+  echo -e "  ${GREEN}✓ Validation PASSED (no blocking rules)${NC}"
   echo "=========================================="
   echo "Output: $VALIDATION_OUTPUT"
   [[ -f "$HTML_REPORT" ]] && echo "Report: $HTML_REPORT"

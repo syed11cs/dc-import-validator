@@ -27,7 +27,7 @@ from fluctuation_utils import extract_fluctuation_samples
 LINT_RESOLUTION_DIAGNOSTICS_PREFIX = "Existence_FailedDcCall_"
 
 # Rule IDs treated as system-level checks (e.g. pre-import safeguards). Excluded from "Validation" counts; shown under "System Checks".
-SYSTEM_CHECK_IDS = frozenset({"check_csv_row_count"})
+SYSTEM_CHECK_IDS = frozenset()
 
 
 def _rule_id(r: dict) -> str:
@@ -229,11 +229,11 @@ def _is_llm_blocker(i: dict) -> bool:
 
 
 def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) -> str:
-    """Render Gemini Review section. When AI was not enabled, show 'Not enabled for this run'."""
+    """Render AI Advisory Findings section. When AI was not enabled, show 'Not enabled for this run'."""
     if not gemini_review_enabled:
         return """
     <section class="report-section" id="ai-review">
-      <h2>Gemini Review</h2>
+      <h2>AI Advisory Findings (Non-Blocking)</h2>
       <p class="empty">Not enabled for this run.</p>
     </section>
 """
@@ -241,35 +241,35 @@ def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) ->
     if issues is None:
         return """
     <section class="report-section" id="ai-review">
-      <h2>Gemini Review</h2>
+      <h2>AI Advisory Findings (Non-Blocking)</h2>
       <p class="empty">No review data.</p>
     </section>
 """
     blockers = [i for i in issues if _is_llm_blocker(i)]
-    warnings = [i for i in issues if not _is_llm_blocker(i)]
-    if not blockers and not warnings:
+    advisories = [i for i in issues if not _is_llm_blocker(i)]
+    if not blockers and not advisories:
         return """
     <section class="report-section" id="ai-review">
-      <h2>Gemini Review</h2>
+      <h2>AI Advisory Findings (Non-Blocking)</h2>
       <p class="empty">Passed — no issues found.</p>
     </section>
 """
     html = """
     <section class="report-section" id="ai-review">
-      <h2>Gemini Review</h2>
+      <h2>AI Advisory Findings (Non-Blocking)</h2>
 """
     if blockers:
         html += "      <p class='advisory-note'>Advisory: these issues do not affect Overall pass/fail; that is based on validation rules only.</p>\n"
-        html += "      <p><strong>Advisory Issues</strong></p>\n      <table class='details lint-table'><thead><tr><th>File</th><th>Line</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>\n"
+        html += "      <p><strong>Blocking (AI)</strong></p>\n      <table class='details lint-table'><thead><tr><th>File</th><th>Line</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>\n"
         for i in blockers:
             file_str = _escape_html(i.get("file") or "—")
             line = i.get("line")
             line_str = str(line) if line is not None else "—"
             html += f"        <tr><td>{file_str}</td><td>{_escape_html(line_str)}</td><td>{_escape_html(i.get('type', ''))}</td><td>{_escape_html(i.get('message', ''))}</td><td>{_escape_html(i.get('suggestion', ''))}</td></tr>\n"
         html += "      </tbody></table>\n"
-    if warnings:
-        html += "      <p><strong>Warnings</strong></p>\n      <table class='details lint-table'><thead><tr><th>File</th><th>Line</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>\n"
-        for i in warnings:
+    if advisories:
+        html += "      <p><strong>Advisories</strong></p>\n      <table class='details lint-table'><thead><tr><th>File</th><th>Line</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>\n"
+        for i in advisories:
             file_str = _escape_html(i.get("file") or "—")
             line = i.get("line")
             line_str = str(line) if line is not None else "—"
@@ -295,7 +295,7 @@ def _render_compact_summary_block(
 ) -> str:
     """Render summary stat strip at top of report. Validation row = config-defined rules only; System Checks = system-level safeguards."""
     if gemini_review_enabled:
-        ai_val = f"{gemini_review_count} advisory issue{'s' if gemini_review_count != 1 else ''}"
+        ai_val = f"{gemini_review_count} AI advisor{'ies' if gemini_review_count != 1 else 'y'}"
     else:
         ai_val = "Not enabled for this run"
     val_str = f"{n_val_blockers} failed · {n_val_warnings} warning{'s' if n_val_warnings != 1 else ''} · {n_val_passed} passed"
@@ -304,7 +304,7 @@ def _render_compact_summary_block(
         "<div class='summary-strip'>"
         f"<div class='summary-stat'><span class='summary-label'>Validation</span><span class='summary-val'>{val_str}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>System Checks</span><span class='summary-val'>{sys_str}</span></div>"
-        f"<div class='summary-stat'><span class='summary-label'>Gemini Review</span><span class='summary-val'>{ai_val}</span></div>"
+        f"<div class='summary-stat'><span class='summary-label'>AI Advisories</span><span class='summary-val'>{ai_val}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>Fluctuation</span><span class='summary-val'>{fluctuation_count}</span></div>"
         f"<div class='summary-stat'><span class='summary-label'>Rule failures</span><span class='summary-val'>{rule_failure_count}</span></div>"
         "</div>"
@@ -340,10 +340,16 @@ def _format_technical_signals_row(ts: dict) -> str:
         if b is None:
             return "Unknown"
         return "Yes" if b else "No"
+    if ts.get("zero_baseline"):
+        change_str = _escape_html(ts.get("change_message") or "Increase from zero baseline (percentage undefined)")
+        if ts.get("absolute_change") is not None:
+            change_str += f" (absolute change: {_escape_html(fmt_num(ts.get('absolute_change')))})"
+    else:
+        change_str = _escape_html(fmt_pct(ts.get("percent_change")))
     lines = [
         f"<strong>Previous value:</strong> {_escape_html(fmt_num(ts.get('previous_value')))}",
         f"<strong>Current value:</strong> {_escape_html(fmt_num(ts.get('current_value')))}",
-        f"<strong>Change:</strong> {_escape_html(fmt_pct(ts.get('percent_change')))}",
+        f"<strong>Change:</strong> {change_str}",
         f"<strong>Previous near zero:</strong> {_escape_html(yes_no(ts.get('previous_near_zero')))}",
         f"<strong>Scaling factor changed:</strong> {_escape_html(yes_no(ts.get('scaling_changed')))}",
         f"<strong>Unit changed:</strong> {_escape_html(yes_no(ts.get('unit_changed')))}",
@@ -376,12 +382,16 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
         html += "      <table class='details lint-table'><thead><tr><th scope='col'>StatVar</th><th scope='col'>Location</th><th scope='col'>Change</th><th scope='col'>Period</th></tr></thead><tbody>\n"
         for idx, s in enumerate(samples):
             pct = s.get("percentDifference")
-            pct_str = _format_change_pct(pct)
+            change_display = (
+                s.get("change_message")
+                if s.get("technical_signals", {}).get("zero_baseline")
+                else _format_change_pct(pct)
+            )
             points = s.get("problemPoints") or []
             period = ""
             if len(points) >= 2:
                 period = f"{points[-2].get('date', '')} → {points[-1].get('date', '')}"
-            html += f"        <tr><td>{_escape_html(s.get('statVar') or '—')}</td><td>{_escape_html(s.get('location') or '—')}</td><td>{_escape_html(pct_str)}</td><td>{_escape_html(period)}</td></tr>\n"
+            html += f"        <tr><td>{_escape_html(s.get('statVar') or '—')}</td><td>{_escape_html(s.get('location') or '—')}</td><td>{_escape_html(change_display)}</td><td>{_escape_html(period)}</td></tr>\n"
             ts = s.get("technical_signals")
             if ts:
                 html += "        <tr><td colspan='4' class='technical-signals-cell'><div class='technical-signals-title'>Technical Signals</div><div class='technical-signals'>" + _format_technical_signals_row(ts) + "</div>"
@@ -391,7 +401,7 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
                         "statVar": s.get("statVar") or "",
                         "location": s.get("location") or "",
                         "period": period,
-                        "percent_change": pct,
+                        "percent_change": pct if not (ts and ts.get("zero_baseline")) else None,
                         "technical_signals": ts,
                     })
                 html += "</td></tr>\n"
@@ -1008,7 +1018,7 @@ def generate_html(
         print(f"Error reading {validation_output_path}: {e}", file=sys.stderr)
         return False
 
-    # Split into validation rules (config-defined) vs system checks (e.g. check_csv_row_count) for display.
+    # Split into validation rules (config-defined) vs system checks for display.
     validation_results = [r for r in results if not _is_system_check(r)]
     system_check_results = [r for r in results if _is_system_check(r)]
 
@@ -1249,7 +1259,7 @@ def generate_html(
         <a href="#warnings">Warnings</a>
         <a href="#passed">Passed</a>
         <a href="#system-checks">System Checks</a>
-        <a href="#ai-review">Gemini Review</a>
+        <a href="#ai-review">AI Advisory Findings</a>
         <a href="#fluctuation">Fluctuation</a>
         <a href="#rule-failures">Rule failures</a>
         <a href="#import-run">Import run</a>
@@ -1331,11 +1341,11 @@ def generate_html(
 
     html += "    </section>\n"
 
-    # System Checks (e.g. check_csv_row_count) — separate from config-defined validation rules
+    # System Checks — separate from config-defined validation rules
     html += """
     <section class="report-section" id="system-checks">
       <h2>System Checks</h2>
-      <p class="section-desc">Pre-import and system-level safeguards (e.g. row count).</p>
+      <p class="section-desc">Pre-import and system-level safeguards.</p>
 """
     if sys_blockers:
         for r in sys_blockers:

@@ -69,7 +69,7 @@ value: C:table->C3
 """
 
 EXAMPLE_BAD_NAMESPACE_OR_DUPLICATE = """
-# Bad: schema value without dcs: prefix (DataCommonsAggregate -> dcs:DataCommonsAggregate)
+# Bad: schema value without dcs: prefix in TMCF (StatVarObservation -> dcs:StatVarObservation)
 # Bad: duplicate single-value property (observationDate appears twice)
 Node: E:table->E0
 typeOf: dcs:StatVarObservation
@@ -86,6 +86,12 @@ _COLUMN_REF_RE = re.compile(r"C:[^>]+->([^\n\r]+)")
 
 # variableMeasured in TMCF: literal (dcs:X or X) or column ref (C:table->col); value on same line only
 _VARIABLE_MEASURED_RE = re.compile(r"variableMeasured\s*:\s*([^\n\r#]+)", re.IGNORECASE)
+
+# observationDate literal: ISO 8601 YYYY, YYYY-MM, or YYYY-MM-DD only
+_OBSERVATION_DATE_ISO8601_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
+
+# StatVar DCID: UpperCamelCase segments separated by underscores (e.g. Count_Person)
+_STATVAR_DCID_FORMAT_RE = re.compile(r"^[A-Z0-9][A-Za-z0-9]*(?:_[A-Z0-9][A-Za-z0-9]*)*$")
 
 
 def _get_api_key() -> str | None:
@@ -109,11 +115,12 @@ def _extract_generated_statvar_dcids(tmcf_content: str, csv_path: str | Path | N
     """
     Extract StatVar DCIDs that are "generated" by the TMCF/CSV (used in variableMeasured).
     - From TMCF: literal variableMeasured values (e.g. dcs:Count_Person).
-    - From CSV: when variableMeasured maps to a column, unique values in that column.
+    - From CSV: when variableMeasured maps to a column (C:table->columnId), unique values in those columns.
+    Reads the CSV exactly once and extracts values for all referenced columns in a single pass.
     Returns set of normalized DCIDs (no dcid:/dcs: prefix).
     """
     dcids: set[str] = set()
-    # 1) Literals from TMCF
+    # 1) Literals from TMCF (non–C: variableMeasured values)
     for m in _VARIABLE_MEASURED_RE.finditer(tmcf_content):
         val = m.group(1).strip().split("\n")[0].strip()
         if not val or val.startswith("C:"):
@@ -121,7 +128,8 @@ def _extract_generated_statvar_dcids(tmcf_content: str, csv_path: str | Path | N
         dcid = _normalize_statvar_dcid(val)
         if dcid:
             dcids.add(dcid)
-    # 2) Column ref: find variableMeasured column and read CSV
+    # 2) Collect ALL column IDs referenced in variableMeasured C:table->columnId
+    column_ids: set[str] = set()
     for m in _VARIABLE_MEASURED_RE.finditer(tmcf_content):
         val = m.group(1).strip().split("\n")[0].strip()
         if not val.startswith("C:") or "->" not in val:
@@ -130,22 +138,27 @@ def _extract_generated_statvar_dcids(tmcf_content: str, csv_path: str | Path | N
         if not col_ref:
             continue
         col_id = col_ref.group(1).strip()
-        if not csv_path or not Path(csv_path).exists():
-            continue
-        try:
-            with open(csv_path, encoding="utf-8", errors="replace", newline="") as f:
-                reader = csv.DictReader(f)
-                if col_id not in (reader.fieldnames or []):
-                    continue
-                for row in reader:
+        if col_id:
+            column_ids.add(col_id)
+    # 3) Read CSV exactly once; extract unique values for all referenced columns in a single pass
+    if not column_ids or not csv_path or not Path(csv_path).exists():
+        return dcids
+    try:
+        with open(csv_path, encoding="utf-8", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            cols_to_read = [c for c in column_ids if c in fieldnames]
+            if not cols_to_read:
+                return dcids
+            for row in reader:
+                for col_id in cols_to_read:
                     v = (row.get(col_id) or "").strip()
                     if v:
                         dcid = _normalize_statvar_dcid(v)
                         if dcid:
                             dcids.add(dcid)
-        except (OSError, csv.Error):
-            pass
-        break
+    except (OSError, csv.Error):
+        pass
     return dcids
 
 
@@ -301,6 +314,55 @@ def _check_value_column_mapped(tmcf_content: str) -> list[dict]:
     }]
 
 
+def _validate_observation_date_literals(tmcf_content: str) -> list[dict]:
+    """
+    Deterministic check: observationDate literal values must match ISO 8601 (YYYY, YYYY-MM, or YYYY-MM-DD).
+    Column mappings (C:table->columnId) are skipped. Invalid formats are flagged as format (warning).
+    """
+    issues: list[dict] = []
+    obs_re = re.compile(r"observationDate\s*:\s*([^\n\r#]+)", re.IGNORECASE)
+    for line_no, line in enumerate(tmcf_content.splitlines(), start=1):
+        m = obs_re.search(line.split("#", 1)[0])
+        if not m:
+            continue
+        val = m.group(1).strip()
+        if val.startswith("C:"):
+            continue
+        if not _OBSERVATION_DATE_ISO8601_RE.match(val):
+            issues.append({
+                "line": line_no,
+                "type": "format",
+                "message": f"observationDate literal '{val}' does not match ISO 8601 (use YYYY, YYYY-MM, or YYYY-MM-DD).",
+                "suggestion": "Use a date in YYYY, YYYY-MM, or YYYY-MM-DD format.",
+                "severity": "warning",
+            })
+    return issues
+
+
+def _validate_statvar_dcid_format(
+    tmcf_content: str,
+    csv_path: str | Path | None,
+    generated_dcids: set[str] | None = None,
+) -> list[dict]:
+    """
+    Deterministic check: StatVar DCIDs (from variableMeasured literals and CSV column values) must match
+    UpperCamelCase segments separated by underscores. Invalid formats are flagged as format (warning).
+    If generated_dcids is provided, it is used (avoids re-reading CSV); otherwise extracted from tmcf_content/csv_path.
+    """
+    issues: list[dict] = []
+    dcids = generated_dcids if generated_dcids is not None else _extract_generated_statvar_dcids(tmcf_content, csv_path)
+    for dcid in sorted(dcids):
+        if not _STATVAR_DCID_FORMAT_RE.match(dcid):
+            issues.append({
+                "line": None,
+                "type": "format",
+                "message": f"StatVar DCID '{dcid}' does not match required format (UpperCamelCase segments separated by underscores).",
+                "suggestion": "Use only letters, numbers, and underscores; each segment should start with an uppercase letter (e.g. Count_Person).",
+                "severity": "warning",
+            })
+    return issues
+
+
 def _validate_stat_vars_mcf(content: str, path: str) -> list[dict]:
     """
     Deterministic validation of stat_vars MCF: name (required), description (required),
@@ -349,6 +411,29 @@ def _validate_stat_vars_mcf(content: str, path: str) -> list[dict]:
                 "severity": "warning",
                 "file": file_name,
             })
+        # Require populationType and measuredProperty only for StatVar (StatisticalVariable) nodes
+        type_of = (props.get("typeOf") or "").strip().lower()
+        if "statisticalvariable" in type_of:
+            population_type = (props.get("populationType") or "").strip()
+            if not population_type:
+                issues.append({
+                    "line": line_no,
+                    "type": "mcf_required",
+                    "message": "Missing or empty 'populationType' for StatVar node.",
+                    "suggestion": "Add a non-empty populationType: (e.g. dcs:Person).",
+                    "severity": "warning",
+                    "file": file_name,
+                })
+            measured_property = (props.get("measuredProperty") or "").strip()
+            if not measured_property:
+                issues.append({
+                    "line": line_no,
+                    "type": "mcf_required",
+                    "message": "Missing or empty 'measuredProperty' for StatVar node.",
+                    "suggestion": "Add a non-empty measuredProperty: (e.g. dcs:count).",
+                    "severity": "warning",
+                    "file": file_name,
+                })
         node_start_line = None
         props = {}
 
@@ -532,7 +617,7 @@ def _build_prompt(
 9. If no table header list was provided, skip column-existence check."""
 
     extra = "\n\nOptional reference — known StatVars/schema (use to check if TMCF StatVar DCIDs or types exist):\n"
-    extra += "Standard Data Commons schema types (treat as known; do not flag as unknown_statvar): dcs:DataCommonsAggregate, dcs:Percent, dcs:StatVarObservation.\n"
+    extra += "Standard Data Commons schema types (treat as known; do not flag as unknown_statvar): dcs:StatisticalVariable, dcs:Percent, dcs:StatVarObservation.\n"
     if stat_vars_content or stat_vars_schema_content:
         if stat_vars_content:
             extra += "--- stat_vars.mcf (excerpt) ---\n" + (stat_vars_content[:12000] or "") + "\n"
@@ -549,7 +634,11 @@ Required validation checks (apply in order; flag each violation). Use the "type"
 3. No duplicate single-value properties: each property key must appear at most once per node. Flag duplicate keys (type: duplicate).
 4. Property names must match Data Commons schema (e.g. variableMeasured, observationAbout). Flag typos in property names (type: typo).{check5_and_9}
 6. DCID format: StatVar DCIDs should use UpperCamelCase segments separated by underscores (e.g. Count_Person, Median_Income_Household). No spaces or hyphens. Flag invalid format (type: format).
-7. Namespace prefix: schema types and schema-valued properties (e.g. typeOf, variableMeasured value) must use the dcs: prefix where applicable. Flag missing dcs: (type: namespace) (e.g. Count_Person -> dcs:Count_Person, DataCommonsAggregate -> dcs:DataCommonsAggregate).
+7. Namespace prefix:
+- In TMCF, schema types such as StatVarObservation must use the dcs: prefix (e.g. typeOf: dcs:StatVarObservation).
+- For StatVar DCIDs (e.g. Count_Person), dcid: is allowed.
+- Do NOT require dcs:StatisticalVariable in instance MCF files; dcid:StatisticalVariable is valid.
+Flag missing dcs: only when clearly required for schema types in TMCF (type: namespace).
 8. If StatVar/schema reference is provided below: flag StatVar DCIDs or types that do not appear in the reference (type: unknown_statvar).
 10. Unexpected properties: for nodes with typeOf: dcs:StatVarObservation, standard properties include typeOf, variableMeasured, observationAbout, observationDate, value, unit, measurementMethod, observationPeriod, scalingFactor. Flag any other property names that look non-standard or like typos (type: naming). Do not flag the standard ones.
 11. Suspicious combinations: flag as warning if StatVarObservation has unit or scalingFactor but no measurementMethod when it would typically be expected (e.g. when unit is present and non-empty), or other clearly inconsistent combinations. Do not guess; only flag when clearly wrong.{header_section}
@@ -656,11 +745,14 @@ def review_tmcf(
         python_issues.extend(_validate_column_refs_against_header(content, csv_header_columns))
         python_issues.extend(_find_unused_csv_columns(content, csv_header_columns))
     python_issues.extend(_check_value_column_mapped(content))
+    python_issues.extend(_validate_observation_date_literals(content))
+    # Reuse generated_dcids for format check and (below) stat_vars comparison so CSV is read at most once
+    generated_dcids = _extract_generated_statvar_dcids(content, csv_path)
+    python_issues.extend(_validate_statvar_dcid_format(content, csv_path, generated_dcids=generated_dcids))
 
     if stat_vars_content and stat_vars_mcf_path:
         python_issues.extend(_validate_stat_vars_mcf(stat_vars_content, stat_vars_mcf_path))
         # Compare generated StatVars (from TMCF/CSV) to stat_vars MCF; flag missing definitions
-        generated_dcids = _extract_generated_statvar_dcids(content, csv_path)
         if generated_dcids:
             python_issues.extend(
                 _compare_generated_to_stat_vars_mcf(

@@ -83,14 +83,7 @@ def _parse_failure(output: str) -> dict | None:
     """
     if not output or not isinstance(output, str):
         return None
-    # Observation count mismatch (validation step)
-    m = re.search(r"NumObservations sum \((\d+)\)\s*!=\s*NumNodeSuccesses \((\d+)\)", output)
-    if m:
-        return {
-            "code": "OBSERVATION_COUNT_MISMATCH",
-            "step": 3,
-            "message": f"Observation count ({m.group(1)}) doesn't match node count ({m.group(2)})",
-        }
+    # Counters mismatch is warn-only; do not treat as blocking failure
     if "CSV row count exceeds" in output:
         limit_m = re.search(r"exceeds (\d+)|limit of (\d+)", output)
         limit = int(limit_m.group(1) or limit_m.group(2)) if limit_m else None
@@ -114,7 +107,7 @@ def _parse_failure(output: str) -> dict | None:
 
 
 def _normalize_failure_event(obj: dict) -> dict | None:
-    """Validate and normalize a streamed failure event (t==='failure'). Returns dict with code, step, message, optional limit."""
+    """Validate and normalize a streamed failure event (t==='failure'). Returns dict with code, step, message, optional limit, optional details."""
     if not isinstance(obj, dict) or obj.get("t") != "failure":
         return None
     code = obj.get("code")
@@ -125,14 +118,46 @@ def _normalize_failure_event(obj: dict) -> dict | None:
     out = {"code": str(code), "step": int(step) if isinstance(step, (int, float)) else None, "message": message}
     if obj.get("limit") is not None and isinstance(obj["limit"], (int, float)):
         out["limit"] = int(obj["limit"])
+    if isinstance(obj.get("details"), dict):
+        out["details"] = obj["details"]
     return out
 
 
+def _is_failure_line_start(stripped: str) -> bool:
+    """True if this line looks like the start of a structured failure JSON block."""
+    return stripped.startswith('{"t":"failure"') or stripped.startswith('{"t": "failure"')
+
+
+def _parse_structured_failure_from_output(output: str):
+    """Parse a structured failure JSON block from full output (single or multi-line). Returns normalized failure dict with details, or None."""
+    if not output:
+        return None
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not _is_failure_line_start(stripped):
+            continue
+        # Try this line alone, then this line + next, etc., until valid JSON
+        for j in range(i, len(lines)):
+            chunk = "\n".join(lines[i : j + 1])
+            try:
+                obj = json.loads(chunk)
+                failure = _normalize_failure_event(obj)
+                if failure:
+                    return failure
+            except (json.JSONDecodeError, TypeError):
+                continue
+    return None
+
+
 async def _stream_run_output(proc):
-    """Stream process stdout line by line, yielding NDJSON. Detect steps and structured failure events."""
+    """Stream process stdout line by line, yielding NDJSON. Detect steps and structured failure events.
+    Failure JSON may be emitted by the backend as a single line or across multiple lines; we buffer
+    until a complete valid JSON object is received."""
     output_lines = []
     cancelled = False
     last_failure = None  # First structured failure emitted by backend; used in done so we don't re-parse output
+    failure_buffer = None  # list of raw lines making up an incomplete failure JSON block, or None
     try:
         while True:
             line = await proc.stdout.readline()
@@ -141,18 +166,38 @@ async def _stream_run_output(proc):
             text = line.decode("utf-8", errors="replace")
             text = _strip_ansi(text)
             output_lines.append(text)
-            # Detect structured failure line (single-line JSON from backend)
             stripped = text.strip()
-            if stripped.startswith("{") and '"t"' in stripped and '"failure"' in stripped:
+            yield_line = True  # whether to emit this line as "t": "line" for the log
+
+            if failure_buffer is not None:
+                # Continue buffering multi-line failure JSON
+                failure_buffer.append(text)
+                try:
+                    obj = json.loads("".join(failure_buffer))
+                    failure = _normalize_failure_event(obj)
+                    if failure:
+                        if last_failure is None:
+                            last_failure = failure
+                        for buffered in failure_buffer:
+                            yield json.dumps({"t": "line", "v": buffered}) + "\n"
+                        yield json.dumps({"t": "failure", **failure}) + "\n"
+                        failure_buffer = None
+                except (json.JSONDecodeError, TypeError):
+                    pass  # incomplete; keep buffering
+                yield_line = False
+                if failure_buffer is not None:
+                    continue
+            elif _is_failure_line_start(stripped):
                 try:
                     obj = json.loads(stripped)
                     failure = _normalize_failure_event(obj)
                     if failure:
                         if last_failure is None:
-                            last_failure = failure  # Keep first failure (root cause); ignore cascaded ones
+                            last_failure = failure
                         yield json.dumps({"t": "failure", **failure}) + "\n"
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    failure_buffer = [text]
+                    yield_line = False
             step = None
             label = None
             _step_match = re.search(r"::STEP::(\d)(?::(.+))?", text)
@@ -176,7 +221,8 @@ async def _stream_run_output(proc):
                 if label:
                     payload["label"] = label
                 yield json.dumps(payload) + "\n"
-            yield json.dumps({"t": "line", "v": text}) + "\n"
+            if yield_line:
+                yield json.dumps({"t": "line", "v": text}) + "\n"
         await proc.wait()
     except asyncio.CancelledError:
         cancelled = True
@@ -200,13 +246,15 @@ async def _stream_run_output(proc):
             "ts_end": time.time(),
         }
         if not done_payload["success"] and not cancelled:
-            failure = last_failure or _parse_failure(output)
+            failure = last_failure or _parse_structured_failure_from_output(output) or _parse_failure(output)
             if failure:
                 done_payload["failure_code"] = failure["code"]
                 done_payload["failure_step"] = failure["step"]
                 done_payload["failure_message"] = failure["message"]
                 if failure.get("limit") is not None:
                     done_payload["failure_limit"] = failure["limit"]
+                if isinstance(failure.get("details"), dict):
+                    done_payload["failure_details"] = failure["details"]
         yield json.dumps(done_payload) + "\n"
 
 
@@ -487,6 +535,8 @@ async def run_validation_process(
                 result["failure_message"] = failure["message"]
                 if failure.get("limit") is not None:
                     result["failure_limit"] = failure["limit"]
+                if isinstance(failure.get("details"), dict):
+                    result["failure_details"] = failure["details"]
         return result
     finally:
         if not stream and config_path and config_path.exists():

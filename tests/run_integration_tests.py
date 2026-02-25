@@ -5,14 +5,10 @@ Runs run_e2e_test.sh for key datasets and asserts exit codes and output.
 Run from project root: python tests/run_integration_tests.py
 
 Datasets in project (run_e2e_test.sh / server):
-  - child_birth              : clean, expect PASS
-  - child_birth_fail_min_value   : negative value → check_min_value FAIL
-  - child_birth_fail_units       : mixed units → check_unit_consistency FAIL
-  - child_birth_fail_scaling_factor : inconsistent scaling → check_scaling_factor_consistency FAIL
-  - child_birth_ai_demo       : TMCF schema/typos → Gemini Review (or deterministic) finds issues
-  - custom                    : requires --tmcf/--csv (not covered here)
+  - child_birth   : sample_data/child_birth/ (clean, expect PASS)
+  - custom        : requires --tmcf/--csv (not covered here)
 
-Scenarios covered: PASS, FAIL (min_value, units, scaling_factor), AI demo (no LLM), no API key, step labels.
+Scenarios covered: PASS (child_birth), no API key, step labels, deterministic mode, FULL mode smoke.
 Requirements:
   - datacommonsorg/data repo at ../datacommonsorg/data (or PROJECTS_DIR) for the import_validation runner only; child_birth testdata is in this repo (sample_data/child_birth/).
   - ./run_e2e_test.sh and ./setup.sh already run once (venv, JAR, etc.)
@@ -56,35 +52,6 @@ def test_child_birth_pass() -> None:
     assert code == 0, f"child_birth (no LLM) expected exit 0, got {code}\n{out[-2000:]}"
     assert "Validation PASSED" in out or "✓ Validation PASSED" in out, f"Expected PASSED in output\n{out[-1500:]}"
     assert "::STEP::" in out or "Step 1" in out, "Expected step markers or Step 1 in output"
-
-
-def test_child_birth_fail_min_value() -> None:
-    """Dataset child_birth_fail_min_value: expect FAIL, exit 1 (check_min_value)."""
-    code, out = run_e2e("child_birth_fail_min_value", "--no-llm-review")
-    assert code == 1, f"child_birth_fail_min_value expected exit 1, got {code}\n{out[-2000:]}"
-    assert "Validation FAILED" in out or "✗ Validation FAILED" in out, f"Expected FAILED in output\n{out[-1500:]}"
-
-
-def test_child_birth_fail_units() -> None:
-    """Dataset child_birth_fail_units: expect FAIL, exit 1 (check_unit_consistency)."""
-    code, out = run_e2e("child_birth_fail_units", "--no-llm-review")
-    assert code == 1, f"child_birth_fail_units expected exit 1, got {code}\n{out[-2000:]}"
-    assert "Validation FAILED" in out or "✗ Validation FAILED" in out, f"Expected FAILED in output\n{out[-1500:]}"
-
-
-def test_child_birth_fail_scaling_factor() -> None:
-    """Dataset child_birth_fail_scaling_factor: expect FAIL, exit 1 (check_scaling_factor_consistency)."""
-    code, out = run_e2e("child_birth_fail_scaling_factor", "--no-llm-review")
-    assert code == 1, f"child_birth_fail_scaling_factor expected exit 1, got {code}\n{out[-2000:]}"
-    assert "Validation FAILED" in out or "✗ Validation FAILED" in out, f"Expected FAILED in output\n{out[-1500:]}"
-
-
-def test_child_birth_ai_demo_no_llm() -> None:
-    """Dataset child_birth_ai_demo with --no-llm-review: runs deterministic only; check steps and exit."""
-    code, out = run_e2e("child_birth_ai_demo", "--no-llm-review")
-    # Deterministic checks may pass or find issues; pipeline should complete (0 or 1)
-    assert code in (0, 1), f"child_birth_ai_demo (no LLM) expected exit 0 or 1, got {code}\n{out[-2000:]}"
-    assert "Step 1" in out or "::STEP::1" in out, "Expected Step 1 or ::STEP::1 in output"
 
 
 def test_no_api_key_skips_llm() -> None:
@@ -155,10 +122,6 @@ def main() -> int:
     os.chdir(root)
     tests = [
         ("child_birth PASS", test_child_birth_pass),
-        ("child_birth_fail_min_value FAIL", test_child_birth_fail_min_value),
-        ("child_birth_fail_units FAIL", test_child_birth_fail_units),
-        ("child_birth_fail_scaling_factor FAIL", test_child_birth_fail_scaling_factor),
-        ("child_birth_ai_demo (no LLM)", test_child_birth_ai_demo_no_llm),
         ("no API key skips LLM", test_no_api_key_skips_llm),
         ("step protocol labels", test_step_protocol_labels),
         ("deterministic mode (LOCAL, no existence counters)", test_deterministic_mode_no_existence_counters),

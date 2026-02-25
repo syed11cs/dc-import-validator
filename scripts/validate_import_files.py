@@ -7,13 +7,15 @@ Validates:
 - Optional stat_vars.mcf / stat_vars_schema.mcf exist and have .mcf extension
 
 Exits 0 if all provided paths are valid, 1 otherwise (prints errors to stderr).
+Optional --output-errors PATH writes {"errors": ["...", ...]} as JSON when validation fails.
 
 Usage:
   python validate_import_files.py --tmcf path/to/file.tmcf --csv path/to/file.csv
-  python validate_import_files.py --tmcf file.tmcf --csv file.csv [--stat-vars-mcf x.mcf]
+  python validate_import_files.py --tmcf file.tmcf --csv file.csv [--stat-vars-mcf x.mcf] [--output-errors PATH]
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +28,11 @@ def main():
     parser.add_argument("--csv", required=True, help="Path to CSV file")
     parser.add_argument("--stat-vars-mcf", default="", help="Optional stat_vars.mcf path")
     parser.add_argument("--stat-vars-schema-mcf", default="", help="Optional stat_vars_schema.mcf path")
+    parser.add_argument(
+        "--output-errors",
+        default="",
+        help="When validation fails, write {\"errors\": [...]} to this JSON file.",
+    )
     args = parser.parse_args()
 
     errors = []
@@ -55,6 +62,14 @@ def main():
             errors.append(f"{label} must have .mcf extension: {path_arg}")
 
     if errors:
+        if (args.output_errors or "").strip():
+            out_path = Path(args.output_errors.strip())
+            try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump({"errors": errors}, f, indent=2)
+            except OSError:
+                pass
         for err in errors:
             print(err, file=sys.stderr)
         sys.exit(1)

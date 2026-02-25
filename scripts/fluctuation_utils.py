@@ -122,11 +122,18 @@ def _compute_technical_signals(
     curr_date = _parse_date(current_point.get("date") or "")
 
     # percent_change = ((current - previous) / abs(previous)) * 100
+    # When previous == 0: do not compute percentage; set zero_baseline, absolute_change, and message.
     percent_change = None
+    zero_baseline = False
+    absolute_change = None
+    change_message = None
     if prev_num is not None and curr_num is not None and abs(prev_num) >= 1e-9:
         percent_change = ((curr_num - prev_num) / abs(prev_num)) * 100.0
     elif prev_num is not None and curr_num is not None and abs(prev_num) < 1e-9:
-        percent_change = None  # previous is zero
+        # previous is zero: percentage undefined; do not show artificial values (e.g. 100.0M%)
+        zero_baseline = True
+        absolute_change = curr_num - prev_num
+        change_message = "Increase from zero baseline (percentage undefined)"
 
     previous_near_zero = prev_num is not None and abs(prev_num) < 1
     first_valid_after_placeholder = (
@@ -165,7 +172,7 @@ def _compute_technical_signals(
                 typical = max(1, int(sum(gaps) / len(gaps)))
                 missing_intermediate_periods = gap_days > typical
 
-    return {
+    out = {
         "previous_value": prev_num,
         "current_value": curr_num,
         "percent_change": percent_change,
@@ -175,6 +182,11 @@ def _compute_technical_signals(
         "scaling_changed": scaling_changed,
         "unit_changed": unit_changed,
     }
+    if zero_baseline:
+        out["zero_baseline"] = True
+        out["absolute_change"] = absolute_change
+        out["change_message"] = change_message
+    return out
 
 
 def extract_fluctuation_samples(report: dict) -> list[dict]:
@@ -241,7 +253,11 @@ def extract_fluctuation_samples(report: dict) -> list[dict]:
                 except (TypeError, ValueError):
                     pct = None
 
-            samples.append({
+            # Zero-baseline: do not show artificial percentage; use message instead
+            if technical_signals and technical_signals.get("zero_baseline"):
+                pct = None
+
+            sample_entry = {
                 "statVar": stat_var,
                 "location": place_dcid,
                 "observationPeriod": observation_period,
@@ -249,5 +265,10 @@ def extract_fluctuation_samples(report: dict) -> list[dict]:
                 "problemPoints": point_list,
                 "percentDifference": pct,
                 "technical_signals": technical_signals,
-            })
+            }
+            if technical_signals and technical_signals.get("zero_baseline"):
+                sample_entry["change_message"] = technical_signals.get(
+                    "change_message", "Increase from zero baseline (percentage undefined)"
+                )
+            samples.append(sample_entry)
     return samples

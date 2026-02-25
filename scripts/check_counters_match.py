@@ -2,6 +2,9 @@
 """Check that StatVars/NumObservations in summary match counters in report.json.
 
 Ensures sum(NumObservations) in stats == NumNodeSuccesses in report LEVEL_INFO.
+Both inputs must come from the same run (e.g. genmcf output): use report.json
+from the same directory as summary_report.csv. Do not mix with lint-phase report
+or resolution differences will cause false mismatches.
 """
 
 import argparse

@@ -19,7 +19,7 @@ dcid:country/USA,2024-05,302000,dcid:Count_BirthEvent_LiveBirth,P1M
 dcid:country/USA,2024-06,291000,dcid:Count_BirthEvent_LiveBirth,P1M
 dcid:country/USA,2023-01,289000,dcid:Count_Death,P1M
 dcid:country/USA,2023-02,249000,dcid:Count_Death,P1M
-dcid:country/USA,2023-03,252000,dcid:Count_Death,P1M
+dcid:country/USA,2023-03,269000,dcid:Count_Death,P1M
 dcid:country/USA,2023-04,252000,dcid:Count_Death,P1M
 dcid:country/USA,2023-05,253000,dcid:Count_Death,P1M
 dcid:country/USA,2023-06,241000,dcid:Count_Death,P1M
@@ -38,7 +38,7 @@ dcid:country/USA,2024-06,239000,dcid:Count_Death,P1M
 dcid:country/USA,2023-01,1700,dcid:Count_Death_Upto1Years,P1M
 dcid:country/USA,2023-02,1500,dcid:Count_Death_Upto1Years,P1M
 dcid:country/USA,2023-03,1800,dcid:Count_Death_Upto1Years,P1M
-dcid:country/USA,2023-04,1800,dcid:Count_Death_Upto1Years,P1M
+dcid:country/USA,2023-04,1700,dcid:Count_Death_Upto1Years,P1M
 dcid:country/USA,2023-05,1700,dcid:Count_Death_Upto1Years,P1M
 dcid:country/USA,2023-06,1700,dcid:Count_Death_Upto1Years,P1M
 dcid:country/USA,2023-07,1700,dcid:Count_Death_Upto1Years,P1M
@@ -98,12 +98,3 @@ dcid:country/USA,2023-06,20600,dcid:Count_Death_Upto1Years,P1Y
 dcid:country/USA,2023-07,20400,dcid:Count_Death_Upto1Years,P1Y
 dcid:country/USA,2023-08,20300,dcid:Count_Death_Upto1Years,P1Y
 dcid:country/USA,2023-09,20300,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2023-10,20300,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2023-11,20300,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2023-12,20300,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-01,20400,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-02,20500,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-03,20600,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-04,20600,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-05,20600,dcid:Count_Death_Upto1Years,P1Y
-dcid:country/USA,2024-06,20600,dcid:Count_Death_Upto1Years,P1Y

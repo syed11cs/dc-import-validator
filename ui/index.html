@@ -24,6 +24,7 @@
       --success-muted: #059669;
       --fail: #f43f5e;
       --warn: #f59e0b;
+      --advisory: #0ea5e9;
       --radius-sm: 6px;
       --radius: 10px;
       --radius-lg: 14px;
@@ -639,7 +640,7 @@
     }
     .report-group-heading--success { color: rgba(16, 185, 129, 0.95); }
     .report-group-heading--failure { color: rgba(244, 63, 94, 0.9); }
-    .report-group-heading--advisory { color: rgba(245, 158, 11, 0.95); }
+    .report-group-heading--advisory { color: var(--advisory); }
     .report-group-success { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
     .report-group-box {
       padding: 14px 18px;
@@ -650,7 +651,7 @@
       border-left-style: solid;
     }
     .report-group-box--success { border-left-color: rgba(16, 185, 129, 0.45); }
-    .report-group-box--advisory { border-left-color: rgba(245, 158, 11, 0.5); }
+    .report-group-box--advisory { border-left-color: rgba(14, 165, 233, 0.5); }
     .report-group-box--blocking { border-left-color: rgba(244, 63, 94, 0.5); }
     .report-group-box--muted { border-left-color: rgba(113, 113, 122, 0.45); }
     .report-group-box .report-group-inner-details {
@@ -811,10 +812,12 @@
     .summary-card-metrics .metric-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
     .summary-card-metrics .metric-chip--blocking { background: rgba(244,63,94,0.2); color: var(--fail); }
     .summary-card-metrics .metric-chip--warning { background: rgba(245,158,11,0.22); color: var(--warn); }
+    .summary-card-metrics .metric-chip--advisory { background: rgba(14,165,233,0.2); color: var(--advisory); }
     .summary-card-metrics .metric-chip--runtime { background: rgba(113,113,122,0.12); color: var(--text-muted); font-weight: 400; }
     .metric-chip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
     .metric-chip-dot--blocking { background: var(--fail); }
     .metric-chip-dot--warning { background: var(--warn); }
+    .metric-chip-dot--advisory { background: var(--advisory); }
     .summary-card-details { border-top: 1px solid rgba(0,0,0,0.08); padding-top: 16px; margin-top: 16px; }
     .summary-card-details-section { margin-top: 16px; }
     .summary-card-details-section:first-of-type { margin-top: 0; }
@@ -907,12 +910,24 @@
       font-weight: 500;
     }
     #llm-report-section { margin-top: 12px; margin-bottom: 16px; }
+    .llm-report-truncate-msg { margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }
     #llm-report-section h3 { font-size: 0.95rem; margin: 0 0 10px 0; color: var(--text); }
     .llm-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 8px; }
     .llm-report-table th, .llm-report-table td { padding: 8px 10px; text-align: left; border: 1px solid var(--border); }
     .llm-report-table th { background: var(--bg-elevated); font-weight: 600; color: var(--text-muted); }
     .llm-report-table .severity-blocker { color: var(--fail); font-weight: 500; }
     .llm-report-table .severity-warning { color: var(--warn); font-weight: 500; }
+    .llm-report-table .severity-advisory { color: var(--advisory); font-weight: 500; }
+    .llm-report-table .llm-group-row { background: rgba(14, 165, 233, 0.06); }
+    .llm-report-table .llm-group-row td { vertical-align: middle; }
+    .llm-group-count { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 500; color: var(--advisory); background: rgba(14, 165, 233, 0.15); }
+    .llm-group-toggle { cursor: pointer; padding: 2px 8px; font-size: 0.75rem; color: var(--advisory); background: none; border: 1px solid rgba(14, 165, 233, 0.4); border-radius: 4px; margin-left: 6px; }
+    .llm-group-toggle:hover { background: rgba(14, 165, 233, 0.12); }
+    .llm-group-toggle[aria-expanded="true"] { background: rgba(14, 165, 233, 0.15); }
+    .llm-group-detail { display: none; }
+    .llm-group-detail.llm-group-detail--open { display: table-row; }
+    .llm-group-examples { font-size: 0.75rem; color: var(--text-muted); }
+    .llm-report-table .llm-group-detail-cap td { border-top: none; background: rgba(14, 165, 233, 0.04); }
     .llm-report-passed { padding: 12px 16px; background: rgba(30,158,74,0.08); border: 1px solid rgba(30,158,74,0.22); border-radius: 8px; color: var(--text-muted); font-size: 0.875rem; }
     .llm-report-empty { color: var(--text-muted); font-size: 0.85rem; }
     .rules-summary-row {
@@ -1285,13 +1300,6 @@
             </optgroup>
           </select>
         </div>
-        <div id="llm-ai-advisory-row" style="display: none; margin-top: 10px; margin-left: 0;">
-          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text); cursor: pointer;">
-            <input type="checkbox" id="ai-advisory-checkbox" style="width: 16px; height: 16px; accent-color: var(--accent);" />
-            <span>Non-blocking Gemini Review</span>
-          </label>
-          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; margin-left: 24px;">Pipeline continues even when Gemini Review finds issues.</div>
-        </div>
         <div id="llm-api-key-warning" style="display: none; margin-top: 6px; margin-left: 0; padding: 8px 10px; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius); font-size: 0.75rem; color: var(--warn);">
           ⚠ GEMINI_API_KEY or GOOGLE_API_KEY not set. Gemini review will be skipped.
         </div>
@@ -1301,7 +1309,7 @@
       <div class="run-action" style="padding-top: 20px;">
         <button id="run-btn" class="btn" disabled>Run</button>
         <div class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px;">
-          <kbd>⌘</kbd>+<kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
+          <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
         </div>
       </div>
       <div class="form-group" style="margin-top: 14px;">
@@ -1400,7 +1408,7 @@
         <div id="report-panel" class="panel">
           <div class="review-insights">
             <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">Gemini Review</h4>
+              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory Findings (Non-Blocking)</h4>
               <div id="llm-report-container"></div>
             </div>
             <div class="report-group">
@@ -1767,7 +1775,6 @@
       GEMINI_BLOCKING: 'GEMINI_BLOCKING',
       DATA_PROCESSING_FAILED: 'DATA_PROCESSING_FAILED',
       LINT_FAILED: 'LINT_FAILED',
-      OBSERVATION_COUNT_MISMATCH: 'OBSERVATION_COUNT_MISMATCH',
     };
     const PIPELINE_FAILURE_CODES = new Set([
       FAILURE.ROW_COUNT_EXCEEDED,
@@ -1900,14 +1907,16 @@
 
       if (!pipelineFailedBeforeValidation && runCount > 0) {
         const blocking = opts.failCount ?? 0;
-        const warnings = opts.warnCount ?? 0;
+        const validationWarnings = opts.warnCount ?? 0;
+        const aiAdvisories = opts.aiAdvisoryCount ?? 0;
         const runTimeStr = opts.durationSec != null ? opts.durationSec.toFixed(1) + 's' : (opts.completedAt != null || lastRunCompletedAt ? formatRunTimestamp(opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt) : '—');
         const metricsRow = document.createElement('div');
         metricsRow.className = 'summary-card-metrics';
-        metricsRow.innerHTML =
-          '<span class="metric-chip metric-chip--blocking"><span class="metric-chip-dot metric-chip-dot--blocking"></span>' + blocking + ' Blocking</span>' +
-          '<span class="metric-chip metric-chip--warning"><span class="metric-chip-dot metric-chip-dot--warning"></span>' + warnings + ' Warning' + (warnings !== 1 ? 's' : '') + '</span>' +
-          '<span class="metric-chip metric-chip--runtime">' + escapeHtml(runTimeStr) + '</span>';
+        let chips = '<span class="metric-chip metric-chip--blocking"><span class="metric-chip-dot metric-chip-dot--blocking"></span>' + blocking + ' Blocking</span>';
+        if (validationWarnings > 0) chips += '<span class="metric-chip metric-chip--warning"><span class="metric-chip-dot metric-chip-dot--warning"></span>' + validationWarnings + ' Warning' + (validationWarnings !== 1 ? 's' : '') + '</span>';
+        if (aiAdvisories > 0) chips += '<span class="metric-chip metric-chip--advisory"><span class="metric-chip-dot metric-chip-dot--advisory"></span>' + aiAdvisories + ' AI Advisor' + (aiAdvisories !== 1 ? 'ies' : 'y') + '</span>';
+        chips += '<span class="metric-chip metric-chip--runtime">' + escapeHtml(runTimeStr) + '</span>';
+        metricsRow.innerHTML = chips;
         content.appendChild(metricsRow);
       } else if (opts.durationSec != null || (opts.completedAt != null || lastRunCompletedAt)) {
         const meta = document.createElement('div');
@@ -1958,6 +1967,9 @@
         const isPreImportBlocking = pipelineFailedBeforeValidation && (opts.failure_code === FAILURE.ROW_COUNT_EXCEEDED || opts.failure_code === FAILURE.CSV_QUALITY_FAILED || opts.failure_code === FAILURE.PREFLIGHT_FAILED);
         if (isPreImportBlocking && opts.failure_message) {
           blockingListItems.push('<li style="color:var(--fail);">' + escapeHtml(opts.failure_message) + '</li>');
+        }
+        if (isPreImportBlocking && opts.failure_details) {
+          blockingListItems.push(...buildPreImportFailureDetailItems(opts.failure_code, opts.failure_details));
         }
         blockingListItems.push(...failedRules.map(r => formatRuleItem(r, true)));
         const showBlockingSection = hasBlocking && (blockingListItems.length > 0 || pipelineFailedBeforeValidation);
@@ -2050,6 +2062,38 @@
       const div = document.createElement('div');
       div.textContent = s;
       return div.innerHTML;
+    }
+
+    /** Returns array of <li> HTML strings for Pre-Import details. Only non-empty sections. */
+    function buildPreImportFailureDetailItems(code, details) {
+      if (!details || typeof details !== 'object') return [];
+      const items = [];
+      if (code === FAILURE.CSV_QUALITY_FAILED) {
+        const empty = details.empty_columns;
+        if (Array.isArray(empty) && empty.length > 0) {
+          items.push('<li style="color:var(--text-muted);font-size:0.9em;">Empty columns: ' + escapeHtml(empty.join(', ')) + '</li>');
+        }
+        const dupCols = details.duplicate_columns;
+        if (Array.isArray(dupCols) && dupCols.length > 0) {
+          items.push('<li style="color:var(--text-muted);font-size:0.9em;">Duplicate columns: ' + escapeHtml(dupCols.join(', ')) + '</li>');
+        }
+        const dupRows = details.duplicate_rows;
+        if (Array.isArray(dupRows) && dupRows.length > 0) {
+          items.push('<li style="color:var(--text-muted);font-size:0.9em;">Duplicate row(s) at: ' + escapeHtml(dupRows.join(', ')) + '</li>');
+        }
+        const nonNum = details.non_numeric_rows;
+        if (Array.isArray(nonNum) && nonNum.length > 0) {
+          items.push('<li style="color:var(--text-muted);font-size:0.9em;">Non-numeric value(s) at row(s): ' + escapeHtml(nonNum.join(', ')) + '</li>');
+        }
+      } else if (code === FAILURE.PREFLIGHT_FAILED) {
+        const errs = details.errors;
+        if (Array.isArray(errs) && errs.length > 0) {
+          errs.forEach(function (e) {
+            items.push('<li style="color:var(--text-muted);font-size:0.9em;">' + escapeHtml(String(e)) + '</li>');
+          });
+        }
+      }
+      return items;
     }
 
     async function applyValidationResults(dataset, options = {}) {
@@ -2651,8 +2695,6 @@
       if (datasetDropdown) datasetDropdown.classList.remove('open');
       document.getElementById('llm-review-checkbox').disabled = true;
       document.getElementById('llm-model-select').disabled = true;
-      const aiAdvisoryCb = document.getElementById('ai-advisory-checkbox');
-      if (aiAdvisoryCb) aiAdvisoryCb.disabled = true;
       document.getElementById('tmcf-file').disabled = true;
       document.getElementById('csv-file').disabled = true;
       document.getElementById('stat-vars-mcf-file').disabled = true;
@@ -2728,7 +2770,6 @@
             formData.append('llm_review', '1');
             const llmModel = document.getElementById('llm-model-select').value;
             formData.append('llm_model', llmModel);
-            if (document.getElementById('ai-advisory-checkbox').checked) formData.append('ai_advisory', '1');
           }
           r = await fetch(API + '/api/run/custom/stream', {
             method: 'POST',
@@ -2742,7 +2783,6 @@
             url += '&llm_review=1';
             const llmModel = document.getElementById('llm-model-select').value;
             url += `&llm_model=${encodeURIComponent(llmModel)}`;
-            if (document.getElementById('ai-advisory-checkbox').checked) url += '&ai_advisory=1';
           }
           r = await fetch(url, { method: 'POST', signal: runAbortController.signal });
         }
@@ -2813,6 +2853,16 @@
           const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
           const output = data.output || '';
           const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
+          let aiAdvisoryCount = 0;
+          if (llmReview && runIdForResult && !pipelineFailedBeforeValidation) {
+            try {
+              const lr = await fetch(API + '/api/llm-report/' + runDataset + '?t=' + Date.now() + '&run_id=' + encodeURIComponent(runIdForResult));
+              if (lr.ok) {
+                const lrJson = await lr.json();
+                aiAdvisoryCount = lrJson.ai_advisory_count ?? 0;
+              }
+            } catch (_) {}
+          }
           const summaryPayload = {
             dataset: runDataset || null,
             run_id: data.run_id ?? null,
@@ -2822,9 +2872,11 @@
             failure_code: data.failure_code ?? null,
             failure_step: data.failure_step,
             failure_message: data.failure_message ?? null,
+            failure_details: data.failure_details || undefined,
             runCount: counts.runCount,
             failCount: counts.failCount,
             warnCount: counts.warnCount,
+            aiAdvisoryCount,
             failedRules: counts.failedRules || [],
             warningRules: counts.warningRules || [],
             durationSec: lastRunDurationSec,
@@ -2839,6 +2891,7 @@
             runCount: counts.runCount,
             failCount: counts.failCount,
             warnCount: counts.warnCount,
+            aiAdvisoryCount,
             failedRules: counts.failedRules || [],
             warningRules: counts.warningRules || [],
             durationSec: lastRunDurationSec,
@@ -2850,6 +2903,7 @@
             failure_step: data.failure_step,
             failure_message: data.failure_message || undefined,
             failure_limit: data.failure_limit,
+            failure_details: data.failure_details || undefined,
             run_id: data.run_id || undefined,
             aiReviewUsed: llmReview,
             geminiSkippedNoKey,
@@ -2927,8 +2981,6 @@
         if (datasetTrigger) datasetTrigger.disabled = false;
         document.getElementById('llm-review-checkbox').disabled = false;
         document.getElementById('llm-model-select').disabled = false;
-        const aiAdvisoryCb = document.getElementById('ai-advisory-checkbox');
-        if (aiAdvisoryCb) aiAdvisoryCb.disabled = false;
         document.getElementById('tmcf-file').disabled = false;
         document.getElementById('csv-file').disabled = false;
         document.getElementById('stat-vars-mcf-file').disabled = false;
@@ -2989,6 +3041,34 @@
       setHeadingState('report-heading-statistical', boxVariant('fluctuation-samples-container'));
     }
 
+    /**
+     * Group advisory issues by (file, type, message). Single O(n) pass.
+     * Returns array of { file, type, message, suggestion, examples, issues }.
+     * examples = first 5 line numbers (or empty if no line); suggestion from first issue.
+     */
+    function groupAdvisoryFindings(issues) {
+      var map = Object.create(null);
+      var list = [];
+      for (var idx = 0; idx < issues.length; idx++) {
+        var i = issues[idx];
+        var f = (i.file != null && i.file !== '') ? String(i.file) : '';
+        var t = (i.type != null && i.type !== '') ? String(i.type) : '';
+        var m = (i.message != null && i.message !== '') ? String(i.message) : '';
+        var key = f + '\x1e' + t + '\x1e' + m;
+        if (!map[key]) {
+          map[key] = { file: f || null, type: t || null, message: m || null, suggestion: (i.suggestion != null ? String(i.suggestion) : null), examples: [], issues: [] };
+          list.push(map[key]);
+        }
+        map[key].issues.push(i);
+        if (map[key].examples.length < 5 && i.line != null) {
+          var lineVal = i.line;
+          if (map[key].examples.indexOf(lineVal) === -1) map[key].examples.push(lineVal);
+        }
+      }
+      for (var k in map) { map[k].examples = map[k].examples.slice(0, 5); }
+      return list;
+    }
+
     function renderLLMReportSection(data) {
       const container = document.getElementById('llm-report-container');
       if (!container) return;
@@ -3022,26 +3102,59 @@
         updateReportHeadingStates();
         return;
       }
-      const isBlocker = (i) => i.severity === 'blocker';
-      const blockers = issues.filter(isBlocker);
-      const warnings = issues.filter(i => !isBlocker(i));
-      const total = blockers.length + warnings.length;
+      const total = issues.length;
+      const displayIssues = total > 100 ? issues.slice(0, 100) : issues;
       let html = '';
-      if (blockers.length > 0) {
-        html += '<table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
-        blockers.forEach(i => {
-          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-blocker">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
-        });
-        html += '</tbody></table>';
+      if (total > 100) {
+        html += '<p class="llm-report-truncate-msg">Showing first 100 of ' + total + ' advisory findings.</p>';
       }
-      if (warnings.length > 0) {
-        html += '<table class="llm-report-table" style="margin-top:12px;"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
-        warnings.forEach(i => {
-          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-warning">Warning</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
+      if (displayIssues.length > 0) {
+        var groups = groupAdvisoryFindings(displayIssues);
+        html += '<table class="llm-report-table" id="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
+        groups.forEach(function (grp, gidx) {
+          var fileStr = grp.file ? escapeHtml(grp.file) : '—';
+          var typeStr = escapeHtml(grp.type || '');
+          var msgStr = escapeHtml(grp.message || '');
+          var suggStr = grp.suggestion != null ? escapeHtml(grp.suggestion) : '—';
+          var examples = grp.examples;
+          var examplesStr = examples.length ? examples.slice(0, 5).join(', ') : '—';
+          var count = grp.issues.length;
+          var countLabel = count === 1 ? '1 occurrence' : count + ' occurrences';
+          html += '<tr class="llm-group-row" data-group-id="' + gidx + '"><td>' + fileStr + '</td><td><span class="llm-group-examples">' + escapeHtml(examplesStr) + '</span><span class="llm-group-count">' + countLabel + '</span><button type="button" class="llm-group-toggle" aria-expanded="false" aria-controls="llm-group-details-' + gidx + '" data-group-id="' + gidx + '">Expand</button></td><td class="severity-advisory">Advisory</td><td>' + typeStr + '</td><td>' + msgStr + '</td><td>' + suggStr + '</td></tr>';
+          var detailCap = 100;
+          var detailIssues = grp.issues.slice(0, detailCap);
+          var overCap = grp.issues.length > detailCap;
+          for (var d = 0; d < detailIssues.length; d++) {
+            var i = detailIssues[d];
+            var rowId = d === 0 ? ' id="llm-group-details-' + gidx + '"' : '';
+            html += '<tr' + rowId + ' class="llm-group-detail" data-group-id="' + gidx + '" role="row"><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-advisory">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
+          }
+          if (overCap) {
+            html += '<tr class="llm-group-detail llm-group-detail-cap" data-group-id="' + gidx + '"><td colspan="6" style="font-size:0.75rem;color:var(--text-muted);padding:6px 10px;">Showing first ' + detailCap + ' of ' + grp.issues.length + ' in this group.</td></tr>';
+          }
         });
         html += '</tbody></table>';
       }
       container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
+      var tbl = document.getElementById('llm-report-table');
+      if (tbl) {
+        tbl.addEventListener('click', function (e) {
+          var node = e.target;
+          var btn = null;
+          while (node && node !== tbl) {
+            if (node.classList && node.classList.contains('llm-group-toggle')) { btn = node; break; }
+            node = node.parentElement;
+          }
+          if (!btn) return;
+          var gid = btn.getAttribute('data-group-id');
+          if (gid == null) return;
+          var expanded = btn.getAttribute('aria-expanded') === 'true';
+          var rows = tbl.querySelectorAll('.llm-group-detail[data-group-id="' + gid + '"]');
+          for (var r = 0; r < rows.length; r++) { rows[r].classList.toggle('llm-group-detail--open', !expanded); }
+          btn.setAttribute('aria-expanded', !expanded);
+          btn.textContent = expanded ? 'Expand' : 'Collapse';
+        });
+      }
       updateReportHeadingStates();
       } catch (e) {
         console.error('Failed to render LLM report:', e);
@@ -3239,11 +3352,16 @@
       const points = sample.problemPoints || [];
       const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
       const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
-      const pctStr = sample.percentDifference != null && typeof sample.percentDifference === 'number'
-        ? formatChangePct(sample.percentDifference)
-        : (sample.percentDifference != null ? String(sample.percentDifference) : '—');
-      const thresholdLabel = sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (sample.percentDifference != null && typeof sample.percentDifference === 'number' && sample.percentDifference > 200 ? '200%' : '100%') : '');
-      const changeLine = thresholdLabel ? 'Change: ' + pctStr + ' (exceeds ' + thresholdLabel + ' threshold)' : 'Change: ' + pctStr;
+      const zeroBaseline = sample.technical_signals && sample.technical_signals.zero_baseline;
+      const changeLine = zeroBaseline
+        ? (sample.change_message || sample.technical_signals.change_message || 'Increase from zero baseline (percentage undefined)')
+        : (() => {
+            const pctStr = sample.percentDifference != null && typeof sample.percentDifference === 'number'
+              ? formatChangePct(sample.percentDifference)
+              : (sample.percentDifference != null ? String(sample.percentDifference) : '—');
+            const thresholdLabel = sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (sample.percentDifference != null && typeof sample.percentDifference === 'number' && sample.percentDifference > 200 ? '200%' : '100%') : '');
+            return thresholdLabel ? 'Change: ' + pctStr + ' (exceeds ' + thresholdLabel + ' threshold)' : 'Change: ' + pctStr;
+          })();
       const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
       let sourceRows = '';
       if (locs.length) {
@@ -3613,8 +3731,6 @@
       if (aiReviewSection) aiReviewSection.classList.toggle('is-active', llmCheckbox.checked);
       const row = document.getElementById('llm-model-row');
       if (row) row.style.display = llmCheckbox.checked ? 'block' : 'none';
-      const advisoryRow = document.getElementById('llm-ai-advisory-row');
-      if (advisoryRow) advisoryRow.style.display = llmCheckbox.checked ? 'block' : 'none';
     }
     async function updateAiReviewWarningVisibility() {
       const warning = document.getElementById('llm-api-key-warning');

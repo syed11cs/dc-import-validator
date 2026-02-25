@@ -43,12 +43,16 @@ def interpret_fluctuation(
     client = genai.Client(api_key=api_key)
     ts = json.dumps(technical_signals, indent=2) if technical_signals else "{}"
     pct = f"{percent_change:+.2f}%" if percent_change is not None else "N/A"
+    zero_baseline_note = ""
+    if technical_signals and technical_signals.get("zero_baseline"):
+        abs_ch = technical_signals.get("absolute_change")
+        zero_baseline_note = f"\nZero baseline: yes (percentage undefined). Absolute change: {abs_ch}" if abs_ch is not None else "\nZero baseline: yes (percentage undefined)."
     prompt = f"""You are interpreting technical signals for a data fluctuation anomaly. In 1–3 sentences, describe what the technical signals indicate (e.g. value change, previous near zero, scaling/unit change, missing periods, first valid after placeholder). Do NOT speculate about external causes, policy, or economics. Always give a short interpretation based on the numbers and flags below.
 
 StatVar: {stat_var}
 Location: {location}
 Period: {period}
-Percent change: {pct}
+Percent change: {pct}{zero_baseline_note}
 Technical signals:
 {ts}
 

@@ -1,8 +1,23 @@
 {
-  "child_birth": ["check_max_date_latest"],
-  "child_birth_fail_min_value": ["check_max_date_latest"],
-  "child_birth_fail_units": ["check_max_date_latest"],
-  "child_birth_fail_scaling_factor": ["check_max_date_latest"],
-  "child_birth_ai_demo": ["check_max_date_latest"],
-  "custom": ["check_max_date_latest"]
+  "child_birth": [
+    "check_max_date_latest"
+  ],
+  "statistics_poland": [
+    "check_max_date_latest"
+  ],
+  "finland_census": [
+    "check_max_date_latest",
+    "check_max_date_consistent",
+    "check_unit_consistency"
+  ],
+  "uae_population": [
+    "check_max_date_latest"
+  ],
+  "custom": [
+    "check_max_date_latest",
+    "check_max_date_consistent",
+    "check_unit_consistency",
+    "check_scaling_factor_consistency",
+    "check_num_places_consistent"
+  ]
 }

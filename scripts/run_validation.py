@@ -24,10 +24,10 @@ import tempfile
 from pathlib import Path
 
 # Custom validator names that we run in this repo (DC runner does not know them).
-CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT"})
+CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT", "MIN_VALUE_CHECK"})
 
 # Validators we do not pass to the DC runner (we replace or run them ourselves).
-DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT"})
+DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT", "MIN_VALUE_CHECK"})
 
 
 def _load_config(path: str) -> dict:
@@ -86,7 +86,10 @@ def _run_dc_runner(
         text=True,
     )
     if result.returncode != 0:
-        print(f"DC runner exited with code {result.returncode}", file=sys.stderr)
+        if result.returncode == 1:
+            print("Validation rules reported failures (exit code 1)", file=sys.stderr)
+        else:
+            print(f"DC runner exited with code {result.returncode}", file=sys.stderr)
         if result.stderr:
             print(result.stderr, file=sys.stderr)
 
@@ -106,9 +109,11 @@ def _run_dc_runner(
 def _run_custom_validators(
     custom_rules: list[dict],
     lint_report_path: str | None,
+    stats_summary_path: str | None,
 ) -> list[dict]:
     """Run custom validators and return result dicts (validation_output schema)."""
     from structural_lint_error_count import run as run_structural_lint  # noqa: I001
+    from min_value_check import run as run_min_value_check  # noqa: I001
 
     results = []
     report = None
@@ -123,6 +128,9 @@ def _run_custom_validators(
 
         if validator == "STRUCTURAL_LINT_ERROR_COUNT":
             result = run_structural_lint(report or {}, params, rule_id=rule_id)
+            results.append(result)
+        elif validator == "MIN_VALUE_CHECK":
+            result = run_min_value_check(stats_summary_path, params, rule_id=rule_id)
             results.append(result)
         else:
             # Unknown custom validator; skip or could add more here
@@ -198,7 +206,9 @@ def main() -> int:
             except OSError:
                 pass
 
-    custom_results = _run_custom_validators(custom_rules, args.lint_report)
+    custom_results = _run_custom_validators(
+        custom_rules, args.lint_report, args.stats_summary
+    )
     combined = dc_results + custom_results
 
     out_path = Path(output_path)

@@ -79,7 +79,7 @@ The web interface makes validation accessible to everyone:
 
 | Feature | Description |
 |---------|-------------|
-| Dataset Browser | Test with built-in datasets (child_birth, failure cases, AI demo) or upload your own |
+| Dataset Browser | Test with built-in dataset (child_birth) or upload your own |
 | Interactive Rules | Select which validation rules to run with checkbox interface |
 | Live Logs | Real-time terminal output with syntax highlighting and copy support |
 | Rich Reports | Combined view of blockers, warnings, StatVar summaries, and lint issues |
@@ -103,10 +103,8 @@ Perfect for automation, CI/CD, or power users:
 # Setup (one-time)
 ./setup.sh
 
-# Validate built-in datasets
-./run_e2e_test.sh child_birth                    # Clean dataset → PASS
-./run_e2e_test.sh child_birth_fail_min_value     # Intentional failure → FAIL
-./run_e2e_test.sh child_birth_ai_demo            # Schema issues → Gemini catches them
+# Validate built-in dataset
+./run_e2e_test.sh child_birth                    # Sample dataset → PASS
 
 # Validate your own data
 ./run_e2e_test.sh custom --tmcf=path/to/data.tmcf --csv=path/to/data.csv
@@ -260,19 +258,13 @@ Control which failures block the pipeline in `validation_configs/warn_only_rules
 
 Rules listed here become WARNINGS instead of ERRORS (non-blocking).
 
-### 🧪 Test Datasets
+### 🧪 Predefined Dataset
 
-Built-in datasets for testing and demos:
+| Dataset | Description | Expected Result |
+|---------|-------------|-----------------|
+| child_birth | Sample data from DC repo (sample_data/child_birth/: TMCF, CSV, stat_vars.mcf) | ✅ PASS |
 
-| Dataset | What It Tests | Expected Result |
-|---------|---------------|-----------------|
-| child_birth | Clean dataset | ✅ PASS |
-| child_birth_fail_min_value | Negative value + large fluctuations | ❌ FAIL (min_value) |
-| child_birth_fail_units | Mixed units (empty vs "Percent") | ❌ FAIL (unit consistency) |
-| child_birth_fail_scaling_factor | Inconsistent scaling (1 vs 100) | ❌ FAIL (scaling factor) |
-| child_birth_ai_demo | Schema typos, missing dcs: | 🤖 Gemini catches issues |
-
-Each failure dataset modifies ONE aspect of the clean child_birth data to trigger specific rules.
+Use **Custom** (upload your own TMCF + CSV) to test failure cases or other schemas.
 
 ### 🛠️ Development
 
