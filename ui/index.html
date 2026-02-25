@@ -918,16 +918,6 @@
     .llm-report-table .severity-blocker { color: var(--fail); font-weight: 500; }
     .llm-report-table .severity-warning { color: var(--warn); font-weight: 500; }
     .llm-report-table .severity-advisory { color: var(--advisory); font-weight: 500; }
-    .llm-report-table .llm-group-row { background: rgba(14, 165, 233, 0.06); }
-    .llm-report-table .llm-group-row td { vertical-align: middle; }
-    .llm-group-count { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 500; color: var(--advisory); background: rgba(14, 165, 233, 0.15); }
-    .llm-group-toggle { cursor: pointer; padding: 2px 8px; font-size: 0.75rem; color: var(--advisory); background: none; border: 1px solid rgba(14, 165, 233, 0.4); border-radius: 4px; margin-left: 6px; }
-    .llm-group-toggle:hover { background: rgba(14, 165, 233, 0.12); }
-    .llm-group-toggle[aria-expanded="true"] { background: rgba(14, 165, 233, 0.15); }
-    .llm-group-detail { display: none; }
-    .llm-group-detail.llm-group-detail--open { display: table-row; }
-    .llm-group-examples { font-size: 0.75rem; color: var(--text-muted); }
-    .llm-report-table .llm-group-detail-cap td { border-top: none; background: rgba(14, 165, 233, 0.04); }
     .llm-report-passed { padding: 12px 16px; background: rgba(30,158,74,0.08); border: 1px solid rgba(30,158,74,0.22); border-radius: 8px; color: var(--text-muted); font-size: 0.875rem; }
     .llm-report-empty { color: var(--text-muted); font-size: 0.85rem; }
     .rules-summary-row {
@@ -3041,34 +3031,6 @@
       setHeadingState('report-heading-statistical', boxVariant('fluctuation-samples-container'));
     }
 
-    /**
-     * Group advisory issues by (file, type, message). Single O(n) pass.
-     * Returns array of { file, type, message, suggestion, examples, issues }.
-     * examples = first 5 line numbers (or empty if no line); suggestion from first issue.
-     */
-    function groupAdvisoryFindings(issues) {
-      var map = Object.create(null);
-      var list = [];
-      for (var idx = 0; idx < issues.length; idx++) {
-        var i = issues[idx];
-        var f = (i.file != null && i.file !== '') ? String(i.file) : '';
-        var t = (i.type != null && i.type !== '') ? String(i.type) : '';
-        var m = (i.message != null && i.message !== '') ? String(i.message) : '';
-        var key = f + '\x1e' + t + '\x1e' + m;
-        if (!map[key]) {
-          map[key] = { file: f || null, type: t || null, message: m || null, suggestion: (i.suggestion != null ? String(i.suggestion) : null), examples: [], issues: [] };
-          list.push(map[key]);
-        }
-        map[key].issues.push(i);
-        if (map[key].examples.length < 5 && i.line != null) {
-          var lineVal = i.line;
-          if (map[key].examples.indexOf(lineVal) === -1) map[key].examples.push(lineVal);
-        }
-      }
-      for (var k in map) { map[k].examples = map[k].examples.slice(0, 5); }
-      return list;
-    }
-
     function renderLLMReportSection(data) {
       const container = document.getElementById('llm-report-container');
       if (!container) return;
@@ -3103,58 +3065,15 @@
         return;
       }
       const total = issues.length;
-      const displayIssues = total > 100 ? issues.slice(0, 100) : issues;
       let html = '';
-      if (total > 100) {
-        html += '<p class="llm-report-truncate-msg">Showing first 100 of ' + total + ' advisory findings.</p>';
-      }
-      if (displayIssues.length > 0) {
-        var groups = groupAdvisoryFindings(displayIssues);
-        html += '<table class="llm-report-table" id="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
-        groups.forEach(function (grp, gidx) {
-          var fileStr = grp.file ? escapeHtml(grp.file) : '—';
-          var typeStr = escapeHtml(grp.type || '');
-          var msgStr = escapeHtml(grp.message || '');
-          var suggStr = grp.suggestion != null ? escapeHtml(grp.suggestion) : '—';
-          var examples = grp.examples;
-          var examplesStr = examples.length ? examples.slice(0, 5).join(', ') : '—';
-          var count = grp.issues.length;
-          var countLabel = count === 1 ? '1 occurrence' : count + ' occurrences';
-          html += '<tr class="llm-group-row" data-group-id="' + gidx + '"><td>' + fileStr + '</td><td><span class="llm-group-examples">' + escapeHtml(examplesStr) + '</span><span class="llm-group-count">' + countLabel + '</span><button type="button" class="llm-group-toggle" aria-expanded="false" aria-controls="llm-group-details-' + gidx + '" data-group-id="' + gidx + '">Expand</button></td><td class="severity-advisory">Advisory</td><td>' + typeStr + '</td><td>' + msgStr + '</td><td>' + suggStr + '</td></tr>';
-          var detailCap = 100;
-          var detailIssues = grp.issues.slice(0, detailCap);
-          var overCap = grp.issues.length > detailCap;
-          for (var d = 0; d < detailIssues.length; d++) {
-            var i = detailIssues[d];
-            var rowId = d === 0 ? ' id="llm-group-details-' + gidx + '"' : '';
-            html += '<tr' + rowId + ' class="llm-group-detail" data-group-id="' + gidx + '" role="row"><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-advisory">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
-          }
-          if (overCap) {
-            html += '<tr class="llm-group-detail llm-group-detail-cap" data-group-id="' + gidx + '"><td colspan="6" style="font-size:0.75rem;color:var(--text-muted);padding:6px 10px;">Showing first ' + detailCap + ' of ' + grp.issues.length + ' in this group.</td></tr>';
-          }
+      if (issues.length > 0) {
+        html += '<table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
+        issues.forEach(function (i) {
+          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-advisory">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
         });
         html += '</tbody></table>';
       }
       container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
-      var tbl = document.getElementById('llm-report-table');
-      if (tbl) {
-        tbl.addEventListener('click', function (e) {
-          var node = e.target;
-          var btn = null;
-          while (node && node !== tbl) {
-            if (node.classList && node.classList.contains('llm-group-toggle')) { btn = node; break; }
-            node = node.parentElement;
-          }
-          if (!btn) return;
-          var gid = btn.getAttribute('data-group-id');
-          if (gid == null) return;
-          var expanded = btn.getAttribute('aria-expanded') === 'true';
-          var rows = tbl.querySelectorAll('.llm-group-detail[data-group-id="' + gid + '"]');
-          for (var r = 0; r < rows.length; r++) { rows[r].classList.toggle('llm-group-detail--open', !expanded); }
-          btn.setAttribute('aria-expanded', !expanded);
-          btn.textContent = expanded ? 'Expand' : 'Collapse';
-        });
-      }
       updateReportHeadingStates();
       } catch (e) {
         console.error('Failed to render LLM report:', e);
