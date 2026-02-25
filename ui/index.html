@@ -3271,16 +3271,11 @@
       const points = sample.problemPoints || [];
       const period = points.length >= 2 ? `${points[0].date} → ${points[1].date}` : points.map(p => p.date).join(', ') || '—';
       const values = points.length >= 2 ? `${points[0].value ?? '—'} → ${points[1].value ?? '—'}` : points.map(p => p.value ?? '—').join(', ') || '—';
-      const zeroBaseline = sample.technical_signals && sample.technical_signals.zero_baseline;
-      const changeLine = zeroBaseline
-        ? (sample.change_message || sample.technical_signals.change_message || 'Increase from zero baseline (percentage undefined)')
-        : (() => {
-            const pctStr = sample.percentDifference != null && typeof sample.percentDifference === 'number'
-              ? formatChangePct(sample.percentDifference)
-              : (sample.percentDifference != null ? String(sample.percentDifference) : '—');
-            const thresholdLabel = sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (sample.percentDifference != null && typeof sample.percentDifference === 'number' && sample.percentDifference > 200 ? '200%' : '100%') : '');
-            return thresholdLabel ? 'Change: ' + pctStr + ' (exceeds ' + thresholdLabel + ' threshold)' : 'Change: ' + pctStr;
-          })();
+      const pctStr = sample.percentDifference != null && typeof sample.percentDifference === 'number'
+        ? formatChangePct(sample.percentDifference)
+        : (sample.percentDifference != null ? String(sample.percentDifference) : '—');
+      const thresholdLabel = sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan500' ? '500%' : (sample.counterKey === 'StatsCheck_MaxPercentFluctuationGreaterThan100' ? (sample.percentDifference != null && typeof sample.percentDifference === 'number' && sample.percentDifference > 200 ? '200%' : '100%') : '');
+      const changeLine = thresholdLabel ? 'Change: ' + pctStr + ' (exceeds ' + thresholdLabel + ' threshold)' : 'Change: ' + pctStr;
       const locs = points.flatMap(p => (p.locations || []).map(l => l.file && l.lineNumber != null ? { file: l.file, line: parseInt(l.lineNumber, 10) } : null).filter(Boolean));
       let sourceRows = '';
       if (locs.length) {

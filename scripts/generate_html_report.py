@@ -340,16 +340,10 @@ def _format_technical_signals_row(ts: dict) -> str:
         if b is None:
             return "Unknown"
         return "Yes" if b else "No"
-    if ts.get("zero_baseline"):
-        change_str = _escape_html(ts.get("change_message") or "Increase from zero baseline (percentage undefined)")
-        if ts.get("absolute_change") is not None:
-            change_str += f" (absolute change: {_escape_html(fmt_num(ts.get('absolute_change')))})"
-    else:
-        change_str = _escape_html(fmt_pct(ts.get("percent_change")))
     lines = [
         f"<strong>Previous value:</strong> {_escape_html(fmt_num(ts.get('previous_value')))}",
         f"<strong>Current value:</strong> {_escape_html(fmt_num(ts.get('current_value')))}",
-        f"<strong>Change:</strong> {change_str}",
+        f"<strong>Change:</strong> {_escape_html(fmt_pct(ts.get('percent_change')))}",
         f"<strong>Previous near zero:</strong> {_escape_html(yes_no(ts.get('previous_near_zero')))}",
         f"<strong>Scaling factor changed:</strong> {_escape_html(yes_no(ts.get('scaling_changed')))}",
         f"<strong>Unit changed:</strong> {_escape_html(yes_no(ts.get('unit_changed')))}",
@@ -382,16 +376,12 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
         html += "      <table class='details lint-table'><thead><tr><th scope='col'>StatVar</th><th scope='col'>Location</th><th scope='col'>Change</th><th scope='col'>Period</th></tr></thead><tbody>\n"
         for idx, s in enumerate(samples):
             pct = s.get("percentDifference")
-            change_display = (
-                s.get("change_message")
-                if s.get("technical_signals", {}).get("zero_baseline")
-                else _format_change_pct(pct)
-            )
+            pct_str = _format_change_pct(pct)
             points = s.get("problemPoints") or []
             period = ""
             if len(points) >= 2:
                 period = f"{points[-2].get('date', '')} → {points[-1].get('date', '')}"
-            html += f"        <tr><td>{_escape_html(s.get('statVar') or '—')}</td><td>{_escape_html(s.get('location') or '—')}</td><td>{_escape_html(change_display)}</td><td>{_escape_html(period)}</td></tr>\n"
+            html += f"        <tr><td>{_escape_html(s.get('statVar') or '—')}</td><td>{_escape_html(s.get('location') or '—')}</td><td>{_escape_html(pct_str)}</td><td>{_escape_html(period)}</td></tr>\n"
             ts = s.get("technical_signals")
             if ts:
                 html += "        <tr><td colspan='4' class='technical-signals-cell'><div class='technical-signals-title'>Technical Signals</div><div class='technical-signals'>" + _format_technical_signals_row(ts) + "</div>"
@@ -401,7 +391,7 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
                         "statVar": s.get("statVar") or "",
                         "location": s.get("location") or "",
                         "period": period,
-                        "percent_change": pct if not (ts and ts.get("zero_baseline")) else None,
+                        "percent_change": pct,
                         "technical_signals": ts,
                     })
                 html += "</td></tr>\n"
