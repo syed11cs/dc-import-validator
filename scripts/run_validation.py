@@ -24,10 +24,10 @@ import tempfile
 from pathlib import Path
 
 # Custom validator names that we run in this repo (DC runner does not know them).
-CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT", "MIN_VALUE_CHECK"})
+CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT"})
 
 # Validators we do not pass to the DC runner (we replace or run them ourselves).
-DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT", "MIN_VALUE_CHECK"})
+DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT"})
 
 
 def _load_config(path: str) -> dict:
@@ -113,7 +113,6 @@ def _run_custom_validators(
 ) -> list[dict]:
     """Run custom validators and return result dicts (validation_output schema)."""
     from structural_lint_error_count import run as run_structural_lint  # noqa: I001
-    from min_value_check import run as run_min_value_check  # noqa: I001
 
     results = []
     report = None
@@ -128,9 +127,6 @@ def _run_custom_validators(
 
         if validator == "STRUCTURAL_LINT_ERROR_COUNT":
             result = run_structural_lint(report or {}, params, rule_id=rule_id)
-            results.append(result)
-        elif validator == "MIN_VALUE_CHECK":
-            result = run_min_value_check(stats_summary_path, params, rule_id=rule_id)
             results.append(result)
         else:
             # Unknown custom validator; skip or could add more here

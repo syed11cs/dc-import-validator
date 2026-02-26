@@ -233,7 +233,7 @@ def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) ->
     if not gemini_review_enabled:
         return """
     <section class="report-section" id="ai-review">
-      <h2>AI Advisory Findings (Non-Blocking)</h2>
+      <h2>AI Advisory</h2>
       <p class="empty">Not enabled for this run.</p>
     </section>
 """
@@ -241,7 +241,7 @@ def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) ->
     if issues is None:
         return """
     <section class="report-section" id="ai-review">
-      <h2>AI Advisory Findings (Non-Blocking)</h2>
+      <h2>AI Advisory</h2>
       <p class="empty">No review data.</p>
     </section>
 """
@@ -250,13 +250,13 @@ def _render_llm_section(output_dir: str, gemini_review_enabled: bool = False) ->
     if not blockers and not advisories:
         return """
     <section class="report-section" id="ai-review">
-      <h2>AI Advisory Findings (Non-Blocking)</h2>
+      <h2>AI Advisory</h2>
       <p class="empty">Passed — no issues found.</p>
     </section>
 """
     html = """
     <section class="report-section" id="ai-review">
-      <h2>AI Advisory Findings (Non-Blocking)</h2>
+      <h2>AI Advisory</h2>
 """
     if blockers:
         html += "      <p class='advisory-note'>Advisory: these issues do not affect Overall pass/fail; that is based on validation rules only.</p>\n"
@@ -1249,7 +1249,7 @@ def generate_html(
         <a href="#warnings">Warnings</a>
         <a href="#passed">Passed</a>
         <a href="#system-checks">System Checks</a>
-        <a href="#ai-review">AI Advisory Findings</a>
+        <a href="#ai-review">AI Advisory</a>
         <a href="#fluctuation">Fluctuation</a>
         <a href="#rule-failures">Rule failures</a>
         <a href="#import-run">Import run</a>

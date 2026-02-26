@@ -18,6 +18,7 @@
     "check_max_date_consistent",
     "check_unit_consistency",
     "check_scaling_factor_consistency",
-    "check_num_places_consistent"
+    "check_num_places_consistent",
+    "check_min_value"
   ]
 }

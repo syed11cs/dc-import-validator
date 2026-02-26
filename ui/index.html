@@ -703,6 +703,34 @@
       font-size: 0.8rem;
       color: var(--text-muted);
     }
+    .report-preparing-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      color: var(--text-muted);
+    }
+    .report-preparing-state .report-running-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: report-running-spin 0.75s linear infinite;
+      margin-bottom: 12px;
+    }
+    .report-preparing-text {
+      margin-top: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--text);
+    }
+    .report-preparing-subtext {
+      margin-top: 4px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
     @keyframes report-running-spin {
       to { transform: rotate(360deg); }
     }
@@ -910,14 +938,29 @@
       font-weight: 500;
     }
     #llm-report-section { margin-top: 12px; margin-bottom: 16px; }
+    .llm-report-table-wrap { overflow-x: auto; }
     .llm-report-truncate-msg { margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }
     #llm-report-section h3 { font-size: 0.95rem; margin: 0 0 10px 0; color: var(--text); }
-    .llm-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 8px; }
-    .llm-report-table th, .llm-report-table td { padding: 8px 10px; text-align: left; border: 1px solid var(--border); }
+    .llm-report-table { table-layout: fixed; width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 8px; }
+    .llm-report-table th, .llm-report-table td {
+      padding: 8px 10px; text-align: left; border: 1px solid var(--border);
+      word-break: break-word; overflow-wrap: anywhere; white-space: normal; vertical-align: top;
+    }
     .llm-report-table th { background: var(--bg-elevated); font-weight: 600; color: var(--text-muted); }
-    .llm-report-table .severity-blocker { color: var(--fail); font-weight: 500; }
-    .llm-report-table .severity-warning { color: var(--warn); font-weight: 500; }
-    .llm-report-table .severity-advisory { color: var(--advisory); font-weight: 500; }
+    .llm-report-table th:nth-child(1), .llm-report-table td:nth-child(1) { width: 22%; }
+    .llm-report-table th:nth-child(2), .llm-report-table td:nth-child(2) { width: 8%; }
+    .llm-report-table th:nth-child(3), .llm-report-table td:nth-child(3) { width: 10%; }
+    .llm-report-table th:nth-child(4), .llm-report-table td:nth-child(4) { width: 15%; }
+    .severity-chip {
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      display: inline-block;
+    }
+    .severity-chip--advisory { background: rgba(14,165,233,0.15); color: var(--advisory); }
+    .severity-chip--warning { background: rgba(245,158,11,0.15); color: var(--warn); }
+    .severity-chip--blocker { background: rgba(244,63,94,0.15); color: var(--fail); }
     .llm-report-passed { padding: 12px 16px; background: rgba(30,158,74,0.08); border: 1px solid rgba(30,158,74,0.22); border-radius: 8px; color: var(--text-muted); font-size: 0.875rem; }
     .llm-report-empty { color: var(--text-muted); font-size: 0.85rem; }
     .rules-summary-row {
@@ -939,6 +982,7 @@
     .rules-expand-collapse { font-size: 0.75rem; }
     .rules-expand-collapse .btn-link { padding: 2px 4px; }
     .rules-expand-collapse-sep { color: var(--text-muted); margin: 0 4px; user-select: none; }
+    .fluctuation-section-note { font-size: 0.8rem; color: var(--text-muted); font-style: italic; margin: 0 0 10px 0; }
     .fluctuation-samples-details {
       margin-bottom: 12px;
       padding: 14px 16px;
@@ -1398,15 +1442,16 @@
         <div id="report-panel" class="panel">
           <div class="review-insights">
             <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory Findings (Non-Blocking)</h4>
+              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory</h4>
               <div id="llm-report-container"></div>
             </div>
             <div class="report-group">
-              <h4 id="report-heading-validation" class="report-group-heading">Blocking Validation Rules</h4>
+              <h4 id="report-heading-validation" class="report-group-heading">Blocking Issues</h4>
               <div id="rule-failure-container"></div>
             </div>
             <div class="report-group">
               <h4 id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</h4>
+              <p class="fluctuation-section-note">Fluctuations are computed between consecutive available data points. Period length may vary.</p>
               <div id="fluctuation-samples-container"></div>
             </div>
           </div>
@@ -2908,7 +2953,15 @@
           lastRunReportId = data.run_id || null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
-          loadReport();
+          showPreparingReportState();
+          const preparingStart = Date.now();
+          await waitForReportReady(runDataset, data.run_id || null);
+          const elapsed = Date.now() - preparingStart;
+          const minimumDisplayMs = 300;
+          if (elapsed < minimumDisplayMs) {
+            await sleep(minimumDisplayMs - elapsed);
+          }
+          await loadReport();
           applyValidationResults(runDataset, { runId: lastRunReportId });
           switchToReportTab({ scrollIntoView: true });
         } else if (data.cancelled) {
@@ -2929,7 +2982,15 @@
           if (pipelineFailed) {
             setReportInsightsPlaceholder('Validation was not executed for this run.');
           }
-          loadReport();
+          showPreparingReportState();
+          const preparingStart = Date.now();
+          await waitForReportReady(runDataset, data.run_id || null);
+          const elapsed = Date.now() - preparingStart;
+          const minimumDisplayMs = 300;
+          if (elapsed < minimumDisplayMs) {
+            await sleep(minimumDisplayMs - elapsed);
+          }
+          await loadReport();
           switchToReportTab({ scrollIntoView: true });
         }
       } catch (e) {
@@ -2948,7 +3009,15 @@
             hideProgressAfterCancel();
             cancelFeedbackTimerId = null;
           }, 1500);
-          loadReport();
+          showPreparingReportState();
+          const preparingStart = Date.now();
+          await waitForReportReady(runDataset, null);
+          const elapsed = Date.now() - preparingStart;
+          const minimumDisplayMs = 300;
+          if (elapsed < minimumDisplayMs) {
+            await sleep(minimumDisplayMs - elapsed);
+          }
+          await loadReport();
           switchToReportTab({ scrollIntoView: true });
         } else {
           const prev = output.classList.contains('empty') ? '' : output.innerText;
@@ -3067,11 +3136,11 @@
       const total = issues.length;
       let html = '';
       if (issues.length > 0) {
-        html += '<table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
+        html += '<div class="llm-report-table-wrap"><table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
         issues.forEach(function (i) {
-          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td class="severity-advisory">Advisory</td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
+          html += '<tr><td>' + (i.file ? escapeHtml(i.file) : '—') + '</td><td>' + (i.line != null ? escapeHtml(String(i.line)) : '—') + '</td><td><span class="severity-chip severity-chip--advisory">Advisory</span></td><td>' + escapeHtml(i.type || '') + '</td><td>' + escapeHtml(i.message || '') + '</td><td>' + (i.suggestion ? escapeHtml(i.suggestion) : '—') + '</td></tr>';
         });
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
       }
       container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
       updateReportHeadingStates();
@@ -3121,6 +3190,28 @@
         const reportTimestamp = document.getElementById('report-timestamp');
         if (reportTimestamp) reportTimestamp.textContent = '';
       }
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function waitForReportReady(dataset, runId, maxAttempts = 20, intervalMs = 600) {
+      const encodedDataset = encodeURIComponent(dataset);
+      const baseUrl = API + '/api/report-info/' + encodedDataset + (runId ? '?run_id=' + encodeURIComponent(runId) : '');
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await fetch(baseUrl + (baseUrl.includes('?') ? '&' : '?') + 't=' + Date.now());
+          if (res.ok) {
+            const info = await res.json();
+            if (info && info.exists) return true;
+          }
+        } catch (e) {
+          // Ignore transient errors
+        }
+        await new Promise(function (resolve) { setTimeout(resolve, intervalMs); });
+      }
+      return false;
     }
 
     async function loadReport() {
@@ -3230,6 +3321,22 @@
       '<p class="report-running-title">Running validation…</p>' +
       '<p class="report-running-sub">New report will appear when complete.</p>' +
       '</div>';
+
+    var REPORT_PREPARING_PLACEHOLDER_HTML = '<div class="report-preparing-state">' +
+      '<div class="report-running-spinner"></div>' +
+      '<div class="report-preparing-text">Preparing report…</div>' +
+      '<div class="report-preparing-subtext">This usually takes less than a second.</div>' +
+      '</div>';
+
+    function showPreparingReportState() {
+      setReportActionsVisible(false, false);
+      const fluctuationContainer = document.getElementById('fluctuation-samples-container');
+      if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', REPORT_PREPARING_PLACEHOLDER_HTML);
+      const ruleFailureContainer = document.getElementById('rule-failure-container');
+      if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', REPORT_PREPARING_PLACEHOLDER_HTML);
+      renderLLMReportSection({ exists: false });
+      updateReportHeadingStates();
+    }
 
     function setReportRunningState() {
       setReportActionsVisible(false, false);
