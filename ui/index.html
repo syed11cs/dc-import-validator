@@ -3310,8 +3310,10 @@
             renderLLMReportSection({ pipelineFailed: true });
           }
         } else {
-          loadFluctuationSamples(reportDataset, reportRunId);
-          loadRuleFailureSamples(reportDataset, reportRunId);
+          await Promise.all([
+            loadFluctuationSamples(reportDataset, reportRunId),
+            loadRuleFailureSamples(reportDataset, reportRunId),
+          ]);
         }
       }
     }
@@ -3325,7 +3327,7 @@
     var REPORT_PREPARING_PLACEHOLDER_HTML = '<div class="report-preparing-state">' +
       '<div class="report-running-spinner"></div>' +
       '<div class="report-preparing-text">Preparing report…</div>' +
-      '<div class="report-preparing-subtext">This usually takes less than a second.</div>' +
+      '<div class="report-preparing-subtext">Report will load when ready.</div>' +
       '</div>';
 
     function showPreparingReportState() {

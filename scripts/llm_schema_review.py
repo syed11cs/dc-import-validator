@@ -241,8 +241,8 @@ def _find_unused_csv_columns(
 
 def _check_statvar_observation_required_props(tmcf_content: str, path: str) -> list[dict]:
     """
-    Deterministic check: StatVarObservation nodes should have variableMeasured, observationAbout,
-    and observationDate. Missing any emits a warning (schema). Aligned with DC repo practice (~99.8%+).
+    Deterministic check: StatVarObservation nodes must have variableMeasured, observationAbout,
+    and observationDate. Missing any emits a warning (schema).
     """
     issues: list[dict] = []
     file_name = Path(path).name
@@ -611,7 +611,7 @@ Required validation checks (apply in order; flag each violation). Use the "type"
 Flag missing dcs: only when clearly required for schema types in TMCF (type: namespace).
 8. If StatVar/schema reference is provided below: flag StatVar DCIDs or types that do not appear in the reference (type: unknown_statvar).
 10. Unexpected properties: for nodes with typeOf: dcs:StatVarObservation, standard properties include typeOf, variableMeasured, observationAbout, observationDate, value, unit, measurementMethod, observationPeriod, scalingFactor. Flag any other property names that look non-standard or like typos (type: naming). Do not flag the standard ones.
-11. Suspicious combinations: flag as warning if StatVarObservation has unit or scalingFactor but no measurementMethod when it would typically be expected (e.g. when unit is present and non-empty), or other clearly inconsistent combinations. Do not guess; only flag when clearly wrong.{header_section}
+11. Suspicious combinations: flag as warning if StatVarObservation has unit or scalingFactor but no measurementMethod (e.g. when unit is present and non-empty), or other clearly inconsistent combinations. Do not guess; only flag when clearly wrong.{header_section}
 {extra}
 
 Examples — correct:
