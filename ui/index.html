@@ -2885,9 +2885,111 @@
           lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
           lastRunHadAiReview = llmReview;
           const runIdForResult = data.run_id || null;
-          const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
           const output = data.output || '';
           const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
+          if (data.success) {
+            lastRunSummary = {
+              dataset: runDataset || null,
+              run_id: data.run_id ?? null,
+              success: true,
+              cancelled: false,
+              pipelineFailedBeforeValidation: false,
+              failure_code: data.failure_code ?? null,
+              failure_step: data.failure_step,
+              failure_message: data.failure_message ?? null,
+              failure_details: data.failure_details || undefined,
+              runCount: 0,
+              failCount: 0,
+              warnCount: 0,
+              aiAdvisoryCount: 0,
+              failedRules: [],
+              warningRules: [],
+              durationSec: lastRunDurationSec,
+              hasWarnings: hasWarnings || false,
+            };
+            setReportActionsVisible(true, false);
+          } else {
+            const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
+            let aiAdvisoryCount = 0;
+            if (llmReview && runIdForResult && !pipelineFailedBeforeValidation) {
+              try {
+                const lr = await fetch(API + '/api/llm-report/' + runDataset + '?t=' + Date.now() + '&run_id=' + encodeURIComponent(runIdForResult));
+                if (lr.ok) {
+                  const lrJson = await lr.json();
+                  aiAdvisoryCount = lrJson.ai_advisory_count ?? 0;
+                }
+              } catch (_) {}
+            }
+            const summaryPayload = {
+              dataset: runDataset || null,
+              run_id: data.run_id ?? null,
+              success: data.success,
+              cancelled: false,
+              pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || false,
+              failure_code: data.failure_code ?? null,
+              failure_step: data.failure_step,
+              failure_message: data.failure_message ?? null,
+              failure_details: data.failure_details || undefined,
+              runCount: counts.runCount,
+              failCount: counts.failCount,
+              warnCount: counts.warnCount,
+              aiAdvisoryCount,
+              failedRules: counts.failedRules || [],
+              warningRules: counts.warningRules || [],
+              durationSec: lastRunDurationSec,
+              hasWarnings: hasWarnings || false,
+            };
+            lastRunSummary = summaryPayload;
+            setReportActionsVisible(true, false);
+            var summaryDataToShow = {
+              cancelled: false,
+              success: data.success,
+              hasWarnings,
+              runCount: counts.runCount,
+              failCount: counts.failCount,
+              warnCount: counts.warnCount,
+              aiAdvisoryCount,
+              failedRules: counts.failedRules || [],
+              warningRules: counts.warningRules || [],
+              durationSec: lastRunDurationSec,
+              reportGenerated: lastRunReportGenerated,
+              pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || undefined,
+              pipeline_failure_reason: (failureInfo && failureInfo.message) || data.failure_message || undefined,
+              run_failure_reason: !data.success && !pipelineFailedBeforeValidation && (failureInfo && failureInfo.message) ? failureInfo.message : undefined,
+              failure_code: data.failure_code || undefined,
+              failure_step: data.failure_step,
+              failure_message: data.failure_message || undefined,
+              failure_limit: data.failure_limit,
+              failure_details: data.failure_details || undefined,
+              run_id: data.run_id || undefined,
+              aiReviewUsed: llmReview,
+              geminiSkippedNoKey,
+              completedAt: lastRunCompletedAt,
+            };
+          }
+        } else if (data.cancelled) {
+          if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
+          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
+        }
+        if (!data.cancelled && data.success) {
+          status.textContent = '—';
+          status.className = 'status-badge';
+          lastRunDataset = runDataset;
+          lastRunReportId = data.run_id || null;
+          const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
+          showPreparingReportState();
+          const preparingStart = Date.now();
+          await waitForReportReady(runDataset, data.run_id || null);
+          const elapsed = Date.now() - preparingStart;
+          const minimumDisplayMs = 300;
+          if (elapsed < minimumDisplayMs) {
+            await sleep(minimumDisplayMs - elapsed);
+          }
+          switchToReportTab({ scrollIntoView: true });
+          const reportPromise = loadReport();
+          const validationPromise = applyValidationResults(runDataset, { runId: lastRunReportId });
+          const counts = await fetchValidationCounts(runDataset, runIdForResult);
           let aiAdvisoryCount = 0;
           if (llmReview && runIdForResult && !pipelineFailedBeforeValidation) {
             try {
@@ -2898,7 +3000,7 @@
               }
             } catch (_) {}
           }
-          const summaryPayload = {
+          lastRunSummary = {
             dataset: runDataset || null,
             run_id: data.run_id ?? null,
             success: data.success,
@@ -2917,9 +3019,7 @@
             durationSec: lastRunDurationSec,
             hasWarnings: hasWarnings || false,
           };
-          lastRunSummary = summaryPayload;
-          setReportActionsVisible(true, false);
-          var summaryDataToShow = {
+          const summaryDataToShow = {
             cancelled: false,
             success: data.success,
             hasWarnings,
@@ -2944,29 +3044,8 @@
             geminiSkippedNoKey,
             completedAt: lastRunCompletedAt,
           };
-        } else if (data.cancelled) {
-          if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
-          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
-        }
-        if (!data.cancelled && data.success) {
-          lastRunDataset = runDataset;
-          lastRunReportId = data.run_id || null;
-          const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
-          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
-          showPreparingReportState();
-          const preparingStart = Date.now();
-          await waitForReportReady(runDataset, data.run_id || null);
-          const elapsed = Date.now() - preparingStart;
-          const minimumDisplayMs = 300;
-          if (elapsed < minimumDisplayMs) {
-            await sleep(minimumDisplayMs - elapsed);
-          }
           setSummaryCard(summaryDataToShow);
-          switchToReportTab({ scrollIntoView: true });
-          await Promise.all([
-            loadReport(),
-            applyValidationResults(runDataset, { runId: lastRunReportId }),
-          ]);
+          await Promise.all([reportPromise, validationPromise]);
         } else if (data.cancelled) {
           lastRunReportId = null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
@@ -3027,8 +3106,12 @@
         } else {
           const prev = output.classList.contains('empty') ? '' : output.innerText;
           setOutputContent(prev + '\nError: ' + e.message, false, true);
-          status.textContent = 'Error';
-          status.className = 'status-badge fail';
+          if (!data || !data.success) {
+            status.textContent = 'Error';
+            status.className = 'status-badge fail';
+          } else {
+            console.error('Post-success async error:', e);
+          }
           showStatusBanner({ success: false, cancelled: false });
         }
         lastRunCompletedAt = new Date();
