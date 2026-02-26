@@ -2919,7 +2919,7 @@
           };
           lastRunSummary = summaryPayload;
           setReportActionsVisible(true, false);
-          setSummaryCard({
+          var summaryDataToShow = {
             cancelled: false,
             success: data.success,
             hasWarnings,
@@ -2943,7 +2943,7 @@
             aiReviewUsed: llmReview,
             geminiSkippedNoKey,
             completedAt: lastRunCompletedAt,
-          });
+          };
         } else if (data.cancelled) {
           if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
           setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
@@ -2963,6 +2963,7 @@
           }
           await loadReport();
           applyValidationResults(runDataset, { runId: lastRunReportId });
+          setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
         } else if (data.cancelled) {
           lastRunReportId = null;
@@ -2991,6 +2992,7 @@
             await sleep(minimumDisplayMs - elapsed);
           }
           await loadReport();
+          setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
         }
       } catch (e) {
@@ -3001,7 +3003,7 @@
           status.textContent = 'Cancelled';
           status.className = 'status-badge';
           showStatusBanner({ cancelled: true });
-          setSummaryCard({ cancelled: true, dataset: runDataset });
+          var cancelSummaryData = { cancelled: true, dataset: runDataset, completedAt: lastRunCompletedAt || new Date() };
           const cancelMsg = document.getElementById('progress-cancel-msg');
           if (cancelMsg) cancelMsg.textContent = 'Cancelled';
           progressHideDeferred = true;
@@ -3018,6 +3020,7 @@
             await sleep(minimumDisplayMs - elapsed);
           }
           await loadReport();
+          setSummaryCard(cancelSummaryData);
           switchToReportTab({ scrollIntoView: true });
         } else {
           const prev = output.classList.contains('empty') ? '' : output.innerText;
