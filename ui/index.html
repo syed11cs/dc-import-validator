@@ -2961,10 +2961,12 @@
           if (elapsed < minimumDisplayMs) {
             await sleep(minimumDisplayMs - elapsed);
           }
-          await loadReport();
-          applyValidationResults(runDataset, { runId: lastRunReportId });
           setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
+          await Promise.all([
+            loadReport(),
+            applyValidationResults(runDataset, { runId: lastRunReportId }),
+          ]);
         } else if (data.cancelled) {
           lastRunReportId = null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
@@ -2991,9 +2993,9 @@
           if (elapsed < minimumDisplayMs) {
             await sleep(minimumDisplayMs - elapsed);
           }
-          await loadReport();
           setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
+          await loadReport();
         }
       } catch (e) {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
@@ -3019,9 +3021,9 @@
           if (elapsed < minimumDisplayMs) {
             await sleep(minimumDisplayMs - elapsed);
           }
-          await loadReport();
           setSummaryCard(cancelSummaryData);
           switchToReportTab({ scrollIntoView: true });
+          await loadReport();
         } else {
           const prev = output.classList.contains('empty') ? '' : output.innerText;
           setOutputContent(prev + '\nError: ' + e.message, false, true);
