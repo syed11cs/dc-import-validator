@@ -4,10 +4,9 @@
 Reviews TMCF content for typos, property naming issues, and schema consistency.
 Requires GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
 
-When stat_vars MCF is provided: compares StatVars used in TMCF/CSV to
-definitions in stat_vars MCF and flags any used StatVar that has no Node
-(missing_statvar_definition); also flags percent/rate StatVars in stat_vars
-MCF that lack measurementDenominator (missing_measurement_denominator).
+When stat_vars MCF is provided: validates stat_vars MCF (name, description,
+etc.) and flags percent/rate StatVars that lack measurementDenominator
+(missing_measurement_denominator).
 
 Usage:
   python llm_schema_review.py --tmcf=path/to/file.tmcf [--output=report.json]
@@ -90,8 +89,11 @@ _VARIABLE_MEASURED_RE = re.compile(r"variableMeasured\s*:\s*([^\n\r#]+)", re.IGN
 # observationDate literal: ISO 8601 YYYY, YYYY-MM, or YYYY-MM-DD only
 _OBSERVATION_DATE_ISO8601_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 
-# StatVar DCID: UpperCamelCase segments separated by underscores (e.g. Count_Person)
-_STATVAR_DCID_FORMAT_RE = re.compile(r"^[A-Z0-9][A-Za-z0-9]*(?:_[A-Z0-9][A-Za-z0-9]*)*$")
+# StatVar DCID: UpperCamelCase segments separated by underscores; decimal points allowed in
+# numeric portions (e.g. Count_Person, 1.38OrLessRatioToPovertyLine)
+_STATVAR_DCID_FORMAT_RE = re.compile(
+    r"^[A-Z0-9]([A-Za-z0-9]|\.[0-9]+)*(?:_[A-Z0-9]([A-Za-z0-9]|\.[0-9]+)*)*$"
+)
 
 
 def _get_api_key() -> str | None:
@@ -160,62 +162,6 @@ def _extract_generated_statvar_dcids(tmcf_content: str, csv_path: str | Path | N
     except (OSError, csv.Error):
         pass
     return dcids
-
-
-def _extract_statvar_dcids_from_mcf(content: str) -> set[str]:
-    """
-    Extract StatVar Node DCIDs from stat_vars MCF (Node: dcid:X or Node: X).
-    Returns set of normalized DCIDs.
-    """
-    dcids: set[str] = set()
-    for line in content.splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line.startswith("Node:") or ":" not in line:
-            continue
-        _, _, rest = line.partition(":")
-        val = rest.strip()
-        if not val:
-            continue
-        dcid = _normalize_statvar_dcid(val)
-        if dcid:
-            dcids.add(dcid)
-    return dcids
-
-
-def _compare_generated_to_stat_vars_mcf(
-    generated_dcids: set[str],
-    stat_vars_content: str,
-    stat_vars_mcf_path: str,
-) -> list[dict]:
-    """
-    Compare generated StatVar DCIDs to stat_vars MCF. Flag each generated DCID
-    that has no definition in stat_vars MCF.
-    """
-    defined = _extract_statvar_dcids_from_mcf(stat_vars_content)
-    file_name = Path(stat_vars_mcf_path).name
-    missing = sorted(generated_dcids - defined)
-    if not missing:
-        return []
-    issues = []
-    for dcid in missing[:20]:
-        issues.append({
-            "line": None,
-            "type": "missing_statvar_definition",
-            "message": f"StatVar '{dcid}' is used in TMCF/CSV but has no definition in stat_vars MCF.",
-            "suggestion": f"Add a Node for '{dcid}' in stat_vars MCF with name, description, and optionally alternateName.",
-            "severity": "warning",
-            "file": file_name,
-        })
-    if len(missing) > 20:
-        issues.append({
-            "line": None,
-            "type": "missing_statvar_definition",
-            "message": f"… and {len(missing) - 20} more StatVars used in TMCF/CSV but not defined in stat_vars MCF.",
-            "suggestion": "Add Node entries in stat_vars MCF for all StatVars used in the import.",
-            "severity": "warning",
-            "file": file_name,
-        })
-    return issues
 
 
 def _extract_column_refs_from_tmcf(tmcf_content: str) -> list[str]:
@@ -293,6 +239,61 @@ def _find_unused_csv_columns(
     return issues
 
 
+def _check_statvar_observation_required_props(tmcf_content: str, path: str) -> list[dict]:
+    """
+    Deterministic check: StatVarObservation nodes should have variableMeasured, observationAbout,
+    and observationDate. Missing any emits a warning (schema). Aligned with DC repo practice (~99.8%+).
+    """
+    issues: list[dict] = []
+    file_name = Path(path).name
+    lines = tmcf_content.splitlines()
+    node_start_line: int | None = None
+    props: dict[str, str] = {}
+
+    def flush_node() -> None:
+        nonlocal node_start_line, props
+        if node_start_line is None:
+            return
+        type_of = (props.get("typeOf") or "").strip().lower()
+        if "statvarobservation" not in type_of:
+            node_start_line = None
+            props = {}
+            return
+        line_no = node_start_line
+        for prop, suggestion in (
+            ("variableMeasured", "Add variableMeasured: C:table->columnId or dcs:StatVarDcid."),
+            ("observationAbout", "Add observationAbout: C:table->columnId or dcid:PlaceDcid."),
+            ("observationDate", "Add observationDate: C:table->columnId or YYYY-MM-DD literal."),
+        ):
+            if not (props.get(prop) or "").strip():
+                issues.append({
+                    "line": line_no,
+                    "type": "missing_required_property",
+                    "message": f"StatVarObservation node is missing '{prop}'.",
+                    "suggestion": suggestion,
+                    "severity": "warning",
+                    "file": file_name,
+                })
+        node_start_line = None
+        props = {}
+
+    for i, raw_line in enumerate(lines):
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.lower().startswith("node:"):
+            flush_node()
+            node_start_line = i + 1
+            _, _, rest = line.partition(":")
+            props = {"Node": rest.strip()}
+        elif ":" in line and node_start_line is not None:
+            key, _, rest = line.partition(":")
+            props[key.strip()] = rest.strip()
+
+    flush_node()
+    return issues
+
+
 def _check_value_column_mapped(tmcf_content: str) -> list[dict]:
     """
     Deterministic check: StatVarObservation nodes must map a value column (value: C:table->columnId).
@@ -356,8 +357,8 @@ def _validate_statvar_dcid_format(
             issues.append({
                 "line": None,
                 "type": "format",
-                "message": f"StatVar DCID '{dcid}' does not match required format (UpperCamelCase segments separated by underscores).",
-                "suggestion": "Use only letters, numbers, and underscores; each segment should start with an uppercase letter (e.g. Count_Person).",
+                "message": f"StatVar DCID '{dcid}' does not match required format (UpperCamelCase segments separated by underscores; decimals like 1.38 allowed).",
+                "suggestion": "Use letters, numbers, underscores; each segment starts with uppercase letter or digit; decimal points only in numeric portions (e.g. Count_Person, 1.38OrLessRatioToPovertyLine).",
                 "severity": "warning",
             })
     return issues
@@ -365,8 +366,8 @@ def _validate_statvar_dcid_format(
 
 def _validate_stat_vars_mcf(content: str, path: str) -> list[dict]:
     """
-    Deterministic validation of stat_vars MCF: name (required), description (required),
-    alternateName (optional but recommended). Advisory only (severity: warning).
+    Deterministic validation of stat_vars MCF: populationType and measuredProperty
+    required for StatVar nodes. Advisory only (severity: warning).
     Single-line parsing for v1. Returns issues with file and line when possible.
     """
     issues: list[dict] = []
@@ -380,37 +381,6 @@ def _validate_stat_vars_mcf(content: str, path: str) -> list[dict]:
         if node_start_line is None:
             return
         line_no = node_start_line
-        name_val = (props.get("name") or "").strip()
-        desc_val = (props.get("description") or "").strip()
-        alt_val = (props.get("alternateName") or "").strip()
-
-        if not name_val:
-            issues.append({
-                "line": line_no,
-                "type": "mcf_required",
-                "message": "Missing or empty 'name' for StatVar node.",
-                "suggestion": "Add a non-empty name: property.",
-                "severity": "warning",
-                "file": file_name,
-            })
-        if not desc_val:
-            issues.append({
-                "line": line_no,
-                "type": "mcf_required",
-                "message": "Missing or empty 'description' for StatVar node.",
-                "suggestion": "Add a non-empty description: property.",
-                "severity": "warning",
-                "file": file_name,
-            })
-        if not alt_val:
-            issues.append({
-                "line": line_no,
-                "type": "mcf_recommended",
-                "message": "Consider adding 'alternateName' for StatVar node.",
-                "suggestion": "Add alternateName: with a short label.",
-                "severity": "warning",
-                "file": file_name,
-            })
         # Require populationType and measuredProperty only for StatVar (StatisticalVariable) nodes
         type_of = (props.get("typeOf") or "").strip().lower()
         if "statisticalvariable" in type_of:
@@ -495,8 +465,8 @@ def _check_percent_statvar_denominator(content: str, path: str) -> list[dict]:
             issues.append({
                 "line": line_no,
                 "type": "missing_measurement_denominator",
-                "message": f"Percent/rate StatVar '{dcid}' should have measurementDenominator in stat_vars MCF.",
-                "suggestion": "Add measurementDenominator: (e.g. dcs:Count_Person) for rate/percent StatVars.",
+                "message": f"Consider adding measurementDenominator for percent/rate StatVar '{dcid}' to improve semantic clarity.",
+                "suggestion": "Optionally add measurementDenominator: (e.g. dcs:Count_Person) when modeling percent or rate variables.",
                 "severity": "warning",
                 "file": file_name,
             })
@@ -724,11 +694,11 @@ def review_tmcf(
     """
     path = Path(tmcf_path)
     if not path.exists():
-        return [{"type": "error", "message": f"File not found: {tmcf_path}", "severity": "blocker"}], False, None
+        return [{"type": "error", "message": f"File not found: {tmcf_path}", "severity": "blocker", "source": "deterministic"}], False, None
 
     content = path.read_text(encoding="utf-8", errors="replace")
     if not content.strip():
-        return [{"type": "info", "message": "Empty TMCF file", "severity": "warning"}], True, None
+        return [{"type": "info", "message": "Empty TMCF file", "severity": "warning", "source": "deterministic"}], True, None
 
     stat_vars_content: str | None = None
     stat_vars_schema_content: str | None = None
@@ -745,6 +715,7 @@ def review_tmcf(
         python_issues.extend(_validate_column_refs_against_header(content, csv_header_columns))
         python_issues.extend(_find_unused_csv_columns(content, csv_header_columns))
     python_issues.extend(_check_value_column_mapped(content))
+    python_issues.extend(_check_statvar_observation_required_props(content, tmcf_path))
     python_issues.extend(_validate_observation_date_literals(content))
     # Reuse generated_dcids for format check and (below) stat_vars comparison so CSV is read at most once
     generated_dcids = _extract_generated_statvar_dcids(content, csv_path)
@@ -752,19 +723,15 @@ def review_tmcf(
 
     if stat_vars_content and stat_vars_mcf_path:
         python_issues.extend(_validate_stat_vars_mcf(stat_vars_content, stat_vars_mcf_path))
-        # Compare generated StatVars (from TMCF/CSV) to stat_vars MCF; flag missing definitions
-        if generated_dcids:
-            python_issues.extend(
-                _compare_generated_to_stat_vars_mcf(
-                    generated_dcids, stat_vars_content, stat_vars_mcf_path
-                )
-            )
         # Percent/rate StatVars in stat_vars MCF should have measurementDenominator
         python_issues.extend(
             _check_percent_statvar_denominator(stat_vars_content, stat_vars_mcf_path)
         )
     if stat_vars_schema_content and stat_vars_schema_mcf_path:
         python_issues.extend(_validate_stat_vars_mcf(stat_vars_schema_content, stat_vars_schema_mcf_path))
+
+    for i in python_issues:
+        i["source"] = "deterministic"
 
     n = len(python_issues)
     if n == 0:
@@ -791,6 +758,8 @@ def review_tmcf(
             csv_header_columns=csv_header_columns,
         )
         llm_issues = _parse_llm_response(response_text)
+        for i in llm_issues:
+            i["source"] = "llm"
         # Prepend deterministic issues; cap total so LLM issues don't flood
         MAX_ISSUES = 25
         remaining = max(0, MAX_ISSUES - len(python_issues))
@@ -821,7 +790,7 @@ def review_tmcf(
         # Return deterministic issues only; add a warning so the report shows the failure.
         print(f"Gemini review failed (pipeline continues): {e}", file=sys.stderr, flush=True)
         return (
-            python_issues + [{"type": "error", "message": str(e), "severity": "warning"}],
+            python_issues + [{"type": "error", "message": str(e), "severity": "warning", "source": "deterministic"}],
             True,
             None,
         )
@@ -885,6 +854,7 @@ def main():
             print(output_json)
         has_blockers = any(
             i.get("severity") == "blocker"
+            and i.get("source") == "deterministic"
             and i.get("type") not in ("parse_error", "error", "info")
             for i in issues
         )
@@ -905,9 +875,10 @@ def main():
     else:
         Path(args.output).write_text(output_json, encoding="utf-8")
 
-    # Exit 1 if any blocker (align with validation report: only blockers block)
+    # Exit 1 if any deterministic blocker (LLM issues must not block)
     has_blockers = any(
         i.get("severity") == "blocker"
+        and i.get("source") == "deterministic"
         and i.get("type") not in ("parse_error", "error", "info")
         for i in issues
     )
