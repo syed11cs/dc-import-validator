@@ -486,11 +486,77 @@
       content: '— ';
       font-weight: 500;
     }
+    .progress-step-pill.running {
+      font-weight: 600;
+    }
+    .progress-step-pill.running::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background-color: currentColor;
+      opacity: 0.9;
+      animation: progressPulse 1.4s ease-in-out infinite;
+    }
+    @keyframes progressPulse {
+      0% {
+        opacity: 0.9;
+        transform: scale(0.85);
+      }
+      50% {
+        opacity: 0.4;
+        transform: scale(1.25);
+      }
+      100% {
+        opacity: 0.9;
+        transform: scale(0.85);
+      }
+    }
     .progress-step-sep {
       width: 16px;
       height: 1px;
       background: var(--border);
       flex-shrink: 0;
+    }
+    .execution-label {
+      color: var(--text-muted);
+      font-weight: 500;
+      margin-right: 8px;
+    }
+    #execution-header-status {
+      opacity: 0;
+      transition: opacity 200ms ease;
+      font-weight: 600;
+    }
+    .execution-running #execution-header-status,
+    .execution-complete #execution-header-status,
+    .execution-failed #execution-header-status,
+    .execution-cancelled #execution-header-status {
+      opacity: 1;
+    }
+    .execution-complete #execution-header-status {
+      color: var(--success);
+    }
+    .execution-failed #execution-header-status {
+      color: var(--fail);
+    }
+    .execution-running #execution-header-status {
+      color: var(--accent);
+    }
+    .execution-cancelled #execution-header-status {
+      color: var(--text-muted);
+    }
+    #execution-header-status.running::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      margin-right: 6px;
+      animation: progressPulse 1.4s ease-in-out infinite;
     }
     @keyframes progress-pill-pulse {
       0%, 100% { opacity: 1; }
@@ -545,7 +611,7 @@
       box-shadow: 0 0 12px var(--accent-glow), 0 0 4px rgba(99, 102, 241, 0.3);
     }
     .progress-bar .progress-fill:not(.indeterminate) {
-      transition: width 0.35s ease-out;
+      transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
     }
     .progress-bar .progress-fill::after {
       content: '';
@@ -1341,13 +1407,10 @@
       </div>
       <div class="sidebar-footer">
       <div class="run-action" style="padding-top: 20px;">
-        <button id="run-btn" class="btn" disabled>Run</button>
+        <button id="run-btn" class="btn" disabled>▶ Run validation</button>
         <div class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px;">
           <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
         </div>
-      </div>
-      <div class="form-group" style="margin-top: 14px;">
-        <span id="status" class="status-badge">—</span>
       </div>
       </div>
     </aside>
@@ -1386,7 +1449,7 @@
         </div>
       </div>
       <div id="results-section" class="section">
-        <h2>Execution</h2>
+        <h2><span class="execution-label">Execution</span> <span id="execution-header-status"></span></h2>
         <div id="status-banner" class="status-banner" style="display: none;"></div>
         <div id="progress-container" class="progress-container" style="display: none; margin-bottom: 12px;">
           <div id="progress-steps-row" class="progress-steps-row">
@@ -1691,9 +1754,6 @@
       const outputEl = document.getElementById('output');
       outputEl.classList.remove('expanded');
       document.getElementById('expand-log-btn').textContent = 'Expand';
-      const status = document.getElementById('status');
-      status.textContent = '—';
-      status.className = 'status-badge';
       setReportActionsVisible(false, false);
       lastReportMtime = null;
       document.getElementById('report-timestamp').textContent = '';
@@ -2476,7 +2536,7 @@
       if (cancelMsg) cancelMsg.textContent = '';
       const btn = document.getElementById('run-btn');
       if (btn) {
-        btn.textContent = 'Run';
+        btn.textContent = '\u25B6 Run validation';
         btn.title = '';
         btn.classList.remove('btn-stop');
         btn.disabled = false;
@@ -2520,7 +2580,32 @@
       const el = document.getElementById('progress-pct');
       if (!el) return;
       if (elapsedTimerId != null) {
-        el.textContent = getRunningProgressText();
+        el.textContent = '';
+        const elapsed = Math.floor((Date.now() - progressRunStartTime) / 1000);
+        const elapsedText = formatElapsed(elapsed);
+        const executionHeaderStatus = document.getElementById('execution-header-status');
+        const resultsSection = document.getElementById('results-section');
+        if (executionHeaderStatus && progressRunStartTime != null) {
+          executionHeaderStatus.textContent = 'Running · ' + elapsedText;
+          executionHeaderStatus.classList.add('running');
+        }
+        if (resultsSection) {
+          resultsSection.classList.remove('execution-complete', 'execution-failed', 'execution-cancelled');
+          resultsSection.classList.add('execution-running');
+        }
+        const stepIndex = currentProgressStepIndex;
+        for (let i = 0; i <= 4; i++) {
+          const pill = document.getElementById('progress-pill-' + i);
+          if (!pill) continue;
+          const label = stepLabels[i] ?? DEFAULT_STEP_LABELS[i] ?? ('Step ' + i);
+          if (i === stepIndex) {
+            pill.classList.add('running');
+            pill.textContent = label;
+          } else {
+            pill.classList.remove('running');
+            pill.textContent = i + '. ' + label;
+          }
+        }
       } else {
         el.textContent = Math.round(fillCurrentPct) + '%';
       }
@@ -2596,16 +2681,41 @@
       }
       if (bar) bar.setAttribute('aria-valuenow', '100');
       const sec = Math.round(durationSec);
+      const executionHeaderStatus = document.getElementById('execution-header-status');
+      const resultsSection = document.getElementById('results-section');
       if (success) {
-        if (pctEl) pctEl.textContent = '\u2713 Completed in ' + sec + 's';
+        if (pctEl) pctEl.textContent = '';
+        if (executionHeaderStatus) {
+          executionHeaderStatus.textContent = '\u2713 Completed · ' + formatElapsed(sec);
+          executionHeaderStatus.classList.remove('running');
+        }
+        if (resultsSection) {
+          resultsSection.classList.remove('execution-running', 'execution-failed', 'execution-cancelled');
+          resultsSection.classList.add('execution-complete');
+        }
       } else {
         const stepLabel = (failedStepIndex != null && failedStepIndex >= 0 && failedStepIndex <= 4)
           ? (stepLabels[failedStepIndex] ?? DEFAULT_STEP_LABELS[failedStepIndex] ?? ('step ' + failedStepIndex))
           : null;
-        if (pctEl) pctEl.textContent = stepLabel ? '✗ Failed at ' + stepLabel + ' in ' + sec + 's' : '✗ Failed in ' + sec + 's';
+        if (pctEl) pctEl.textContent = '';
+        if (executionHeaderStatus) {
+          executionHeaderStatus.textContent = '\u2715 Failed · ' + formatElapsed(sec);
+          executionHeaderStatus.classList.remove('running');
+        }
+        if (resultsSection) {
+          resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-cancelled');
+          resultsSection.classList.add('execution-failed');
+        }
       }
       container.classList.add('complete');
       if (!success) container.classList.add('fail');
+      for (let i = 0; i <= 4; i++) {
+        const pill = document.getElementById('progress-pill-' + i);
+        if (!pill) continue;
+        pill.classList.remove('running');
+        const label = stepLabels[i] ?? DEFAULT_STEP_LABELS[i] ?? ('Step ' + i);
+        pill.textContent = i + '. ' + label;
+      }
     }
 
     function updateProgressStep(step) {
@@ -2713,7 +2823,6 @@
       if (!currentDataset) return;
       const runDataset = currentDataset;
       const btn = document.getElementById('run-btn');
-      const status = document.getElementById('status');
       const output = document.getElementById('output');
       runAbortController = new AbortController();
       progressHideDeferred = false;
@@ -2771,12 +2880,10 @@
             smoothScrollTo(mainEl, Math.max(0, targetScrollTop), 600);
           }, 50);
         }
-        btn.textContent = 'Stop';
+        btn.textContent = '\u25A0 Stop run';
         btn.title = '';
         btn.classList.add('btn-stop');
         btn.disabled = false;
-        status.textContent = 'Running…';
-        status.className = 'status-badge running';
         setOutputContent('Running validation...\n', false);
         setReportRunningState();
         switchToLogTab({ scrollIntoView: true });
@@ -2791,8 +2898,6 @@
         if (runDataset === 'custom') {
           if (!customTmcfFile || !customCsvFile) {
             setOutputContent('Please select both TMCF and CSV files.', false);
-            status.textContent = 'Error';
-            status.className = 'status-badge fail';
             return;
           }
           const formData = new FormData();
@@ -2842,8 +2947,6 @@
           }
         });
         setOutputContent(data.output || '(no output)', false);
-        status.textContent = data.cancelled ? 'Cancelled' : '—';
-        status.className = 'status-badge' + (data.cancelled ? '' : '');
         if (!data.cancelled) {
           progressHideDeferred = true;
           if (pendingStepTimer) {
@@ -2863,7 +2966,7 @@
         if (!data.cancelled) {
           const btn = document.getElementById('run-btn');
           if (btn) {
-            btn.textContent = 'Run';
+            btn.textContent = '\u25B6 Run validation';
             btn.title = '';
             btn.classList.remove('btn-stop');
             btn.disabled = false;
@@ -2972,8 +3075,6 @@
           setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
         }
         if (!data.cancelled && data.success) {
-          status.textContent = '—';
-          status.className = 'status-badge';
           lastRunDataset = runDataset;
           lastRunReportId = data.run_id || null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
@@ -3080,9 +3181,18 @@
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
         if (e.name === 'AbortError') {
+          const durationSec = Math.floor((Date.now() - runStartTime) / 1000);
+          const executionHeaderStatus = document.getElementById('execution-header-status');
+          const resultsSection = document.getElementById('results-section');
+          if (executionHeaderStatus) {
+            executionHeaderStatus.textContent = 'Cancelled · ' + formatElapsed(durationSec);
+            executionHeaderStatus.classList.remove('running');
+          }
+          if (resultsSection) {
+            resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed');
+            resultsSection.classList.add('execution-cancelled');
+          }
           setOutputContent('Validation cancelled.', false);
-          status.textContent = 'Cancelled';
-          status.className = 'status-badge';
           showStatusBanner({ cancelled: true });
           var cancelSummaryData = { cancelled: true, dataset: runDataset, completedAt: lastRunCompletedAt || new Date() };
           const cancelMsg = document.getElementById('progress-cancel-msg');
@@ -3107,8 +3217,6 @@
           const prev = output.classList.contains('empty') ? '' : output.innerText;
           setOutputContent(prev + '\nError: ' + e.message, false, true);
           if (!data || !data.success) {
-            status.textContent = 'Error';
-            status.className = 'status-badge fail';
           } else {
             console.error('Post-success async error:', e);
           }
@@ -3143,7 +3251,7 @@
         setRulesSectionDisabled(false);
         if (!progressHideDeferred) {
           hideProgressAfterCancel();
-          btn.textContent = 'Run';
+          btn.textContent = '\u25B6 Run validation';
           btn.title = '';
           btn.classList.remove('btn-stop');
           btn.disabled = false;
