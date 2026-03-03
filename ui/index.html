@@ -864,7 +864,8 @@
     }
     .summary-card-outcome {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
+      justify-content: space-between;
       gap: 10px;
       font-weight: 800;
       font-size: 1.05rem;
@@ -873,6 +874,10 @@
       word-break: break-word;
       white-space: normal;
     }
+    .summary-card-outcome-left { display: flex; align-items: center; gap: 10px; min-width: 0; line-height: 1.25; }
+    .summary-card-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; line-height: 1.2; }
+    .summary-card-duration { font-size: 0.8rem; font-weight: 500; color: var(--text-muted); }
+    .summary-card-run-time { font-size: 0.75rem; font-weight: 400; color: var(--text-muted); opacity: 0.9; }
     .summary-card-status-dot {
       flex-shrink: 0;
       width: 10px;
@@ -898,7 +903,6 @@
     .summary-card-rules .summary-fail { color: var(--fail); font-weight: 600; }
     .summary-card-rules .summary-warn { color: var(--warn); }
     .summary-card-rules .summary-pass { color: var(--success); }
-    .summary-card-meta { font-size: 0.8rem; color: var(--text-muted); opacity: 0.85; font-weight: 400; }
     .summary-card-gemini-hint { font-size: 0.8rem; color: rgba(180, 140, 0, 0.95); margin-top: 6px; font-weight: 400; }
     .summary-card .warning-details-list { margin-top: 8px; padding-left: 18px; font-size: 0.85rem; list-style: disc; color: var(--text-muted); }
     .summary-card .warning-details-list .rule-detail-item { margin-bottom: 6px; }
@@ -907,7 +911,6 @@
     .summary-card-metrics .metric-chip--blocking { background: rgba(244,63,94,0.2); color: var(--fail); }
     .summary-card-metrics .metric-chip--warning { background: rgba(245,158,11,0.22); color: var(--warn); }
     .summary-card-metrics .metric-chip--advisory { background: rgba(14,165,233,0.2); color: var(--advisory); }
-    .summary-card-metrics .metric-chip--runtime { background: rgba(113,113,122,0.12); color: var(--text-muted); font-weight: 400; }
     .metric-chip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
     .metric-chip-dot--blocking { background: var(--fail); }
     .metric-chip-dot--warning { background: var(--warn); }
@@ -947,54 +950,11 @@
       align-items: center;
       justify-content: space-between;
       width: 100%;
-      cursor: pointer;
+      cursor: default;
       font-size: 0.95rem;
       font-weight: 600;
       color: var(--text);
       margin-bottom: 0;
-    }
-    #ai-review-section .ai-review-row .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0,0,0,0);
-      white-space: nowrap;
-      border: 0;
-    }
-    .ai-review-toggle {
-      flex-shrink: 0;
-      display: inline-block;
-      width: 44px;
-      height: 24px;
-      border-radius: 12px;
-      background: var(--border);
-      transition: background 0.2s ease;
-      position: relative;
-    }
-    .ai-review-toggle::after {
-      content: '';
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: #fff;
-      box-shadow: var(--shadow-sm);
-      transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    #ai-review-section .ai-review-row input:checked ~ .ai-review-toggle {
-      background: var(--success);
-    }
-    #ai-review-section .ai-review-row input:checked ~ .ai-review-toggle::after {
-      transform: translateX(20px);
-    }
-    #ai-review-section .ai-review-row input:focus-visible ~ .ai-review-toggle {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
     }
     .ai-review-badge {
       display: inline-block;
@@ -1382,12 +1342,10 @@
         </div>
       </div>
       <div id="ai-review-section" class="ai-review-section form-group">
-        <label class="ai-review-row" for="llm-review-checkbox">
-          <input type="checkbox" id="llm-review-checkbox" class="visually-hidden" checked />
+        <div class="ai-review-row">
           <span class="ai-review-label-text">Gemini Review</span>
-          <span class="ai-review-toggle" aria-hidden="true"></span>
-        </label>
-        <div id="llm-model-row" style="display: none; margin-top: 10px; margin-left: 0; overflow: visible;">
+        </div>
+        <div id="llm-model-row" style="display: block; margin-top: 10px; margin-left: 0; overflow: visible;">
           <label style="font-size: 0.7rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Model</label>
           <select id="llm-model-select" autocomplete="off">
             <optgroup label="Stable">
@@ -1546,6 +1504,45 @@
     const STORAGE_KEY_PRESETS = 'import_validation_presets';
     const LAST_OUTCOME_KEY = 'import_validation_last_outcome_';
     const LAST_DATASET_KEY = 'import_validation_last_dataset';
+    const LAST_RUN_STATE_KEY = 'import_validation_last_run_state';
+
+    function saveLastRunState(state) {
+      try {
+        localStorage.setItem(LAST_RUN_STATE_KEY, JSON.stringify(state));
+      } catch (_) {}
+    }
+    function getStoredLastRunState() {
+      try {
+        const raw = localStorage.getItem(LAST_RUN_STATE_KEY);
+        if (!raw) return null;
+        const state = JSON.parse(raw);
+        if (!state || typeof state.dataset !== 'string' || !state.status) return null;
+        return state;
+      } catch (_) {
+        return null;
+      }
+    }
+    function restoreExecutionHeaderFromStored(status, durationSec) {
+      const executionHeaderStatus = document.getElementById('execution-header-status');
+      const resultsSection = document.getElementById('results-section');
+      if (!executionHeaderStatus || !resultsSection) return;
+      executionHeaderStatus.classList.remove('running');
+      const sec = Math.round(durationSec || 0);
+      if (status === 'success') {
+        executionHeaderStatus.textContent = '\u2713 Completed · ' + formatElapsed(sec);
+        resultsSection.classList.remove('execution-running', 'execution-failed', 'execution-cancelled');
+        resultsSection.classList.add('execution-complete');
+      } else if (status === 'failed') {
+        executionHeaderStatus.textContent = '\u2715 Failed · ' + formatElapsed(sec);
+        resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-cancelled');
+        resultsSection.classList.add('execution-failed');
+      } else if (status === 'cancelled') {
+        executionHeaderStatus.textContent = 'Cancelled · ' + formatElapsed(sec);
+        resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed');
+        resultsSection.classList.add('execution-cancelled');
+      }
+    }
+
     let lastWarnCount = 0;
     let lastRunDurationSec = null;
     let lastRunReportGenerated = false;
@@ -1728,7 +1725,7 @@
         });
         customUpload.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-      progressWithLLM = document.getElementById('llm-review-checkbox').checked;
+      progressWithLLM = true;
       buildProgressPills(progressWithLLM);
       resetProgressBar();
       document.getElementById('progress-container').style.display = 'none';
@@ -1749,6 +1746,39 @@
         opt.classList.toggle('selected', opt.getAttribute('data-value') === currentDataset);
       });
       if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true });
+      const storedRunState = getStoredLastRunState();
+      if (storedRunState && storedRunState.dataset === currentDataset && storedRunState.status) {
+        lastRunReportId = storedRunState.runId ?? null;
+        lastRunDataset = storedRunState.dataset;
+        lastRunSummary = storedRunState.lastRunSummary ?? null;
+        const summaryCard = storedRunState.summaryCard;
+        if (summaryCard) {
+          if (summaryCard.completedAt) summaryCard.completedAt = new Date(summaryCard.completedAt);
+          setSummaryCard(summaryCard);
+        }
+        restoreExecutionHeaderFromStored(storedRunState.status, storedRunState.durationSec);
+        if (storedRunState.status === 'success') {
+          lastRunReportGenerated = true;
+          lastRunHadAiReview = true;
+          applyValidationResults(currentDataset, { runId: lastRunReportId });
+        }
+        loadReport();
+        return;
+      }
+      const executionHeaderStatus = document.getElementById('execution-header-status');
+      const resultsSection = document.getElementById('results-section');
+      if (executionHeaderStatus) {
+        executionHeaderStatus.textContent = '';
+        executionHeaderStatus.classList.remove('running');
+      }
+      if (resultsSection) {
+        resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed', 'execution-cancelled');
+      }
+      lastRunReportId = null;
+      lastRunDataset = null;
+      lastRunSummary = null;
+      lastRunReportGenerated = false;
+      lastRunHadAiReview = false;
       // Clear log, status, and report when switching datasets
       setOutputContent(LOG_PLACEHOLDER_HTML, true);
       const outputEl = document.getElementById('output');
@@ -1946,15 +1976,17 @@
         const outcome = document.createElement('div');
         outcome.className = 'summary-card-outcome';
         outcome.style.color = 'var(--text-muted)';
-        outcome.textContent = 'Validation cancelled';
-        content.appendChild(outcome);
         const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+        const left = document.createElement('span');
+        left.textContent = 'Validation cancelled';
+        outcome.appendChild(left);
         if (runTime) {
-          const meta = document.createElement('div');
-          meta.className = 'summary-card-meta';
-          meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
-          content.appendChild(meta);
+          const runEl = document.createElement('span');
+          runEl.className = 'summary-card-run-time';
+          runEl.textContent = formatRunTimestampShort(runTime);
+          outcome.appendChild(runEl);
         }
+        content.appendChild(outcome);
         card.classList.add('visible');
         return;
       }
@@ -1964,9 +1996,12 @@
       const warnCount = opts.warnCount ?? 0;
       const pipelineFailedBeforeValidation = opts.pipelineFailedBeforeValidation === true;
       const showDetailsToggle = runCount > 0 || pipelineFailedBeforeValidation;
+      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
 
       const outcome = document.createElement('div');
       outcome.className = 'summary-card-outcome';
+      const outcomeLeft = document.createElement('div');
+      outcomeLeft.className = 'summary-card-outcome-left';
       const statusDot = document.createElement('span');
       statusDot.className = 'summary-card-status-dot';
       const outcomeText = document.createElement('span');
@@ -1988,8 +2023,26 @@
         else if (msg) failLabel = msg;
         outcomeText.textContent = failLabel;
       }
-      outcome.appendChild(statusDot);
-      outcome.appendChild(outcomeText);
+      outcomeLeft.appendChild(statusDot);
+      outcomeLeft.appendChild(outcomeText);
+      outcome.appendChild(outcomeLeft);
+      if (opts.durationSec != null || runTime) {
+        const headerRight = document.createElement('div');
+        headerRight.className = 'summary-card-header-right';
+        if (opts.durationSec != null) {
+          const durationEl = document.createElement('span');
+          durationEl.className = 'summary-card-duration';
+          durationEl.textContent = opts.durationSec.toFixed(1) + 's';
+          headerRight.appendChild(durationEl);
+        }
+        if (runTime) {
+          const runEl = document.createElement('span');
+          runEl.className = 'summary-card-run-time';
+          runEl.textContent = formatRunTimestampShort(runTime);
+          headerRight.appendChild(runEl);
+        }
+        outcome.appendChild(headerRight);
+      }
       content.appendChild(outcome);
 
       if (pipelineFailedBeforeValidation && !opts.success) {
@@ -2004,27 +2057,13 @@
         const blocking = opts.failCount ?? 0;
         const validationWarnings = opts.warnCount ?? 0;
         const aiAdvisories = opts.aiAdvisoryCount ?? 0;
-        const runTimeStr = opts.durationSec != null ? opts.durationSec.toFixed(1) + 's' : (opts.completedAt != null || lastRunCompletedAt ? formatRunTimestamp(opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt) : '—');
         const metricsRow = document.createElement('div');
         metricsRow.className = 'summary-card-metrics';
         let chips = '<span class="metric-chip metric-chip--blocking"><span class="metric-chip-dot metric-chip-dot--blocking"></span>' + blocking + ' Blocking</span>';
         if (validationWarnings > 0) chips += '<span class="metric-chip metric-chip--warning"><span class="metric-chip-dot metric-chip-dot--warning"></span>' + validationWarnings + ' Warning' + (validationWarnings !== 1 ? 's' : '') + '</span>';
         if (aiAdvisories > 0) chips += '<span class="metric-chip metric-chip--advisory"><span class="metric-chip-dot metric-chip-dot--advisory"></span>' + aiAdvisories + ' AI Advisor' + (aiAdvisories !== 1 ? 'ies' : 'y') + '</span>';
-        chips += '<span class="metric-chip metric-chip--runtime">' + escapeHtml(runTimeStr) + '</span>';
         metricsRow.innerHTML = chips;
         content.appendChild(metricsRow);
-      } else if (opts.durationSec != null || (opts.completedAt != null || lastRunCompletedAt)) {
-        const meta = document.createElement('div');
-        meta.className = 'summary-card-meta';
-        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
-        if (opts.durationSec != null) {
-          meta.textContent = 'Run time: ' + opts.durationSec.toFixed(1) + 's';
-        } else if (runTime) {
-          meta.textContent = 'Run: ' + formatRunTimestamp(runTime);
-        } else {
-          meta.textContent = '—';
-        }
-        content.appendChild(meta);
       }
       if (opts.geminiSkippedNoKey) {
         const hint = document.createElement('div');
@@ -2551,7 +2590,7 @@
       4: { pct: 100 },
     };
     const DEFAULT_STEP_LABELS = { 0: 'Pre-Import Checks', 1: 'Gemini Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
-    let progressWithLLM = false;
+    let progressWithLLM = true;
     const MIN_STEP_DISPLAY_MS = 750;
     let lastLabelUpdateAt = 0;
     let pendingStepTimer = null;
@@ -2837,7 +2876,6 @@
       if (datasetMenu) datasetMenu.classList.remove('open');
       const datasetDropdown = document.getElementById('dataset-dropdown');
       if (datasetDropdown) datasetDropdown.classList.remove('open');
-      document.getElementById('llm-review-checkbox').disabled = true;
       document.getElementById('llm-model-select').disabled = true;
       document.getElementById('tmcf-file').disabled = true;
       document.getElementById('csv-file').disabled = true;
@@ -2863,7 +2901,7 @@
         hideSummaryCard();
         clearValidationResults();
         document.getElementById('log-completed-at').style.display = 'none';
-        progressWithLLM = document.getElementById('llm-review-checkbox').checked;
+        progressWithLLM = true;
         buildProgressPills(progressWithLLM);
         document.getElementById('progress-container').style.display = 'block';
         resetProgressBar();
@@ -2893,8 +2931,8 @@
       try {
         const selectedRules = getSelectedRuleIds();
         const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
-        const llmReview = document.getElementById('llm-review-checkbox').checked;
         let r, data;
+        const llmModel = document.getElementById('llm-model-select').value;
         if (runDataset === 'custom') {
           if (!customTmcfFile || !customCsvFile) {
             setOutputContent('Please select both TMCF and CSV files.', false);
@@ -2906,11 +2944,8 @@
           if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
           if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
           if (rulesParam) formData.append('rules', rulesParam);
-          if (llmReview) {
-            formData.append('llm_review', '1');
-            const llmModel = document.getElementById('llm-model-select').value;
-            formData.append('llm_model', llmModel);
-          }
+          formData.append('llm_review', '1');
+          formData.append('llm_model', llmModel);
           r = await fetch(API + '/api/run/custom/stream', {
             method: 'POST',
             body: formData,
@@ -2919,11 +2954,8 @@
         } else {
           let url = `${API}/api/run/${runDataset}?stream=true`;
           if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
-          if (llmReview) {
-            url += '&llm_review=1';
-            const llmModel = document.getElementById('llm-model-select').value;
-            url += `&llm_model=${encodeURIComponent(llmModel)}`;
-          }
+          url += '&llm_review=1';
+          url += `&llm_model=${encodeURIComponent(llmModel)}`;
           r = await fetch(url, { method: 'POST', signal: runAbortController.signal });
         }
         if (!r.ok) throw new Error(r.statusText);
@@ -2932,7 +2964,7 @@
           if (msg.t === 'step') {
             const s = msg.step ?? -1;
             if (msg.label != null && msg.label !== '') {
-              stepLabels[s] = (s === 1 && !progressWithLLM) ? 'Schema Review' : msg.label;
+              stepLabels[s] = msg.label;
               const pill = document.getElementById('progress-pill-' + s);
               if (pill) pill.textContent = s + '. ' + stepLabels[s];
             }
@@ -2977,8 +3009,7 @@
         const completedEl = document.getElementById('log-completed-at');
         completedEl.textContent = 'Completed at ' + formatRunTimestamp(lastRunCompletedAt);
         completedEl.style.display = 'block';
-        if (llmReview) await loadLLMReportSection(runDataset);
-        else renderLLMReportSection({ notRun: true });
+        await loadLLMReportSection(runDataset);
         if (!data.cancelled) {
           lastRunDurationSec = runStartTime != null ? (lastRunCompletedAt - runStartTime) / 1000 : null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
@@ -2986,10 +3017,10 @@
           // Use data.failure_step for pipeline classification so step 0 (e.g. row count) always gets summary
           const pipelineFailedBeforeValidation = !data.success && (typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX);
           lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
-          lastRunHadAiReview = llmReview;
+          lastRunHadAiReview = true;
           const runIdForResult = data.run_id || null;
           const output = data.output || '';
-          const geminiSkippedNoKey = !!llmReview && (output.includes('LLM review skipped') || output.includes('no API key'));
+          const geminiSkippedNoKey = (output.includes('LLM review skipped') || output.includes('no API key'));
           if (data.success) {
             lastRunSummary = {
               dataset: runDataset || null,
@@ -3014,7 +3045,7 @@
           } else {
             const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
             let aiAdvisoryCount = 0;
-            if (llmReview && runIdForResult && !pipelineFailedBeforeValidation) {
+            if (runIdForResult && !pipelineFailedBeforeValidation) {
               try {
                 const lr = await fetch(API + '/api/llm-report/' + runDataset + '?t=' + Date.now() + '&run_id=' + encodeURIComponent(runIdForResult));
                 if (lr.ok) {
@@ -3065,7 +3096,7 @@
               failure_limit: data.failure_limit,
               failure_details: data.failure_details || undefined,
               run_id: data.run_id || undefined,
-              aiReviewUsed: llmReview,
+              aiReviewUsed: true,
               geminiSkippedNoKey,
               completedAt: lastRunCompletedAt,
             };
@@ -3078,6 +3109,9 @@
           lastRunDataset = runDataset;
           lastRunReportId = data.run_id || null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
+          const pipelineFailedBeforeValidation = false;
+          const failureInfo = getFailureInfo(data);
+          const geminiSkippedNoKey = ((data.output || '').includes('LLM review skipped') || (data.output || '').includes('no API key'));
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, hasWarnings ? 'passed_with_warnings' : 'passed');
           showPreparingReportState();
           const preparingStart = Date.now();
@@ -3090,11 +3124,11 @@
           switchToReportTab({ scrollIntoView: true });
           const reportPromise = loadReport();
           const validationPromise = applyValidationResults(runDataset, { runId: lastRunReportId });
-          const counts = await fetchValidationCounts(runDataset, runIdForResult);
+          const counts = await fetchValidationCounts(runDataset, lastRunReportId);
           let aiAdvisoryCount = 0;
-          if (llmReview && runIdForResult && !pipelineFailedBeforeValidation) {
+          if (lastRunReportId) {
             try {
-              const lr = await fetch(API + '/api/llm-report/' + runDataset + '?t=' + Date.now() + '&run_id=' + encodeURIComponent(runIdForResult));
+              const lr = await fetch(API + '/api/llm-report/' + runDataset + '?t=' + Date.now() + '&run_id=' + encodeURIComponent(lastRunReportId));
               if (lr.ok) {
                 const lrJson = await lr.json();
                 aiAdvisoryCount = lrJson.ai_advisory_count ?? 0;
@@ -3106,7 +3140,7 @@
             run_id: data.run_id ?? null,
             success: data.success,
             cancelled: false,
-            pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || false,
+            pipelineFailedBeforeValidation: false,
             failure_code: data.failure_code ?? null,
             failure_step: data.failure_step,
             failure_message: data.failure_message ?? null,
@@ -3141,12 +3175,21 @@
             failure_limit: data.failure_limit,
             failure_details: data.failure_details || undefined,
             run_id: data.run_id || undefined,
-            aiReviewUsed: llmReview,
+            aiReviewUsed: true,
             geminiSkippedNoKey,
             completedAt: lastRunCompletedAt,
           };
           setSummaryCard(summaryDataToShow);
           await Promise.all([reportPromise, validationPromise]);
+          saveLastRunState({
+            dataset: runDataset,
+            runId: data.run_id || null,
+            status: 'success',
+            durationSec: lastRunDurationSec != null ? Math.round(lastRunDurationSec) : 0,
+            summaryCard: summaryDataToShow,
+            lastRunSummary: lastRunSummary,
+            timestamp: Date.now()
+          });
         } else if (data.cancelled) {
           lastRunReportId = null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
@@ -3176,11 +3219,20 @@
           setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
           await loadReport();
+          saveLastRunState({
+            dataset: runDataset,
+            runId: data.run_id || null,
+            status: 'failed',
+            durationSec: lastRunDurationSec != null ? Math.round(lastRunDurationSec) : 0,
+            summaryCard: summaryDataToShow,
+            lastRunSummary: lastRunSummary,
+            timestamp: Date.now()
+          });
         }
       } catch (e) {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
-        if (e.name === 'AbortError') {
+        if (e.name === 'AbortError' && runAbortController?.signal?.aborted) {
           const durationSec = Math.floor((Date.now() - runStartTime) / 1000);
           const executionHeaderStatus = document.getElementById('execution-header-status');
           const resultsSection = document.getElementById('results-section');
@@ -3213,13 +3265,19 @@
           setSummaryCard(cancelSummaryData);
           switchToReportTab({ scrollIntoView: true });
           await loadReport();
+          saveLastRunState({
+            dataset: runDataset,
+            runId: null,
+            status: 'cancelled',
+            durationSec,
+            summaryCard: cancelSummaryData,
+            lastRunSummary: { dataset: runDataset, run_id: null, success: false, cancelled: true },
+            timestamp: Date.now()
+          });
         } else {
           const prev = output.classList.contains('empty') ? '' : output.innerText;
           setOutputContent(prev + '\nError: ' + e.message, false, true);
-          if (!data || !data.success) {
-          } else {
-            console.error('Post-success async error:', e);
-          }
+          console.error('Async error:', e);
           showStatusBanner({ success: false, cancelled: false });
         }
         lastRunCompletedAt = new Date();
@@ -3234,7 +3292,6 @@
         document.getElementById('dataset').disabled = false;
         const datasetTrigger = document.getElementById('dataset-trigger');
         if (datasetTrigger) datasetTrigger.disabled = false;
-        document.getElementById('llm-review-checkbox').disabled = false;
         document.getElementById('llm-model-select').disabled = false;
         document.getElementById('tmcf-file').disabled = false;
         document.getElementById('csv-file').disabled = false;
@@ -3432,7 +3489,7 @@
         const infoRes = await fetch(reportInfoUrl);
         if (infoRes.ok) {
           const info = await infoRes.json();
-          if (info.exists) {
+          if (info.exists && lastRunReportId && lastRunDataset === reportDataset) {
             reportLoaded = true;
             const link = document.getElementById('open-report-link');
             const reportUrl = (lastRunReportId && lastRunDataset === reportDataset)
@@ -3945,18 +4002,14 @@
 
     document.getElementById('run-btn').addEventListener('click', onRunButtonClick);
     const aiReviewSection = document.getElementById('ai-review-section');
-    const llmCheckbox = document.getElementById('llm-review-checkbox');
     function syncAiReviewSectionActive() {
-      if (aiReviewSection) aiReviewSection.classList.toggle('is-active', llmCheckbox.checked);
+      if (aiReviewSection) aiReviewSection.classList.add('is-active');
       const row = document.getElementById('llm-model-row');
-      if (row) row.style.display = llmCheckbox.checked ? 'block' : 'none';
+      if (row) row.style.display = 'block';
     }
     async function updateAiReviewWarningVisibility() {
       const warning = document.getElementById('llm-api-key-warning');
-      if (!warning || !llmCheckbox.checked) {
-        if (warning) warning.style.display = 'none';
-        return;
-      }
+      if (!warning) return;
       try {
         const r = await fetch(API + '/api/llm-status');
         const data = await r.json();
@@ -3965,20 +4018,8 @@
         warning.style.display = 'block';
       }
     }
-    llmCheckbox.addEventListener('change', async (e) => {
-      syncAiReviewSectionActive();
-      const select = document.getElementById('llm-model-select');
-      const warning = document.getElementById('llm-api-key-warning');
-      if (e.target.checked) {
-        if (select) select.value = 'gemini-2.5-flash';  // always reset to default when Gemini Review is selected
-        await updateAiReviewWarningVisibility();
-      } else {
-        if (warning) warning.style.display = 'none';
-      }
-    });
-    // Gemini Review is on by default (checkbox has checked in HTML). Sync UI state on load.
     syncAiReviewSectionActive();
-    if (llmCheckbox.checked) updateAiReviewWarningVisibility();
+    updateAiReviewWarningVisibility();
     function setupCustomFileInput(inputId, chooseBtnId, nameSpanId, clearBtnId, setFile, clearFile) {
       const input = document.getElementById(inputId);
       const btn = document.getElementById(chooseBtnId);
@@ -4107,6 +4148,15 @@
       const min = String(d.getMinutes()).padStart(2, '0');
       const s = String(d.getSeconds()).padStart(2, '0');
       return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+    }
+    function formatRunTimestampShort(d) {
+      if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+      const mon = d.toLocaleDateString('en-US', { month: 'short' });
+      const day = d.getDate();
+      const year = d.getFullYear();
+      const h = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return mon + ' ' + day + ', ' + year + ' · ' + h + ':' + min;
     }
 
     function formatTimeAgo(unixSec) {

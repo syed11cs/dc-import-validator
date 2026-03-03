@@ -14,7 +14,7 @@ Prevent bad imports from reaching production by catching schema issues, data inc
 | Feature | Description |
 |---------|-------------|
 | 🔍 Comprehensive Validation | Preflight checks, CSV quality, TMCF validation, schema conformance, and Data Commons import_validation |
-| 🤖 AI Schema Review | Optional Gemini-powered review catches typos and schema issues before validation |
+| 🤖 AI Schema Review | Gemini-powered review (always on in Web UI; set API key to enable) catches typos and schema issues before validation |
 | 📊 Rich Reports | HTML reports with blockers/warnings, StatVar summaries, lint issues, and import tool integration |
 | 🚀 Multiple Run Modes | Docker (zero setup), CLI (development), or Cloud Run (production) |
 | ☁️ Cloud Ready | Deploy to Cloud Run with automatic GCS report storage and CI/CD via GitHub Actions |
@@ -22,7 +22,7 @@ Prevent bad imports from reaching production by catching schema issues, data inc
 ### 🚀 Quick Start (Recommended: Docker)
 
 Run the validator with zero local setup.  
-AI review is optional and disabled by default.
+In the Web UI, Gemini review runs on every validation; set an API key (see below) to enable it.
 
 ```bash
 git clone https://github.com/syed11cs/dc-import-validator.git
@@ -83,7 +83,7 @@ The web interface makes validation accessible to everyone:
 | Interactive Rules | Select which validation rules to run with checkbox interface |
 | Live Logs | Real-time terminal output with syntax highlighting and copy support |
 | Rich Reports | Combined view of blockers, warnings, StatVar summaries, and lint issues |
-| Gemini Integration | Toggle AI review on/off, select model (2.5 Flash, Pro, etc.) |
+| Gemini Integration | AI review runs on every run; select model (2.5 Flash, Pro, etc.). Set GEMINI_API_KEY or GOOGLE_API_KEY to enable. |
 | Run Management | Cancel long-running validations, view history |
 
 #### Upload Custom Files
