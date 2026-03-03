@@ -1725,8 +1725,7 @@
         });
         customUpload.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-      progressWithLLM = true;
-      buildProgressPills(progressWithLLM);
+      buildProgressPills();
       resetProgressBar();
       document.getElementById('progress-container').style.display = 'none';
       updateRunButtonState();
@@ -2590,7 +2589,6 @@
       4: { pct: 100 },
     };
     const DEFAULT_STEP_LABELS = { 0: 'Pre-Import Checks', 1: 'Gemini Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
-    let progressWithLLM = true;
     const MIN_STEP_DISPLAY_MS = 750;
     let lastLabelUpdateAt = 0;
     let pendingStepTimer = null;
@@ -2776,12 +2774,11 @@
       }
     }
 
-    function buildProgressPills(withLLM) {
+    function buildProgressPills() {
       const row = document.getElementById('progress-steps-row');
       if (!row) return;
-      const step1Label = withLLM ? 'Gemini Review' : 'Schema Review';
+      const step1Label = 'Gemini Review';
       row.innerHTML = '<span id="progress-pill-0" class="progress-step-pill">0. Pre-Import Checks</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-1" class="progress-step-pill">1. ' + step1Label + '</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-4" class="progress-step-pill">4. Results</span>';
-      if (!withLLM) stepLabels[1] = 'Schema Review';
     }
 
     function resetProgressBar() {
@@ -2901,8 +2898,7 @@
         hideSummaryCard();
         clearValidationResults();
         document.getElementById('log-completed-at').style.display = 'none';
-        progressWithLLM = true;
-        buildProgressPills(progressWithLLM);
+        buildProgressPills();
         document.getElementById('progress-container').style.display = 'block';
         resetProgressBar();
         progressRunStartTime = Date.now();
@@ -3407,28 +3403,21 @@
 
     async function loadLLMReportSection(dataset, options) {
       if (!dataset) return;
-      const showPassedIfMissing = options && options.showPassedIfMissing === true;
       try {
         const runIdParam = (options && options.runId) ? '&run_id=' + encodeURIComponent(options.runId) : '';
         const r = await fetch(API + `/api/llm-report/${dataset}?t=${Date.now()}${runIdParam}`);
         if (!r.ok) {
-          if (showPassedIfMissing) renderLLMReportSection({ exists: true, issues: [], passed: true });
-          else renderLLMReportSection({ exists: false });
+          renderLLMReportSection({ exists: false });
           return;
         }
         const data = await r.json();
-        if (showPassedIfMissing && (!data || !data.exists)) {
-          renderLLMReportSection({ exists: true, issues: [], passed: true });
-        } else {
-          renderLLMReportSection(data);
-        }
+        renderLLMReportSection(data);
       } catch {
-        if (showPassedIfMissing) renderLLMReportSection({ exists: true, issues: [], passed: true });
-        else renderLLMReportSection({ exists: false });
+        renderLLMReportSection({ exists: false });
       }
     }
 
-    function setReportActionsVisible(showBar, hasReport, hasSummary) {
+    function setReportActionsVisible(showBar, hasReport) {
       const reportActions = document.getElementById('report-actions');
       const isReportTabActive = document.querySelector('.tab[data-tab="report"]')?.classList.contains('active');
       const show = showBar && isReportTabActive;

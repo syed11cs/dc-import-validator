@@ -123,7 +123,7 @@ def _load_summary_statvar_units(output_dir: str) -> list[tuple[str, str]]:
 
 
 def _load_llm_review(output_dir: str):
-    """Load schema_review.json from output dir (schema + optional Gemini review issues). Returns None if not found or invalid."""
+    """Load schema_review.json from output dir (schema + Gemini review issues when run). Returns None if not found or invalid."""
     path = os.path.join(output_dir, "schema_review.json")
     if not os.path.isfile(path):
         return None
