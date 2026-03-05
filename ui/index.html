@@ -1074,6 +1074,33 @@
       border-color: var(--accent);
       color: var(--accent);
     }
+    .fluctuation-sample-card .explain-fluctuation-wrap { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .fluctuation-sample-card .explain-fluctuation-btn {
+      padding: 6px 12px; font-size: 0.75rem; border-radius: 6px;
+      border: 1px solid var(--accent); background: var(--accent); color: #fff;
+      cursor: pointer; transition: all 0.2s ease;
+    }
+    .fluctuation-sample-card .explain-fluctuation-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
+    .fluctuation-sample-card .explain-fluctuation-btn:disabled { opacity: 0.7; cursor: default; background: var(--bg); border-color: var(--border); color: var(--text-muted); }
+    .fluctuation-sample-card .ai-interpretation-cell { margin-top: 8px; font-size: 0.8125rem; color: var(--text-muted); }
+    .fluctuation-sample-card .ai-interpretation-loading { font-style: italic; }
+    .fluctuation-sample-card .ai-interpretation-advisory { font-weight: 600; color: var(--text); margin: 0 0 4px 0; }
+    .fluctuation-sample-card .ai-interpretation-note { font-size: 0.75rem; font-style: italic; margin: 0 0 6px 0; color: var(--text-muted); }
+    .fluctuation-sample-card .ai-interpretation-text { margin: 0; line-height: 1.4; white-space: pre-wrap; }
+    .fluctuation-sample-card .ai-interpretation-unavailable { font-style: italic; color: var(--text-muted); }
+    .fluctuation-sample-card .assessment-badge-wrap { margin: 0 0 8px 0; }
+    .fluctuation-sample-card .assessment-badge {
+      display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.8125rem; font-weight: 600;
+    }
+    .fluctuation-sample-card .assessment-badge.assessment-valid { background: rgba(34,197,94,0.2); color: #22c55e; }
+    .fluctuation-sample-card .assessment-badge.assessment-review { background: rgba(245,158,11,0.2); color: var(--warn); }
+    .fluctuation-sample-card .assessment-badge.assessment-issue { background: rgba(244,63,94,0.15); color: var(--fail); }
+    .fluctuation-sample-card .assessment-badge.assessment-context { background: rgba(139,139,150,0.2); color: var(--text-muted); }
+    .fluctuation-sample-card .explain-fluctuation-wrap { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .fluctuation-sample-card .ai-interpretation-cell { margin-top: 12px; font-size: 0.8125rem; color: var(--text-muted); }
+    .fluctuation-sample-card .ai-interpretation-loading { font-style: italic; display: inline-flex; align-items: center; gap: 8px; }
+    .fluctuation-sample-card .ai-interpretation-loading .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ai-spin 0.7s linear infinite; }
+    @keyframes ai-spin { to { transform: rotate(360deg); } }
     .rule-failure-card {
       padding: 14px 16px;
       margin-bottom: 10px;
@@ -3674,6 +3701,25 @@
       return formatJustificationFromModel(buildFluctuationDisplayModel(s));
     }
 
+    function parseFluctuationInterpretation(text) {
+      if (!text || typeof text !== 'string') return null;
+      var raw = text.trim();
+      var assessmentMatch = raw.match(/Assessment:\s*(.+?)(?:\n|$)/i);
+      var explanationMatch = raw.match(/Explanation:\s*([\s\S]*?)(?:\n\n|$)/i) || raw.match(/Explanation:\s*([\s\S]*)/i);
+      var assessment = assessmentMatch ? assessmentMatch[1].trim() : '';
+      var explanation = explanationMatch ? explanationMatch[1].trim() : raw.replace(/^Assessment:\s*.+$/im, '').trim();
+      var canonical = ['Likely Valid', 'Needs Review', 'Possible Data Issue', 'Insufficient Context'].find(function(l) {
+        return l.toLowerCase() === assessment.toLowerCase();
+      });
+      if (canonical) assessment = canonical;
+      var slug = assessment.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z-]/g, '');
+      if (slug === 'likely-valid') slug = 'valid';
+      if (slug === 'needs-review') slug = 'review';
+      if (slug === 'possible-data-issue') slug = 'issue';
+      if (slug === 'insufficient-context') slug = 'context';
+      return { assessment: assessment, explanation: explanation || raw, slug: slug };
+    }
+
     async function loadFluctuationSamples(dataset, runId) {
       const container = document.getElementById('fluctuation-samples-container');
       if (!container) return;
@@ -3692,22 +3738,78 @@
           updateReportHeadingStates();
           return;
         }
+        const explainPayloads = [];
         const cards = samples.map((s) => {
             const m = buildFluctuationDisplayModel(s);
             const justification = formatJustificationFromModel(m);
             const justificationAttr = escapeHtml(justification.replace(/"/g, '&quot;').replace(/\n/g, '&#10;'));
             const freqRow = m.observationPeriod ? `<div class="card-row">Frequency: ${escapeHtml(m.observationPeriod)}</div>` : '';
-            return `<div class="fluctuation-sample-card" data-justification="${justificationAttr}">
-              <div class="card-row stat-var">${escapeHtml(m.statVar)}</div>
-              <div class="card-row location">Location: ${escapeHtml(m.location)}</div>
-              <div class="card-row period">Period: ${escapeHtml(m.period)}</div>
-              ${freqRow}
-              <div class="card-row values">Values: ${escapeHtml(m.values)}</div>
-              <div class="card-row change-pct">${escapeHtml(m.changeLine)}</div>
-              ${m.sourceRows ? `<div class="card-row source-rows">Source rows: ${escapeHtml(m.sourceRows)}</div>` : ''}
-            </div>`;
+            const points = s.problemPoints || [];
+            const periodStr = points.length >= 2 ? ((points[points.length - 2].date || '') + ' \u2192 ' + (points[points.length - 1].date || '')) : '';
+            let explainBlock = '';
+            if (s.technical_signals) {
+              const payloadIdx = explainPayloads.length;
+              explainPayloads.push({
+                statVar: s.statVar || '',
+                location: s.location || '',
+                period: periodStr,
+                percent_change: s.percentDifference != null ? s.percentDifference : null,
+                technical_signals: s.technical_signals
+              });
+              explainBlock = '<div class="explain-fluctuation-wrap"><button type="button" class="explain-fluctuation-btn" data-explain-index="' + payloadIdx + '" title="AI will analyze technical signals behind this fluctuation.">\u2728 Explain with AI</button><div class="ai-interpretation-cell" id="fluctuation-ai-' + payloadIdx + '" aria-live="polite"></div></div>';
+            }
+            return '<div class="fluctuation-sample-card" data-justification="' + justificationAttr + '">' +
+              '<div class="card-row stat-var">' + escapeHtml(m.statVar) + '</div>' +
+              '<div class="card-row location">Location: ' + escapeHtml(m.location) + '</div>' +
+              '<div class="card-row period">' + escapeHtml(m.period) + '</div>' +
+              freqRow +
+              '<div class="card-row values">Values: ' + escapeHtml(m.values) + '</div>' +
+              '<div class="card-row change-pct">' + escapeHtml(m.changeLine) + '</div>' +
+              (m.sourceRows ? '<div class="card-row source-rows">Source rows: ' + escapeHtml(m.sourceRows) + '</div>' : '') +
+              explainBlock +
+              '</div>';
         }).join('');
         container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
+        container.querySelectorAll('.explain-fluctuation-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            const self = this;
+            const idx = parseInt(self.getAttribute('data-explain-index'), 10);
+            const payload = explainPayloads[idx];
+            const cell = document.getElementById('fluctuation-ai-' + idx);
+            if (!cell || !payload || cell.dataset.loaded === '1') return;
+            cell.innerHTML = '<span class="ai-interpretation-loading"><span class="spinner" aria-hidden="true"></span>Analyzing fluctuation...</span>';
+            self.disabled = true;
+            fetch((typeof API !== 'undefined' ? API : '') + '/api/fluctuation-interpretation', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            }).then(function(r) { return r.json(); }).then(function(data) {
+              cell.dataset.loaded = '1';
+              cell.innerHTML = '';
+              if (data.error) {
+                cell.innerHTML = '<p class="ai-interpretation-unavailable">AI interpretation unavailable (API key not configured).</p>';
+              } else if (data.ai_interpretation) {
+                var parsed = parseFluctuationInterpretation(data.ai_interpretation);
+                var badgeHtml = '';
+                var bodyHtml = data.ai_interpretation;
+                if (parsed && parsed.assessment) {
+                  var slug = parsed.slug || 'context';
+                  badgeHtml = '<p class="assessment-badge-wrap"><span class="assessment-badge assessment-' + slug + '">Assessment: ' + escapeHtml(parsed.assessment) + '</span></p>';
+                  bodyHtml = parsed.explanation || data.ai_interpretation;
+                }
+                cell.innerHTML = '<p class="ai-interpretation-advisory">AI Interpretation (Advisory)</p><p class="ai-interpretation-note">This explanation is AI-generated and does not affect validation results.</p>' + badgeHtml + '<p class="ai-interpretation-text"></p>';
+                var p = cell.querySelector('.ai-interpretation-text');
+                if (p) p.textContent = bodyHtml;
+              } else {
+                cell.innerHTML = '<p class="ai-interpretation-unavailable">No interpretation returned.</p>';
+              }
+              self.style.display = 'none';
+            }).catch(function() {
+              cell.innerHTML = '<p class="ai-interpretation-unavailable">Request failed.</p>';
+              self.disabled = false;
+            });
+          });
+        });
         updateReportHeadingStates();
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p><p style="color: var(--text-muted); margin: 0;">Could not load fluctuation samples.</p>');

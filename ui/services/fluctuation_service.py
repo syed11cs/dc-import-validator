@@ -43,7 +43,7 @@ def interpret_fluctuation(
     client = genai.Client(api_key=api_key)
     ts = json.dumps(technical_signals, indent=2) if technical_signals else "{}"
     pct = f"{percent_change:+.2f}%" if percent_change is not None else "N/A"
-    prompt = f"""You are interpreting technical signals for a data fluctuation anomaly. In 1–3 sentences, describe what the technical signals indicate (e.g. value change, previous near zero, scaling/unit change, missing periods, first valid after placeholder). Do NOT speculate about external causes, policy, or economics. Always give a short interpretation based on the numbers and flags below.
+    prompt = f"""You are interpreting technical signals for a data fluctuation anomaly. Classify it and explain briefly using the provided data. Do NOT speculate about real-world causes, policy, or economics.
 
 StatVar: {stat_var}
 Location: {location}
@@ -52,7 +52,19 @@ Percent change: {pct}
 Technical signals:
 {ts}
 
-Reply with plain text only (1–3 sentences)."""
+The Assessment must be based on the technical flags in technical_signals (e.g. previous_near_zero, first_valid_after_placeholder, missing_intermediate_periods, scaling_changed, unit_changed). If none of these technical flags indicate issues, prefer "Likely Valid" even if the percent change is large. Percent change magnitude alone should not cause "Needs Review" or "Possible Data Issue".
+
+Reply with exactly this format in plain text (no markdown):
+Assessment: <exactly one of the four labels below, no other words>
+Explanation: <1–3 sentences based only on the numbers and flags above>
+
+The Assessment line MUST be exactly one of:
+Likely Valid
+Needs Review
+Possible Data Issue
+Insufficient Context
+
+Do not add extra words to the Assessment line (e.g. do not write "The spike likely needs review"—write only "Needs Review"). Keep explanation concise. Avoid listing all flags unless necessary. Keep total length under 700 characters."""
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -71,7 +83,7 @@ Reply with plain text only (1–3 sentences)."""
         if not text or text.lower() in ("null", "n/a", "none"):
             logger.info("fluctuation-interpretation: no usable text from model (got %r)", text[:80] if text else "")
             return None
-        return text[:500]
+        return text[:700]
     except Exception as e:
         logger.warning("fluctuation-interpretation: %s", e)
         return None

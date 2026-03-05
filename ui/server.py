@@ -530,42 +530,50 @@ def report_info(dataset: str, run_id: str | None = Query(None)):
     return {"exists": True, "mtime": mtime}
 
 
-@app.get("/api/fluctuation-samples/{dataset}")
-def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
-    """Return structured fluctuation samples from report.json. If run_id is set and GCS is configured, use GCS; else local per-run then canonical."""
+def _get_fluctuation_samples_internal(dataset: str, run_id: str | None) -> tuple[bool, list]:
+    """Return (exists, samples) for the given dataset and optional run_id."""
     if dataset not in DATASET_OUTPUT_MAP:
-        raise HTTPException(status_code=404, detail="Unknown dataset")
+        return False, []
     if run_id and _run_id_safe(run_id):
         raw = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
         if raw is not None:
             try:
                 report = json.loads(raw.decode("utf-8"))
                 samples = _extract_fluctuation_samples(report)
-                return {"exists": True, "samples": samples}
+                return True, samples
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
         if is_gcs_configured():
-            return {"exists": False, "samples": []}
+            return False, []
         per_run_path = OUTPUT_DIR / dataset / run_id / "report.json"
         if per_run_path.exists():
             try:
                 with open(per_run_path, encoding="utf-8") as f:
                     report = json.load(f)
                 samples = _extract_fluctuation_samples(report)
-                return {"exists": True, "samples": samples}
+                return True, samples
             except (json.JSONDecodeError, OSError):
                 pass
     output_dir = DATASET_OUTPUT_MAP[dataset]
     path = output_dir / "report.json"
     if not path.exists():
-        return {"exists": False, "samples": []}
+        return False, []
     try:
         with open(path, encoding="utf-8") as f:
             report = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return {"exists": True, "samples": []}
+        return True, []
     samples = _extract_fluctuation_samples(report)
-    return {"exists": True, "samples": samples}
+    return True, samples
+
+
+@app.get("/api/fluctuation-samples/{dataset}")
+def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
+    """Return structured fluctuation samples from report.json. If run_id is set and GCS is configured, use GCS; else local per-run then canonical."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    exists, samples = _get_fluctuation_samples_internal(dataset, run_id)
+    return {"exists": exists, "samples": samples}
 
 
 class FluctuationInterpretationRequest(BaseModel):
