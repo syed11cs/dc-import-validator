@@ -386,7 +386,7 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
             if ts:
                 html += "        <tr><td colspan='4' class='technical-signals-cell'><div class='technical-signals-title'>Technical Signals</div><div class='technical-signals'>" + _format_technical_signals_row(ts) + "</div>"
                 if gemini_review_enabled:
-                    html += f"<div class='fluctuation-explain-wrap'><button type='button' class='explain-fluctuation-btn' data-fluctuation-index='{idx}'>Explain with AI</button><div class='ai-interpretation-cell' id='ai-interpretation-{idx}' aria-live='polite'></div></div>"
+                    html += f"<div class='fluctuation-explain-wrap'><button type='button' class='explain-fluctuation-btn' data-fluctuation-index='{idx}'>\u2728 Explain with AI</button><div class='ai-interpretation-cell' id='ai-interpretation-{idx}' aria-live='polite'></div></div>"
                     explain_payloads.append({
                         "statVar": s.get("statVar") or "",
                         "location": s.get("location") or "",
@@ -1198,10 +1198,18 @@ def generate_html(
     .explain-fluctuation-btn:hover {{ background-color: #0969da; color: white; box-shadow: 0 2px 6px rgba(9, 105, 218, 0.2); }}
     .explain-fluctuation-btn:disabled {{ opacity: 0.7; cursor: default; background: #f0f2f5; border-color: var(--border); color: var(--text-muted); box-shadow: none; }}
     .ai-interpretation-cell {{ margin-top: 10px; font-size: 0.8125rem; color: var(--text-muted); }}
-    .ai-interpretation-loading {{ font-style: italic; }}
+    .ai-interpretation-loading {{ font-style: italic; display: inline-flex; align-items: center; gap: 8px; }}
+    .ai-interpretation-loading .spinner {{ width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: #0969da; border-radius: 50%; animation: ai-spin 0.7s linear infinite; }}
+    @keyframes ai-spin {{ to {{ transform: rotate(360deg); }} }}
     .ai-interpretation-advisory {{ font-weight: 600; color: var(--text); margin: 0 0 4px 0; }}
     .ai-interpretation-note {{ font-size: 0.75rem; font-style: italic; margin: 0 0 8px 0; color: var(--text-muted); }}
-    .ai-interpretation-text {{ margin: 0; line-height: 1.4; }}
+    .assessment-badge-wrap {{ margin: 0 0 8px 0; }}
+    .assessment-badge {{ display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.8125rem; font-weight: 600; }}
+    .assessment-badge.assessment-valid {{ background: rgba(34,197,94,0.2); color: #22c55e; }}
+    .assessment-badge.assessment-review {{ background: rgba(245,158,11,0.2); color: #b45309; }}
+    .assessment-badge.assessment-issue {{ background: rgba(244,63,94,0.15); color: #e11d48; }}
+    .assessment-badge.assessment-context {{ background: rgba(139,139,150,0.2); color: var(--text-muted); }}
+    .ai-interpretation-text {{ margin: 0; line-height: 1.4; white-space: pre-wrap; }}
     .ai-interpretation-unavailable {{ margin: 0; font-style: italic; color: var(--text-muted); }}
     .top-lint-summary {{ margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }}
     .top-lint-group-heading {{ font-size: 0.9375rem; font-weight: 600; margin: 20px 0 8px 0; color: var(--text); }}
@@ -1397,15 +1405,31 @@ def generate_html(
         payloads_json = json.dumps(explain_payloads).replace("</", "<\\/")
         html += f"""
   <script>
+  function parseFluctuationInterpretation(text) {{
+    if (!text || typeof text !== 'string') return null;
+    var raw = text.trim();
+    var assessmentMatch = raw.match(/Assessment:\\s*(.+?)(?:\\n|$)/i);
+    var explanationMatch = raw.match(/Explanation:\\s*([\\s\\S]*?)(?:\\n\\n|$)/i) || raw.match(/Explanation:\\s*([\\s\\S]*)/i);
+    var assessment = assessmentMatch ? assessmentMatch[1].trim() : '';
+    var explanation = explanationMatch ? explanationMatch[1].trim() : raw.replace(/^Assessment:\\s*.+$/im, '').trim();
+    var canonical = ['Likely Valid', 'Needs Review', 'Possible Data Issue', 'Insufficient Context'].find(function(l) {{ return l.toLowerCase() === assessment.toLowerCase(); }});
+    if (canonical) assessment = canonical;
+    var slug = assessment.toLowerCase().replace(/\\s+/g, '-').replace(/[^a-z-]/g, '');
+    if (slug === 'likely-valid') slug = 'valid';
+    if (slug === 'needs-review') slug = 'review';
+    if (slug === 'possible-data-issue') slug = 'issue';
+    if (slug === 'insufficient-context') slug = 'context';
+    return {{ assessment: assessment, explanation: explanation || raw, slug: slug }};
+  }}
   window.FLUCTUATION_EXPLAIN_PAYLOADS = {payloads_json};
   document.querySelectorAll('.explain-fluctuation-btn').forEach(function(btn) {{
     btn.addEventListener('click', function() {{
       var self = this;
       var idx = parseInt(this.getAttribute('data-fluctuation-index'), 10);
       var cell = document.getElementById('ai-interpretation-' + idx);
-      if (!cell || cell.dataset.loaded === '1') return;
-      cell.innerHTML = '<span class="ai-interpretation-loading">Loading...</span>';
-      cell.dataset.loaded = '1';
+      if (!cell || !window.FLUCTUATION_EXPLAIN_PAYLOADS[idx] || cell.dataset.loaded === '1') return;
+      cell.innerHTML = '<span class="ai-interpretation-loading"><span class="spinner" aria-hidden="true"></span>Analyzing fluctuation...</span>';
+      self.disabled = true;
       fetch('/api/fluctuation-interpretation', {{
         method: 'POST',
         headers: {{ 'Content-Type': 'application/json' }},
@@ -1414,19 +1438,30 @@ def generate_html(
         cell.innerHTML = '';
         if (data.error) {{
           cell.innerHTML = '<p class="ai-interpretation-unavailable">AI interpretation unavailable (API key not configured).</p>';
+          self.disabled = false;
         }} else if (data.ai_interpretation) {{
-          cell.innerHTML = '<p class="ai-interpretation-advisory">AI Interpretation (Advisory)</p><p class="ai-interpretation-note">This explanation is AI-generated and does not affect validation results.</p><p class="ai-interpretation-text"></p>';
+          cell.dataset.loaded = '1';
+          var parsed = parseFluctuationInterpretation(data.ai_interpretation);
+          var badgeHtml = '';
+          var bodyHtml = data.ai_interpretation;
+          if (parsed && parsed.assessment) {{
+            var slug = parsed.slug || 'context';
+            var esc = function(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }};
+            badgeHtml = '<p class="assessment-badge-wrap"><span class="assessment-badge assessment-' + slug + '">Assessment: ' + esc(parsed.assessment) + '</span></p>';
+            bodyHtml = parsed.explanation || data.ai_interpretation;
+          }}
+          cell.innerHTML = '<p class="ai-interpretation-advisory">AI Interpretation (Advisory)</p><p class="ai-interpretation-note">This explanation is AI-generated and does not affect validation results.</p>' + badgeHtml + '<p class="ai-interpretation-text"></p>';
           var p = cell.querySelector('.ai-interpretation-text');
-          if (p) p.textContent = data.ai_interpretation;
+          if (p) p.textContent = bodyHtml;
+          self.style.display = 'none';
         }} else {{
+          cell.dataset.loaded = '1';
           cell.innerHTML = '<p class="ai-interpretation-unavailable">No interpretation returned.</p>';
+          self.style.display = 'none';
         }}
-        self.textContent = 'Explained ✓';
-        self.disabled = true;
       }}).catch(function() {{
         cell.innerHTML = '<p class="ai-interpretation-unavailable">Request failed.</p>';
-        self.textContent = 'Explained ✓';
-        self.disabled = true;
+        self.disabled = false;
       }});
     }});
   }});
