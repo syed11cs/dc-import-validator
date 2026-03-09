@@ -65,6 +65,9 @@ USER app
 
 # run_e2e_test.sh uses DATA_REPO when set, else defaults to $PROJECTS_DIR/datacommonsorg/data
 ENV PROJECTS_DIR=/app
+# Avoid "Fontconfig error: No writable cache directories" in Cloud Run (read-only fs except /tmp).
+# Java and other libs use fontconfig; point cache to writable /tmp so logs stay clean.
+ENV XDG_CACHE_HOME=/tmp/.cache
 EXPOSE 8080
 
 # Cloud Run sets PORT; default 8080 for local
