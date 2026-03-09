@@ -427,10 +427,45 @@ def _validate_stat_vars_mcf(content: str, path: str) -> list[dict]:
     return issues
 
 
+# statType values that indicate a rate-of-change StatVar (denominator is previous period, not another StatVar).
+# Detection is based on statType only; we do not use StatVar DCID for this.
+# Normalized form: lowercase, no dcid:/dcs: prefix, hyphen -> underscore.
+_RATE_OF_CHANGE_STAT_TYPES = frozenset({
+    "growthrate",
+    "growth_rate",
+    "changerate",
+    "change_rate",
+    "rateofchange",
+    "rate_of_change",
+})
+
+
+def _normalize_stat_type(stat_type_val: str) -> str:
+    """Normalize statType for comparison: strip dcid:/dcs: prefix, lowercase, hyphen to underscore."""
+    if not stat_type_val or not isinstance(stat_type_val, str):
+        return ""
+    s = stat_type_val.strip().lower()
+    for prefix in ("dcid:", "dcs:"):
+        if s.startswith(prefix):
+            s = s[len(prefix) :].strip()
+            break
+    return s.replace("-", "_")
+
+
+def _is_rate_of_change_statvar(stat_type_val: str) -> bool:
+    """True if this StatVar's statType indicates a rate of change (e.g. growthRate, changeRate).
+    For such StatVars the denominator is the previous period value, not another StatVar;
+    do not suggest measurementDenominator. Uses statType only, not DCID."""
+    normalized = _normalize_stat_type(stat_type_val)
+    return normalized in _RATE_OF_CHANGE_STAT_TYPES
+
+
 def _check_percent_statvar_denominator(content: str, path: str) -> list[dict]:
     """
     For percent/rate StatVars in stat_vars MCF, flag missing measurementDenominator.
-    Percent/rate: unit contains Percent, or statType contains rate, or measuredProperty contains Rate.
+    Triggers when: unit contains Percent, or statType/measuredProperty contains rate (proportion-style).
+    Does NOT trigger for rate-of-change StatVars (e.g. growthRate, changeRate), where the
+    denominator is the previous period, not another StatVar.
     When stat_vars MCF is provided (Custom), we can run this check.
     """
     issues: list[dict] = []
@@ -457,6 +492,11 @@ def _check_percent_statvar_denominator(content: str, path: str) -> list[dict]:
             or "rate" in measured_prop_val
         )
         if not is_percent_or_rate:
+            node_start_line = None
+            props = {}
+            return
+
+        if _is_rate_of_change_statvar(stat_type_val):
             node_start_line = None
             props = {}
             return
@@ -594,7 +634,9 @@ def _build_prompt(
         if stat_vars_schema_content:
             extra += "--- stat_vars_schema.mcf (excerpt) ---\n" + (stat_vars_schema_content[:8000] or "") + "\n"
 
-    return f"""You are reviewing a Data Commons TMCF (Table MCF) file for quality issues. This is early linting only; the import tool is the authoritative validator. Only flag issues clearly supported by the rules below; do not guess schema. If unsure, do not report.
+    return f"""You are a strict linter for Data Commons TMCF (Table MCF) files. Your role is to apply only the validation rules listed below and report only issues that are directly verifiable from the provided TMCF content and those rules.
+
+Behave like a linter, not a reviewer: do not speculate about schema correctness, naming intent, or possible typos. Only flag a finding when the rule and the file content together give clear, direct evidence. If you cannot point to a specific rule and the exact content that violates it, do not report an issue. When uncertain, return no issue rather than guessing. The import tool is the authoritative validator; this is early linting only.
 
 {spec}
 
@@ -611,7 +653,7 @@ Required validation checks (apply in order; flag each violation). Use the "type"
 Flag missing dcs: only when clearly required for schema types in TMCF (type: namespace).
 8. If StatVar/schema reference is provided below: flag StatVar DCIDs or types that do not appear in the reference (type: unknown_statvar).
 10. Unexpected properties: for nodes with typeOf: dcs:StatVarObservation, standard properties include typeOf, variableMeasured, observationAbout, observationDate, value, unit, measurementMethod, observationPeriod, scalingFactor. Flag any other property names that look non-standard or like typos (type: naming). Do not flag the standard ones.
-11. Suspicious combinations: flag as warning if StatVarObservation has unit or scalingFactor but no measurementMethod (e.g. when unit is present and non-empty), or other clearly inconsistent combinations. Do not guess; only flag when clearly wrong.{header_section}
+11. Suspicious combinations: flag as warning for other clearly inconsistent combinations. Do not guess; only flag when clearly wrong.{header_section}
 {extra}
 
 Examples — correct:
