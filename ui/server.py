@@ -583,6 +583,9 @@ class FluctuationInterpretationRequest(BaseModel):
     period: str | None = None
     percent_change: float | None = None
     technical_signals: dict | None = None
+    observation_period: str | None = None
+    period_gap_years: float | None = None
+    series_length: int | None = None
 
 
 @app.post("/api/fluctuation-interpretation")
@@ -593,8 +596,11 @@ def post_fluctuation_interpretation(body: FluctuationInterpretationRequest = Bod
     period = body.period or ""
     percent_change = body.percent_change
     technical_signals = body.technical_signals or {}
+    observation_period = body.observation_period or ""
+    period_gap_years = body.period_gap_years
+    series_length = body.series_length
     interpretation = _interpret_fluctuation(
-        stat_var, location, period, percent_change, technical_signals
+        stat_var, location, period, percent_change, technical_signals, observation_period, period_gap_years, series_length
     )
     if interpretation is None and not _get_gemini_api_key():
         return {"ai_interpretation": None, "error": "GEMINI_API_KEY or GOOGLE_API_KEY not set"}

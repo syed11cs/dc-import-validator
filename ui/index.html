@@ -1084,8 +1084,21 @@
     .fluctuation-sample-card .explain-fluctuation-btn:disabled { opacity: 0.7; cursor: default; background: var(--bg); border-color: var(--border); color: var(--text-muted); }
     .fluctuation-sample-card .ai-interpretation-cell { margin-top: 8px; font-size: 0.8125rem; color: var(--text-muted); }
     .fluctuation-sample-card .ai-interpretation-loading { font-style: italic; }
-    .fluctuation-sample-card .ai-interpretation-advisory { font-weight: 600; color: var(--text); margin: 0 0 4px 0; }
+    .fluctuation-sample-card .ai-interpretation-box {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .fluctuation-sample-card .ai-interpretation-title {
+      font-weight: 600;
+      font-size: 0.875rem;
+      margin: 0 0 4px 0;
+      color: var(--text);
+    }
     .fluctuation-sample-card .ai-interpretation-note { font-size: 0.75rem; font-style: italic; margin: 0 0 6px 0; color: var(--text-muted); }
+    .fluctuation-sample-card .ai-interpretation-explanation-label { font-size: 0.8125rem; font-weight: 600; color: var(--text); margin: 0 0 4px 0; }
     .fluctuation-sample-card .ai-interpretation-text { margin: 0; line-height: 1.4; white-space: pre-wrap; }
     .fluctuation-sample-card .ai-interpretation-unavailable { font-style: italic; color: var(--text-muted); }
     .fluctuation-sample-card .assessment-badge-wrap { margin: 0 0 8px 0; }
@@ -3757,7 +3770,10 @@
                 location: s.location || '',
                 period: periodStr,
                 percent_change: s.percentDifference != null ? s.percentDifference : null,
-                technical_signals: s.technical_signals
+                technical_signals: s.technical_signals,
+                observation_period: s.observationPeriod || '',
+                period_gap_years: s.period_gap_years != null ? s.period_gap_years : null,
+                series_length: s.series_length != null ? s.series_length : null
               });
               explainBlock = '<div class="explain-fluctuation-wrap"><button type="button" class="explain-fluctuation-btn" data-explain-index="' + payloadIdx + '" title="AI will analyze technical signals behind this fluctuation.">\u2728 Explain with AI</button><div class="ai-interpretation-cell" id="fluctuation-ai-' + payloadIdx + '" aria-live="polite"></div></div>';
             }
@@ -3800,7 +3816,7 @@
                   badgeHtml = '<p class="assessment-badge-wrap"><span class="assessment-badge assessment-' + slug + '">Assessment: ' + escapeHtml(parsed.assessment) + '</span></p>';
                   bodyHtml = parsed.explanation || data.ai_interpretation;
                 }
-                cell.innerHTML = '<p class="ai-interpretation-advisory">AI Interpretation (Advisory)</p><p class="ai-interpretation-note">This explanation is AI-generated and does not affect validation results.</p>' + badgeHtml + '<p class="ai-interpretation-text"></p>';
+                cell.innerHTML = '<div class="ai-interpretation-box"><p class="ai-interpretation-title">AI Advisory</p><p class="ai-interpretation-note">AI-generated explanation (does not affect validation results).</p>' + badgeHtml + '<p class="ai-interpretation-explanation-label">Explanation:</p><p class="ai-interpretation-text"></p></div>';
                 var p = cell.querySelector('.ai-interpretation-text');
                 if (p) p.textContent = bodyHtml;
               } else {

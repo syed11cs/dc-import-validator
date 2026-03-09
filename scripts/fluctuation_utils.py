@@ -241,6 +241,17 @@ def extract_fluctuation_samples(report: dict) -> list[dict]:
                 except (TypeError, ValueError):
                     pct = None
 
+            period_gap_years = None
+            if len(point_list) >= 2:
+                prev_date = _parse_date(point_list[-2].get("date") or "")
+                curr_date = _parse_date(point_list[-1].get("date") or "")
+                if prev_date and curr_date:
+                    gap_days = (curr_date - prev_date).days
+                    if gap_days >= 0:
+                        period_gap_years = round(gap_days / 365.25, 1)
+
+            series_length = len(point_list)
+
             samples.append({
                 "statVar": stat_var,
                 "location": place_dcid,
@@ -249,5 +260,7 @@ def extract_fluctuation_samples(report: dict) -> list[dict]:
                 "problemPoints": point_list,
                 "percentDifference": pct,
                 "technical_signals": technical_signals,
+                "period_gap_years": period_gap_years,
+                "series_length": series_length,
             })
     return samples
