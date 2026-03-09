@@ -95,6 +95,23 @@ def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
     return Path(path)
 
 
+def _llm_review_enabled(llm_review: str | None) -> bool:
+    """Whether to run LLM review this run.
+    If the client did not specify llm_review (None), default to enabled only when an API key exists.
+    If the client explicitly passed a value, respect it (truthy = enable; explicit 'false'/'no'/etc. = disable).
+    """
+    key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+    if llm_review is None:
+        return bool(key)
+    if isinstance(llm_review, str):
+        s = llm_review.strip().lower()
+        if s in ("false", "0", "no", "off", ""):
+            return False
+        if s in ("true", "1", "on", "yes"):
+            return True
+    return bool(llm_review)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Startup: configure logging and assign server session ID."""
@@ -254,12 +271,14 @@ async def run_custom_validation_stream(
             args.append(f"--stat-vars-schema-mcf={stat_vars_schema_mcf_path}")
         if config_path:
             args.extend([f"--config={config_path}"])
-        if llm_review:
+        llm_enabled = _llm_review_enabled(llm_review)
+        if llm_enabled:
             args.append("--llm-review")
             if llm_model:
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
+            logger.info("LLM review disabled for this run")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
@@ -341,12 +360,14 @@ async def run_custom_validation(
             args.append(f"--stat-vars-schema-mcf={stat_vars_schema_mcf_path}")
         if config_path:
             args.extend([f"--config={config_path}"])
-        if llm_review:
+        llm_enabled = _llm_review_enabled(llm_review)
+        if llm_enabled:
             args.append("--llm-review")
             if llm_model:
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
+            logger.info("LLM review disabled for this run")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
@@ -379,18 +400,18 @@ async def run_validation(
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
     rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
     config_path = _create_filtered_config(dataset, rule_ids)
-    if not llm_review:
-        (DATASET_OUTPUT_MAP[dataset] / "schema_review.json").unlink(missing_ok=True)
     try:
         args = ["bash", str(script), dataset]
         if config_path:
             args.extend([f"--config={config_path}"])
-        if llm_review:
+        llm_enabled = _llm_review_enabled(llm_review)
+        if llm_enabled:
             args.append("--llm-review")
             if llm_model:
                 args.append(f"--model={llm_model}")
         else:
             args.append("--no-llm-review")
+            logger.info("LLM review disabled for this run")
         request_id = getattr(request.state, "request_id", "")
         output_dir = (OUTPUT_DIR / dataset / request_id) if request_id else DATASET_OUTPUT_MAP[dataset]
         canonical_output_dir = DATASET_OUTPUT_MAP[dataset]
