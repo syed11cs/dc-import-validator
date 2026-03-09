@@ -4333,7 +4333,7 @@
         : `/report/${currentDataset}/validation_warnings_and_advisories.csv`;
       const runIdForFilename = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
       const safeRunId = (runIdForFilename || 'latest').replace(/[:/\\]/g, '-');
-      const downloadName = 'validation_issues_' + currentDataset + '_' + safeRunId + '.csv';
+      const downloadName = 'validator_findings_' + currentDataset + '_' + safeRunId + '.csv';
       try {
         const r = await fetch((API || '') + path + '?t=' + Date.now());
         if (!r.ok) throw new Error('CSV not found');

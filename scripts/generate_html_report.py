@@ -180,9 +180,12 @@ def _write_warnings_advisories_csv(
         "file",
         "line",
         "statvar",
-        "place",
+        "place_id",
         "period",
+        "previous_value",
+        "current_value",
         "percent_change",
+        "series_points",
         "message",
         "details",
         "source_file",
@@ -212,13 +215,13 @@ def _write_warnings_advisories_csv(
         else:
             details_str = ""
         statvar = ""
-        place = ""
+        place_id = ""
         if isinstance(details, dict):
             failed_rows = details.get("failed_rows") or details.get("failing_rows") or []
             if failed_rows and isinstance(failed_rows[0], dict):
                 first = failed_rows[0]
                 statvar = str(first.get("stat_var") or first.get("StatVar") or statvar)
-                place = str(first.get("place_dcid") or first.get("location") or place)
+                place_id = str(first.get("place_dcid") or first.get("location") or place_id)
         rows.append(
             _row(
                 type="validation_warning",
@@ -226,6 +229,7 @@ def _write_warnings_advisories_csv(
                 rule_id=rule_id,
                 message=message,
                 details=details_str,
+                place_id=place_id,
                 source_file=source_file,
                 dataset=dataset,
                 run_id=run_id,
@@ -246,6 +250,7 @@ def _write_warnings_advisories_csv(
                 line=str(i.get("line")).strip() if i.get("line") is not None else "",
                 message=message,
                 details=details_str,
+                place_id="",
                 source_file=source_file,
                 dataset=dataset,
                 run_id=run_id,
@@ -265,14 +270,24 @@ def _write_warnings_advisories_csv(
             pct_str = f"{float(pct):.2f}"
         else:
             pct_str = ""
+        ts = s.get("technical_signals") or {}
+        prev_val = ts.get("previous_value")
+        curr_val = ts.get("current_value")
+        prev_str = str(prev_val) if prev_val is not None else ""
+        curr_str = str(curr_val) if curr_val is not None else ""
+        series_len = s.get("series_length")
+        series_len_str = str(series_len) if series_len is not None else ""
         rows.append(
             _row(
                 type="statistical_fluctuation",
                 severity="advisory",
                 statvar=(s.get("statVar") or "").strip(),
-                place=(s.get("location") or "").strip(),
+                place_id=(s.get("location") or "").strip(),
                 period=period,
+                previous_value=prev_str,
+                current_value=curr_str,
                 percent_change=pct_str,
+                series_points=series_len_str,
                 message="Large fluctuation (>100%) between consecutive points",
                 source_file=source_file,
                 dataset=dataset,

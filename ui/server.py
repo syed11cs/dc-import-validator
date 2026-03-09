@@ -777,9 +777,9 @@ _CSV_FILENAME = "validation_warnings_and_advisories.csv"
 
 
 def _csv_download_filename(dataset: str, run_id: str | None = None) -> str:
-    """Filename for CSV download so multiple runs do not overwrite: validation_issues_<dataset>_<run_id|latest>.csv"""
+    """Filename for CSV download: validator_findings_<dataset>_<run_id|latest>.csv"""
     safe = (run_id or "latest").replace(":", "-")
-    return f"validation_issues_{dataset}_{safe}.csv"
+    return f"validator_findings_{dataset}_{safe}.csv"
 
 
 @app.get("/report/{dataset}/{run_id}/validation_warnings_and_advisories.csv")
