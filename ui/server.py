@@ -767,6 +767,69 @@ def serve_report(dataset: str):
     )
 
 
+_CSV_FILENAME = "validation_warnings_and_advisories.csv"
+
+
+def _csv_download_filename(dataset: str, run_id: str | None = None) -> str:
+    """Filename for CSV download so multiple runs do not overwrite: validation_issues_<dataset>_<run_id|latest>.csv"""
+    safe = (run_id or "latest").replace(":", "-")
+    return f"validation_issues_{dataset}_{safe}.csv"
+
+
+@app.get("/report/{dataset}/{run_id}/validation_warnings_and_advisories.csv")
+def serve_warnings_csv_by_run_id(dataset: str, run_id: str):
+    """Serve warnings/advisories CSV from GCS when configured; otherwise local per-run."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    if "/" in run_id or ".." in run_id:
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    content = gcs_reports.get_report_from_gcs(run_id, dataset, _CSV_FILENAME)
+    if content is None:
+        if is_gcs_configured():
+            raise HTTPException(
+                status_code=404,
+                detail="Warnings CSV not found. It may not have been uploaded to GCS yet.",
+            )
+        per_run_path = OUTPUT_DIR / dataset / run_id / _CSV_FILENAME
+        if not per_run_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail="Warnings CSV not found. It may not have been uploaded yet, or GCS is not configured.",
+            )
+        content = per_run_path.read_bytes()
+    filename = _csv_download_filename(dataset, run_id)
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@app.get("/report/{dataset}/validation_warnings_and_advisories.csv")
+def serve_warnings_csv(dataset: str):
+    """Serve warnings/advisories CSV from local disk (latest run for this dataset)."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    output_dir = DATASET_OUTPUT_MAP[dataset]
+    path = output_dir / _CSV_FILENAME
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Warnings CSV not found. Run validation first.")
+    filename = _csv_download_filename(dataset, None)
+    return FileResponse(
+        path,
+        media_type="text/csv",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @app.get("/summary-report/{dataset}/{run_id}", response_class=HTMLResponse)
 def serve_summary_report_by_run_id(dataset: str, run_id: str):
     """Serve summary_report.html from GCS when configured (any instance); otherwise local per-run."""

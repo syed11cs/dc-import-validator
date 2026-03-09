@@ -12,6 +12,7 @@ check_scaling_factor_consistency.
 """
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -148,6 +149,144 @@ def _load_pipeline_failure(output_dir: str) -> dict | None:
         return None
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _get_source_csv_path(report: dict | None) -> str:
+    """Return first CSV path from report commandArgs.inputFiles, or empty string."""
+    if not report or not isinstance(report, dict):
+        return ""
+    for p in (report.get("commandArgs") or {}).get("inputFiles") or []:
+        path = str(p).strip()
+        if path.lower().endswith(".csv"):
+            return path
+    return ""
+
+
+def _write_warnings_advisories_csv(
+    output_dir: str,
+    results: list,
+    report: dict | None,
+    llm_issues: list | None,
+    source_file: str = "",
+    dataset: str = "",
+    run_id: str = "",
+) -> None:
+    """Write validation_warnings_and_advisories.csv to output_dir. Combined export for DE import documentation."""
+    path = os.path.join(output_dir, "validation_warnings_and_advisories.csv")
+    fieldnames = [
+        "type",
+        "severity",
+        "rule_id",
+        "file",
+        "line",
+        "statvar",
+        "place",
+        "period",
+        "percent_change",
+        "message",
+        "details",
+        "source_file",
+        "dataset",
+        "run_id",
+        "expected_from_source",
+        "notes",
+    ]
+
+    def _row(**kwargs):
+        return {k: (kwargs.get(k) if k in kwargs else "") for k in fieldnames}
+
+    rows = []
+
+    # Validation results (FAILED and WARNING only)
+    for r in results or []:
+        status = (r.get("status") or "").strip()
+        if status not in ("FAILED", "WARNING"):
+            continue
+        rule_id = _rule_id(r)
+        message = (r.get("message") or "").strip()
+        details = r.get("details")
+        if isinstance(details, dict):
+            details_str = json.dumps(details, default=str)[:500]
+        elif details is not None:
+            details_str = str(details)[:500]
+        else:
+            details_str = ""
+        statvar = ""
+        place = ""
+        if isinstance(details, dict):
+            failed_rows = details.get("failed_rows") or details.get("failing_rows") or []
+            if failed_rows and isinstance(failed_rows[0], dict):
+                first = failed_rows[0]
+                statvar = str(first.get("stat_var") or first.get("StatVar") or statvar)
+                place = str(first.get("place_dcid") or first.get("location") or place)
+        rows.append(
+            _row(
+                type="validation_warning",
+                severity=status.lower(),
+                rule_id=rule_id,
+                message=message,
+                details=details_str,
+                source_file=source_file,
+                dataset=dataset,
+                run_id=run_id,
+            )
+        )
+
+    # AI advisory issues
+    for i in llm_issues or []:
+        severity = (i.get("severity") or "advisory").strip().lower()
+        message = (i.get("message") or "").strip()
+        suggestion = (i.get("suggestion") or "").strip()
+        details_str = f"Suggestion: {suggestion}" if suggestion else ""
+        rows.append(
+            _row(
+                type="ai_advisory",
+                severity=severity,
+                file=(i.get("file") or "").strip(),
+                line=str(i.get("line")).strip() if i.get("line") is not None else "",
+                message=message,
+                details=details_str,
+                source_file=source_file,
+                dataset=dataset,
+                run_id=run_id,
+            )
+        )
+
+    # Statistical fluctuations
+    for s in extract_fluctuation_samples(report or {}):
+        points = s.get("problemPoints") or []
+        period = ""
+        if len(points) >= 2:
+            period = " → ".join(
+                [str(p.get("date") or "") for p in points[-2:]]
+            )
+        pct = s.get("percentDifference")
+        if pct is not None and isinstance(pct, (int, float)):
+            pct_str = f"{float(pct):.2f}"
+        else:
+            pct_str = ""
+        rows.append(
+            _row(
+                type="statistical_fluctuation",
+                severity="advisory",
+                statvar=(s.get("statVar") or "").strip(),
+                place=(s.get("location") or "").strip(),
+                period=period,
+                percent_change=pct_str,
+                message="Large fluctuation (>100%) between consecutive points",
+                source_file=source_file,
+                dataset=dataset,
+                run_id=run_id,
+            )
+        )
+
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL)
+            writer.writeheader()
+            writer.writerows(rows)
+    except OSError:
+        pass  # Do not fail report generation if CSV write fails
 
 
 def _extract_rule_failure_samples(results: list) -> list[dict]:
@@ -354,9 +493,8 @@ def _format_technical_signals_row(ts: dict) -> str:
 
 
 def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = False) -> tuple[str, list[dict]]:
-    """Render Data Fluctuation Analysis section. Returns (html, list of payloads for Explain when gemini_review_enabled)."""
+    """Render Data Fluctuation Analysis section (static content only; no interactive Explain in HTML report). Returns (html, empty list)."""
     samples = extract_fluctuation_samples(report) if report else []
-    explain_payloads: list[dict] = []
     html = """
     <section class="report-section" id="fluctuation">
       <h2>Data Fluctuation Analysis</h2>
@@ -374,7 +512,7 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
             threshold_label = "100%"
         html += f"      <p>{len(samples)} fluctuation(s) above {threshold_label} threshold.</p>\n"
         html += "      <table class='details lint-table'><thead><tr><th scope='col'>StatVar</th><th scope='col'>Location</th><th scope='col'>Change</th><th scope='col'>Period</th></tr></thead><tbody>\n"
-        for idx, s in enumerate(samples):
+        for s in samples:
             pct = s.get("percentDifference")
             pct_str = _format_change_pct(pct)
             points = s.get("problemPoints") or []
@@ -384,20 +522,10 @@ def _render_fluctuation_section(report: dict, gemini_review_enabled: bool = Fals
             html += f"        <tr><td>{_escape_html(s.get('statVar') or '—')}</td><td>{_escape_html(s.get('location') or '—')}</td><td>{_escape_html(pct_str)}</td><td>{_escape_html(period)}</td></tr>\n"
             ts = s.get("technical_signals")
             if ts:
-                html += "        <tr><td colspan='4' class='technical-signals-cell'><div class='technical-signals-title'>Technical Signals</div><div class='technical-signals'>" + _format_technical_signals_row(ts) + "</div>"
-                if gemini_review_enabled:
-                    html += f"<div class='fluctuation-explain-wrap'><button type='button' class='explain-fluctuation-btn' data-fluctuation-index='{idx}'>\u2728 Explain with AI</button><div class='ai-interpretation-cell' id='ai-interpretation-{idx}' aria-live='polite'></div></div>"
-                    explain_payloads.append({
-                        "statVar": s.get("statVar") or "",
-                        "location": s.get("location") or "",
-                        "period": period,
-                        "percent_change": pct,
-                        "technical_signals": ts,
-                    })
-                html += "</td></tr>\n"
+                html += "        <tr><td colspan='4' class='technical-signals-cell'><div class='technical-signals-title'>Technical Signals</div><div class='technical-signals'>" + _format_technical_signals_row(ts) + "</div></td></tr>\n"
         html += "      </tbody></table>\n"
     html += "    </section>\n"
-    return html, explain_payloads
+    return html, []
 
 
 def _get_csv_path_from_report(output_dir: str) -> str | None:
@@ -1188,29 +1316,6 @@ def generate_html(
     .technical-signals-cell {{ background: #f8f9fa; padding: 12px 16px; vertical-align: top; }}
     .technical-signals-title {{ font-weight: 600; font-size: 0.8125rem; margin-bottom: 6px; color: var(--text); }}
     .technical-signals {{ font-size: 0.8125rem; color: var(--text-muted); line-height: 1.5; }}
-    .fluctuation-explain-wrap {{ margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }}
-    .explain-fluctuation-btn {{
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 5px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;
-      border: 1px solid #0969da; background-color: #eaf3ff; color: #0969da;
-      cursor: pointer; transition: all 0.2s ease;
-    }}
-    .explain-fluctuation-btn:hover {{ background-color: #0969da; color: white; box-shadow: 0 2px 6px rgba(9, 105, 218, 0.2); }}
-    .explain-fluctuation-btn:disabled {{ opacity: 0.7; cursor: default; background: #f0f2f5; border-color: var(--border); color: var(--text-muted); box-shadow: none; }}
-    .ai-interpretation-cell {{ margin-top: 10px; font-size: 0.8125rem; color: var(--text-muted); }}
-    .ai-interpretation-loading {{ font-style: italic; display: inline-flex; align-items: center; gap: 8px; }}
-    .ai-interpretation-loading .spinner {{ width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: #0969da; border-radius: 50%; animation: ai-spin 0.7s linear infinite; }}
-    @keyframes ai-spin {{ to {{ transform: rotate(360deg); }} }}
-    .ai-interpretation-advisory {{ font-weight: 600; color: var(--text); margin: 0 0 4px 0; }}
-    .ai-interpretation-note {{ font-size: 0.75rem; font-style: italic; margin: 0 0 8px 0; color: var(--text-muted); }}
-    .assessment-badge-wrap {{ margin: 0 0 8px 0; }}
-    .assessment-badge {{ display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.8125rem; font-weight: 600; }}
-    .assessment-badge.assessment-valid {{ background: rgba(34,197,94,0.2); color: #22c55e; }}
-    .assessment-badge.assessment-review {{ background: rgba(245,158,11,0.2); color: #b45309; }}
-    .assessment-badge.assessment-issue {{ background: rgba(244,63,94,0.15); color: #e11d48; }}
-    .assessment-badge.assessment-context {{ background: rgba(139,139,150,0.2); color: var(--text-muted); }}
-    .ai-interpretation-text {{ margin: 0; line-height: 1.4; white-space: pre-wrap; }}
-    .ai-interpretation-unavailable {{ margin: 0; font-style: italic; color: var(--text-muted); }}
     .top-lint-summary {{ margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }}
     .top-lint-group-heading {{ font-size: 0.9375rem; font-weight: 600; margin: 20px 0 8px 0; color: var(--text); }}
     .top-lint-group-heading:first-child {{ margin-top: 0; }}
@@ -1401,72 +1506,6 @@ def generate_html(
 """
         html += "    </section>\n"
 
-    if explain_payloads:
-        payloads_json = json.dumps(explain_payloads).replace("</", "<\\/")
-        html += f"""
-  <script>
-  function parseFluctuationInterpretation(text) {{
-    if (!text || typeof text !== 'string') return null;
-    var raw = text.trim();
-    var assessmentMatch = raw.match(/Assessment:\\s*(.+?)(?:\\n|$)/i);
-    var explanationMatch = raw.match(/Explanation:\\s*([\\s\\S]*?)(?:\\n\\n|$)/i) || raw.match(/Explanation:\\s*([\\s\\S]*)/i);
-    var assessment = assessmentMatch ? assessmentMatch[1].trim() : '';
-    var explanation = explanationMatch ? explanationMatch[1].trim() : raw.replace(/^Assessment:\\s*.+$/im, '').trim();
-    var canonical = ['Likely Valid', 'Needs Review', 'Possible Data Issue', 'Insufficient Context'].find(function(l) {{ return l.toLowerCase() === assessment.toLowerCase(); }});
-    if (canonical) assessment = canonical;
-    var slug = assessment.toLowerCase().replace(/\\s+/g, '-').replace(/[^a-z-]/g, '');
-    if (slug === 'likely-valid') slug = 'valid';
-    if (slug === 'needs-review') slug = 'review';
-    if (slug === 'possible-data-issue') slug = 'issue';
-    if (slug === 'insufficient-context') slug = 'context';
-    return {{ assessment: assessment, explanation: explanation || raw, slug: slug }};
-  }}
-  window.FLUCTUATION_EXPLAIN_PAYLOADS = {payloads_json};
-  document.querySelectorAll('.explain-fluctuation-btn').forEach(function(btn) {{
-    btn.addEventListener('click', function() {{
-      var self = this;
-      var idx = parseInt(this.getAttribute('data-fluctuation-index'), 10);
-      var cell = document.getElementById('ai-interpretation-' + idx);
-      if (!cell || !window.FLUCTUATION_EXPLAIN_PAYLOADS[idx] || cell.dataset.loaded === '1') return;
-      cell.innerHTML = '<span class="ai-interpretation-loading"><span class="spinner" aria-hidden="true"></span>Analyzing fluctuation...</span>';
-      self.disabled = true;
-      fetch('/api/fluctuation-interpretation', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify(window.FLUCTUATION_EXPLAIN_PAYLOADS[idx])
-      }}).then(function(r) {{ return r.json(); }}).then(function(data) {{
-        cell.innerHTML = '';
-        if (data.error) {{
-          cell.innerHTML = '<p class="ai-interpretation-unavailable">AI interpretation unavailable (API key not configured).</p>';
-          self.disabled = false;
-        }} else if (data.ai_interpretation) {{
-          cell.dataset.loaded = '1';
-          var parsed = parseFluctuationInterpretation(data.ai_interpretation);
-          var badgeHtml = '';
-          var bodyHtml = data.ai_interpretation;
-          if (parsed && parsed.assessment) {{
-            var slug = parsed.slug || 'context';
-            var esc = function(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }};
-            badgeHtml = '<p class="assessment-badge-wrap"><span class="assessment-badge assessment-' + slug + '">Assessment: ' + esc(parsed.assessment) + '</span></p>';
-            bodyHtml = parsed.explanation || data.ai_interpretation;
-          }}
-          cell.innerHTML = '<p class="ai-interpretation-advisory">AI Interpretation (Advisory)</p><p class="ai-interpretation-note">This explanation is AI-generated and does not affect validation results.</p>' + badgeHtml + '<p class="ai-interpretation-text"></p>';
-          var p = cell.querySelector('.ai-interpretation-text');
-          if (p) p.textContent = bodyHtml;
-          self.style.display = 'none';
-        }} else {{
-          cell.dataset.loaded = '1';
-          cell.innerHTML = '<p class="ai-interpretation-unavailable">No interpretation returned.</p>';
-          self.style.display = 'none';
-        }}
-      }}).catch(function() {{
-        cell.innerHTML = '<p class="ai-interpretation-unavailable">Request failed.</p>';
-        self.disabled = false;
-      }});
-    }});
-  }});
-  </script>
-"""
     html += """
     </div>
   </div>
@@ -1476,6 +1515,18 @@ def generate_html(
 
     with open(html_output_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+    # CSV export for DE import documentation (validation warnings, AI advisories, fluctuations)
+    source_file = _get_source_csv_path(report)
+    _write_warnings_advisories_csv(
+        output_dir,
+        results,
+        report,
+        _load_llm_review(output_dir),
+        source_file=source_file,
+        dataset=dataset_name,
+        run_id=os.environ.get("RUN_ID", ""),
+    )
 
     return True
 

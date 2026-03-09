@@ -94,6 +94,13 @@ def upload_reports_to_gcs(
         blob.upload_from_filename(str(path), content_type="application/json")
         uploaded += 1
 
+    # Warnings/advisories CSV (for DE import documentation)
+    csv_path = output_dir / "validation_warnings_and_advisories.csv"
+    if csv_path.exists():
+        blob = bucket.blob(f"{prefix}/validation_warnings_and_advisories.csv")
+        blob.upload_from_filename(str(csv_path), content_type="text/csv")
+        uploaded += 1
+
     # Input CSV (for rule-failure enrichment when serving from GCS: Location, Date, Source row)
     try:
         report_path = output_dir / "report.json"

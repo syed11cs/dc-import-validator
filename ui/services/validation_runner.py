@@ -36,6 +36,7 @@ _CANONICAL_ARTIFACTS = (
     "report.json",
     "schema_review.json",
     "summary_report.csv",
+    "validation_warnings_and_advisories.csv",
 )
 # Only copy to canonical when the full report exists (pipeline reached Step 3). Avoids
 # overwriting canonical with partial state when Step 0/1/2 fails (e.g. Gemini blocks, genmcf fails).

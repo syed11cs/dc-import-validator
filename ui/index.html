@@ -1474,7 +1474,8 @@
               <span id="report-timestamp" class="report-timestamp"></span>
               <span id="report-run-id-wrap" class="report-run-id-wrap" style="display: none;"><span class="report-run-id-label">Run ID:</span><span id="report-run-id" class="report-run-id-badge"></span></span>
               <a id="open-report-link" class="btn btn-sm" href="#" target="_blank" rel="noopener">Open Report ↗</a>
-              <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download</button>
+              <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download Report</button>
+              <button id="download-issues-csv-btn" class="btn btn-sm" title="Export validation findings (warnings, advisories, fluctuations) as CSV">Export Findings (CSV)</button>
             </div>
           </div>
         </div>
@@ -3451,9 +3452,11 @@
       if (reportActions) reportActions.style.display = show ? 'flex' : 'none';
       const openLink = document.getElementById('open-report-link');
       const downloadBtn = document.getElementById('download-report-btn');
+      const downloadCsvBtn = document.getElementById('download-issues-csv-btn');
       const runIdWrap = document.getElementById('report-run-id-wrap');
       if (openLink) openLink.style.display = hasReport ? '' : 'none';
       if (downloadBtn) downloadBtn.style.display = hasReport ? '' : 'none';
+      if (downloadCsvBtn) downloadCsvBtn.style.display = hasReport ? '' : 'none';
       if (runIdWrap) runIdWrap.style.display = hasReport && lastRunReportId && lastRunDataset === currentDataset ? 'inline-flex' : 'none';
       if (!hasReport) {
         const reportTimestamp = document.getElementById('report-timestamp');
@@ -4300,6 +4303,28 @@
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = `validation_report_${currentDataset}.html`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        showToast('Download failed');
+      }
+    });
+
+    document.getElementById('download-issues-csv-btn').addEventListener('click', async () => {
+      if (!currentDataset) return;
+      const path = (lastRunReportId && lastRunDataset === currentDataset)
+        ? `/report/${currentDataset}/${lastRunReportId}/validation_warnings_and_advisories.csv`
+        : `/report/${currentDataset}/validation_warnings_and_advisories.csv`;
+      const runIdForFilename = (lastRunReportId && lastRunDataset === currentDataset) ? lastRunReportId : null;
+      const safeRunId = (runIdForFilename || 'latest').replace(/[:/\\]/g, '-');
+      const downloadName = 'validation_issues_' + currentDataset + '_' + safeRunId + '.csv';
+      try {
+        const r = await fetch((API || '') + path + '?t=' + Date.now());
+        if (!r.ok) throw new Error('CSV not found');
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = downloadName;
         a.click();
         URL.revokeObjectURL(a.href);
       } catch (e) {
