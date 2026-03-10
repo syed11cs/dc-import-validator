@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 # Custom validator names that we run in this repo (DC runner does not know them).
-CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT"})
+CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT", "OBSERVATION_DATE_GRANULARITY"})
 
 # Validators we do not pass to the DC runner (we replace or run them ourselves).
 DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT"})
@@ -110,6 +110,8 @@ def _run_custom_validators(
     custom_rules: list[dict],
     lint_report_path: str | None,
     stats_summary_path: str | None,
+    tmcf_path: str | None = None,
+    csv_path: str | None = None,
 ) -> list[dict]:
     """Run custom validators and return result dicts (validation_output schema)."""
     from structural_lint_error_count import run as run_structural_lint  # noqa: I001
@@ -127,6 +129,12 @@ def _run_custom_validators(
 
         if validator == "STRUCTURAL_LINT_ERROR_COUNT":
             result = run_structural_lint(report or {}, params, rule_id=rule_id)
+            results.append(result)
+        elif validator == "OBSERVATION_DATE_GRANULARITY":
+            from observation_date_granularity import run as run_observation_date_granularity  # noqa: I001
+            result = run_observation_date_granularity(
+                tmcf_path, csv_path, params, rule_id=rule_id
+            )
             results.append(result)
         else:
             # Unknown custom validator; skip or could add more here
@@ -149,6 +157,8 @@ def main() -> int:
     parser.add_argument("--stats_summary", default=None, help="Path to stats summary (for DC rules)")
     parser.add_argument("--lint_report", default=None, help="Path to lint report JSON (for DC and custom rules)")
     parser.add_argument("--differ_output", default=None, help="Path to differ output (optional)")
+    parser.add_argument("--tmcf", default=None, help="Path to TMCF (for OBSERVATION_DATE_GRANULARITY)")
+    parser.add_argument("--csv", default=None, help="Path to CSV (for OBSERVATION_DATE_GRANULARITY)")
     args = parser.parse_args()
 
     config_path = args.validation_config
@@ -203,7 +213,11 @@ def main() -> int:
                 pass
 
     custom_results = _run_custom_validators(
-        custom_rules, args.lint_report, args.stats_summary
+        custom_rules,
+        args.lint_report,
+        args.stats_summary,
+        tmcf_path=args.tmcf,
+        csv_path=args.csv,
     )
     combined = dc_results + custom_results
 
@@ -212,7 +226,8 @@ def main() -> int:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(combined, f, indent=2, default=str)
 
-    all_passed = all(r.get("status") == "PASSED" for r in combined)
+    # PASSED and WARNING are non-blocking; only FAILED causes exit 1.
+    all_passed = all(r.get("status") in ("PASSED", "WARNING") for r in combined)
     dc_run_ok = not dc_rules or len(dc_results) >= len(dc_rules)
     if not dc_run_ok:
         return 1  # DC runner failed or produced partial output

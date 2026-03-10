@@ -1841,12 +1841,12 @@
     // ═══════════════════════════════════════════════════════════════
     // Rules (grouped by category for scalability)
     // ═══════════════════════════════════════════════════════════════
-    const RULE_CATEGORY_ORDER = ['Data Quality', 'Temporal Checks', 'Coverage Checks', 'Structural / Import Checks', 'Other'];
+    const RULE_CATEGORY_ORDER = ['Data Quality', 'Temporal', 'Coverage', 'Structural', 'Other'];
     const RULE_CATEGORIES = {
       'Data Quality': ['check_min_value', 'check_unit_consistency', 'check_scaling_factor_consistency', 'check_max_value_percent'],
-      'Temporal Checks': ['check_max_date_latest', 'check_max_date_consistent'],
-      'Coverage Checks': ['check_num_observations', 'check_num_places_consistent', 'check_num_places_count'],
-      'Structural / Import Checks': ['check_missing_refs_count', 'check_structural_lint_error_count']
+      'Temporal': ['check_max_date_latest', 'check_max_date_consistent', 'check_observation_date_granularity'],
+      'Coverage': ['check_num_observations', 'check_num_places_count', 'check_num_places_consistent'],
+      'Structural': ['check_structural_lint_error_count', 'check_missing_refs_count']
     };
     function getRuleCategory(ruleId) {
       for (const [cat, ids] of Object.entries(RULE_CATEGORIES)) {
@@ -3843,6 +3843,7 @@
       check_num_observations: 'consistent observation count',
       check_max_date_latest: 'data up to date (max date is latest)',
       check_max_date_consistent: 'consistent max date across StatVars',
+      check_observation_date_granularity: 'single observationDate granularity (YYYY, YYYY-MM, or YYYY-MM-DD)',
       check_max_value_percent: 'value within max percent threshold',
       check_missing_refs_count: 'no missing refs'
     };

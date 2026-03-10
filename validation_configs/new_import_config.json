@@ -99,6 +99,15 @@
       "params": {
         "threshold": 0
       }
+    },
+    {
+      "rule_id": "check_observation_date_granularity",
+      "description": "Warns when observationDate mixes granularities (YYYY, YYYY-MM, YYYY-MM-DD) in TMCF literals or CSV column.",
+      "validator": "OBSERVATION_DATE_GRANULARITY",
+      "scope": {
+        "data_source": "lint"
+      },
+      "params": {}
     }
   ]
 }

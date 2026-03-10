@@ -591,6 +591,10 @@ if [[ -n "$LINT_REPORT" && -f "$LINT_REPORT" ]]; then
   VALIDATION_ARGS+=(--lint_report="$LINT_REPORT")
 fi
 
+if [[ -n "$TMCF" && -f "$TMCF" && -n "$CSV" && -f "$CSV" ]]; then
+  VALIDATION_ARGS+=(--tmcf="$TMCF" --csv="$CSV")
+fi
+
 # differ_output is optional (not available for new imports)
 # Use empty_differ.csv when no differ data - avoids DuckDB error with empty DataFrame. Override with EMPTY_DIFFER_PATH.
 EMPTY_DIFFER="${EMPTY_DIFFER_PATH:-$SCRIPT_DIR/sample_data/empty_differ.csv}"
