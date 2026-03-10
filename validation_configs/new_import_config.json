@@ -40,8 +40,8 @@
         "data_source": "stats"
       },
       "params": {
-        "query": "SELECT StatVar, ScalingFactors FROM stats",
-        "condition": "ScalingFactors = (SELECT ScalingFactors FROM stats LIMIT 1)"
+        "query": "SELECT COUNT(DISTINCT ScalingFactors) AS distinct_count FROM stats WHERE ScalingFactors IS NOT NULL",
+        "condition": "distinct_count <= 1"
       }
     },
     {
@@ -74,7 +74,7 @@
     },
     {
       "rule_id": "check_max_value_percent",
-      "description": "Checks that the maximum value for percentage StatVars is not above 100.",
+      "description": "Checks that the maximum value for StatVars using the DC Percent naming convention is not above 100.",
       "validator": "MAX_VALUE_CHECK",
       "scope": {
         "data_source": "stats",
