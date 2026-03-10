@@ -88,6 +88,31 @@ def _upload_reports_sync(output_dir: Path, run_id: str, dataset: str) -> None:
     except Exception:
         logger.exception("GCS upload failed run_id=%s dataset=%s", run_id, dataset)
 
+
+def _cleanup_run_dirs(
+    output_dir: Path | None,
+    canonical_output_dir: Path | None,
+    extra_dirs: list[Path] | None = None,
+    run_id: str = "",
+) -> None:
+    """Remove per-run directories after upload and canonical copy have completed.
+
+    output_dir is only removed when it differs from canonical_output_dir (i.e. when
+    per-run isolation was used). extra_dirs (e.g. custom upload dir) are unconditionally
+    removed. All removals use ignore_errors=True so this function never raises.
+    """
+    to_remove: list[Path] = []
+    if output_dir and output_dir.is_dir():
+        if not canonical_output_dir or output_dir.resolve() != canonical_output_dir.resolve():
+            to_remove.append(output_dir)
+    for d in extra_dirs or []:
+        if d and d.is_dir():
+            to_remove.append(d)
+    for d in to_remove:
+        shutil.rmtree(d, ignore_errors=True)
+        logger.debug("cleaned up run dir: %s", d)
+    logger.info("run_cleanup completed run_id=%s dirs_removed=%d", run_id, len(to_remove))
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -285,10 +310,12 @@ async def run_validation_process(
     output_dir: Path | None = None,
     dataset: str | None = None,
     canonical_output_dir: Path | None = None,
+    extra_cleanup_dirs: list[Path] | None = None,
 ):
     """Run the validation script; stream NDJSON or wait and return result. Cleans up config_path on exit.
     If output_dir and dataset are set, uploads reports to GCS (when GCS_REPORTS_BUCKET is set), then
     copies artifacts to canonical_output_dir when it differs from output_dir (per-run isolation).
+    After upload and copy, per-run dirs are removed (output_dir when isolated, plus extra_cleanup_dirs).
     Raises HTTP 429 if MAX_CONCURRENT_RUNS is exceeded.
     """
     global _active_runs
@@ -311,7 +338,8 @@ async def run_validation_process(
     _active_runs += 1
     try:
         return await _run_validation_process_impl(
-            args, request, config_path, stream, app_root, output_dir, dataset, canonical_output_dir
+            args, request, config_path, stream, app_root, output_dir, dataset,
+            canonical_output_dir, extra_cleanup_dirs,
         )
     finally:
         _active_runs -= 1
@@ -326,6 +354,7 @@ async def _run_validation_process_impl(
     output_dir: Path | None = None,
     dataset: str | None = None,
     canonical_output_dir: Path | None = None,
+    extra_cleanup_dirs: list[Path] | None = None,
 ):
     """Internal: spawn and manage the subprocess after the concurrency check."""
     request_id = getattr(request.state, "request_id", "")
@@ -457,6 +486,9 @@ async def _run_validation_process_impl(
                             pass
                     if config_path and config_path.exists():
                         config_path.unlink(missing_ok=True)
+                    # Remove per-run and extra dirs after streaming ends (subprocess has exited).
+                    # Runs on all exit paths: normal completion, timeout, and user cancellation.
+                    _cleanup_run_dirs(output_dir, canonical_output_dir, extra_cleanup_dirs, request_id)
 
             return StreamingResponse(
                 gen(),
@@ -597,3 +629,7 @@ async def _run_validation_process_impl(
     finally:
         if not stream and config_path and config_path.exists():
             config_path.unlink(missing_ok=True)
+        # Non-streaming: subprocess has exited (we awaited it), safe to remove dirs.
+        # Streaming: the generator's finally handles cleanup instead (see above).
+        if not stream:
+            _cleanup_run_dirs(output_dir, canonical_output_dir, extra_cleanup_dirs, request_id)

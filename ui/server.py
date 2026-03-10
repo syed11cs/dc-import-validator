@@ -10,8 +10,10 @@ locally to logs/dc_import_validator.log and console. See ui/app_logging.py.
 import html
 import json
 import os
+import shutil
 import sys
 import tempfile
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -117,6 +119,29 @@ def _llm_review_enabled(llm_review: str | None) -> bool:
         if s in ("true", "1", "on", "yes"):
             return True
     return bool(llm_review)
+
+
+# Allowlist of accepted Gemini model IDs. Values outside this set are rejected so
+# unvalidated user input never reaches the external API as a model identifier.
+_ALLOWED_LLM_MODELS: frozenset[str] = frozenset({
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+})
+
+
+def _validated_llm_model(model: str | None) -> str | None:
+    """Return model if it is in the allowlist, else None (caller falls back to the script default).
+    Prevents unvalidated user input from reaching the Gemini API as a model identifier.
+    """
+    if not model:
+        return None
+    stripped = model.strip()
+    if stripped in _ALLOWED_LLM_MODELS:
+        return stripped
+    logger.warning("llm_model not in allowlist, ignoring: %r", model)
+    return None
 
 
 @asynccontextmanager
@@ -263,8 +288,11 @@ async def _run_custom_validation_impl(
                 raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
             stat_vars_schema_mcf_path.write_bytes(content)
     except HTTPException:
+        # Clean up the upload dir so rejected requests do not accumulate files on disk.
+        shutil.rmtree(run_upload_dir, ignore_errors=True)
         raise
     except Exception as e:
+        shutil.rmtree(run_upload_dir, ignore_errors=True)
         logger.exception("Error saving custom uploads or preparing run")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -281,8 +309,9 @@ async def _run_custom_validation_impl(
         llm_enabled = _llm_review_enabled(llm_review)
         if llm_enabled:
             args.append("--llm-review")
-            if llm_model:
-                args.append(f"--model={llm_model}")
+            validated_model = _validated_llm_model(llm_model)
+            if validated_model:
+                args.append(f"--model={validated_model}")
         else:
             args.append("--no-llm-review")
             logger.info("LLM review disabled for this run")
@@ -292,12 +321,22 @@ async def _run_custom_validation_impl(
         return await _run_validation_process(
             args, request, config_path, stream=stream, app_root=APP_ROOT,
             output_dir=output_dir, dataset="custom", canonical_output_dir=canonical_output_dir,
+            # Pass run_upload_dir so the runner cleans it after the subprocess exits.
+            # For streaming runs this happens in the generator's finally; for non-streaming
+            # runs in the impl's finally. Both paths run after the subprocess has exited.
+            extra_cleanup_dirs=[run_upload_dir],
         )
     except HTTPException:
+        # Runner raised before or during startup (e.g. 429). Clean up locally since the
+        # runner's cleanup callbacks were never registered or never reached.
+        if config_path and config_path.exists():
+            config_path.unlink(missing_ok=True)
+        shutil.rmtree(run_upload_dir, ignore_errors=True)
         raise
     except Exception as e:
         if config_path and config_path.exists():
             config_path.unlink(missing_ok=True)
+        shutil.rmtree(run_upload_dir, ignore_errors=True)
         logger.exception("Error running custom validation%s", " (stream)" if stream else "")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -359,8 +398,9 @@ async def run_validation(
         llm_enabled = _llm_review_enabled(llm_review)
         if llm_enabled:
             args.append("--llm-review")
-            if llm_model:
-                args.append(f"--model={llm_model}")
+            validated_model = _validated_llm_model(llm_model)
+            if validated_model:
+                args.append(f"--model={validated_model}")
         else:
             args.append("--no-llm-review")
             logger.info("LLM review disabled for this run")
@@ -372,6 +412,10 @@ async def run_validation(
             output_dir=output_dir, dataset=dataset, canonical_output_dir=canonical_output_dir,
         )
     except HTTPException:
+        # Clean up temp config on 429 or other HTTP errors raised before the runner
+        # could register its own cleanup (runner's finally is not reached on fast raises).
+        if config_path and config_path.exists():
+            config_path.unlink(missing_ok=True)
         raise
     except Exception as e:
         if config_path and config_path.exists():
@@ -562,6 +606,12 @@ def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
     return {"exists": exists, "samples": samples}
 
 
+# Limit concurrent calls to the fluctuation-interpretation endpoint. Each call blocks a
+# thread (sync endpoint) and makes a Gemini API request. Without a cap, rapid UI clicks
+# or scripted calls could exhaust the API key quota.
+_FLUCTUATION_INTERP_SEMAPHORE = threading.Semaphore(5)
+
+
 class FluctuationInterpretationRequest(BaseModel):
     """Request body for optional AI interpretation of a fluctuation sample (advisory only)."""
     statVar: str | None = None
@@ -577,20 +627,29 @@ class FluctuationInterpretationRequest(BaseModel):
 @app.post("/api/fluctuation-interpretation")
 def post_fluctuation_interpretation(body: FluctuationInterpretationRequest = Body(...)):
     """Optional, UI-triggered AI interpretation of a fluctuation sample. Advisory only; never affects validation."""
-    stat_var = body.statVar or ""
-    location = body.location or ""
-    period = body.period or ""
-    percent_change = body.percent_change
-    technical_signals = body.technical_signals or {}
-    observation_period = body.observation_period or ""
-    period_gap_years = body.period_gap_years
-    series_length = body.series_length
-    interpretation = _interpret_fluctuation(
-        stat_var, location, period, percent_change, technical_signals, observation_period, period_gap_years, series_length
-    )
-    if interpretation is None and not _get_gemini_api_key():
-        return {"ai_interpretation": None, "error": "GEMINI_API_KEY or GOOGLE_API_KEY not set"}
-    return {"ai_interpretation": interpretation}
+    if not _FLUCTUATION_INTERP_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many concurrent interpretation requests. Try again shortly.",
+            headers={"Retry-After": "5"},
+        )
+    try:
+        stat_var = body.statVar or ""
+        location = body.location or ""
+        period = body.period or ""
+        percent_change = body.percent_change
+        technical_signals = body.technical_signals or {}
+        observation_period = body.observation_period or ""
+        period_gap_years = body.period_gap_years
+        series_length = body.series_length
+        interpretation = _interpret_fluctuation(
+            stat_var, location, period, percent_change, technical_signals, observation_period, period_gap_years, series_length
+        )
+        if interpretation is None and not _get_gemini_api_key():
+            return {"ai_interpretation": None, "error": "GEMINI_API_KEY or GOOGLE_API_KEY not set"}
+        return {"ai_interpretation": interpretation}
+    finally:
+        _FLUCTUATION_INTERP_SEMAPHORE.release()
 
 
 @app.get("/api/rule-failure-samples/{dataset}")
@@ -756,9 +815,15 @@ _CSV_FILENAME = "validation_warnings_and_advisories.csv"
 
 
 def _csv_download_filename(dataset: str, run_id: str | None = None) -> str:
-    """Filename for CSV download: validator_findings_<dataset>_<run_id|latest>.csv"""
-    safe = (run_id or "latest").replace(":", "-")
-    return f"validator_findings_{dataset}_{safe}.csv"
+    """Filename for CSV download: validator_findings_<dataset>_<run_id|latest>.csv
+    Characters that could break a quoted Content-Disposition filename value are stripped.
+    """
+    raw = (run_id or "latest").replace(":", "-")
+    for ch in ('"', "'", "\r", "\n", "\\", "\x00", ";"):
+        raw = raw.replace(ch, "")
+    if not raw:
+        raw = "unknown"
+    return f"validator_findings_{dataset}_{raw}.csv"
 
 
 @app.get("/report/{dataset}/{run_id}/validation_warnings_and_advisories.csv")
@@ -860,6 +925,12 @@ def serve_summary_report(dataset: str):
 @app.get("/favicon.ico")
 def favicon():
     return Response(status_code=204)
+
+
+@app.get("/healthz")
+def healthz():
+    """Health check endpoint for infrastructure probes (Cloud Run, load balancers)."""
+    return {"status": "ok"}
 
 
 @app.get("/")
