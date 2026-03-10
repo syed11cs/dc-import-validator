@@ -78,7 +78,7 @@
       "validator": "MAX_VALUE_CHECK",
       "scope": {
         "data_source": "stats",
-        "variables": { "regex": [".*Percent.*"] }
+        "variables": { "contains_all": ["Percent"] }
       },
       "params": { "maximum": 100 }
     },
