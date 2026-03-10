@@ -301,10 +301,11 @@ def _check_value_column_mapped(tmcf_content: str) -> list[dict]:
     """
     if not re.search(r"typeOf\s*:\s*dcs:StatVarObservation", tmcf_content):
         return []
-    # Look for a line that maps value to a column (value: C:...->...)
+    # Look for a line that maps value to a CSV column (value: C:table->columnId)
+    value_column_re = re.compile(r"value\s*:\s*C:[^>]+->")
     for line in tmcf_content.splitlines():
         s = line.split("#", 1)[0].strip()
-        if s.startswith("value:") and "C:" in s and "->" in s:
+        if value_column_re.search(s):
             return []
     return [{
         "line": None,

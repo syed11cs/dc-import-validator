@@ -90,9 +90,16 @@ def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
         return None
     config["rules"] = filtered
     fd, path = tempfile.mkstemp(suffix=".json", prefix="validation_config_")
-    with open(fd, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
-    return Path(path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        return Path(path)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
 
 
 def _llm_review_enabled(llm_review: str | None) -> bool:
@@ -206,18 +213,18 @@ def get_config(dataset: str):
         return json.load(f)
 
 
-@app.post("/api/run/custom/stream")
-async def run_custom_validation_stream(
+async def _run_custom_validation_impl(
     request: Request,
-    tmcf: UploadFile = File(...),
-    csv: UploadFile = File(...),
-    stat_vars_mcf: UploadFile | None = File(None),
-    stat_vars_schema_mcf: UploadFile | None = File(None),
-    rules: str | None = Form(None),
-    llm_review: str | None = Form(None),
-    llm_model: str | None = Form(None),
+    tmcf: UploadFile,
+    csv: UploadFile,
+    stat_vars_mcf: UploadFile | None,
+    stat_vars_schema_mcf: UploadFile | None,
+    rules: str | None,
+    llm_review: str | None,
+    llm_model: str | None,
+    stream: bool,
 ):
-    """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
+    """Shared implementation for /api/run/custom and /api/run/custom/stream. Saves uploads, builds args, runs validation; cleans up temp config on exception."""
     script = SCRIPT_DIR / "run_e2e_test.sh"
     if not script.exists():
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
@@ -283,7 +290,7 @@ async def run_custom_validation_stream(
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
         return await _run_validation_process(
-            args, request, config_path, stream=True, app_root=APP_ROOT,
+            args, request, config_path, stream=stream, app_root=APP_ROOT,
             output_dir=output_dir, dataset="custom", canonical_output_dir=canonical_output_dir,
         )
     except HTTPException:
@@ -291,8 +298,25 @@ async def run_custom_validation_stream(
     except Exception as e:
         if config_path and config_path.exists():
             config_path.unlink(missing_ok=True)
-        logger.exception("Error running custom validation (stream)")
+        logger.exception("Error running custom validation%s", " (stream)" if stream else "")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/run/custom/stream")
+async def run_custom_validation_stream(
+    request: Request,
+    tmcf: UploadFile = File(...),
+    csv: UploadFile = File(...),
+    stat_vars_mcf: UploadFile | None = File(None),
+    stat_vars_schema_mcf: UploadFile | None = File(None),
+    rules: str | None = Form(None),
+    llm_review: str | None = Form(None),
+    llm_model: str | None = Form(None),
+):
+    """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
+    return await _run_custom_validation_impl(
+        request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
+    )
 
 
 @app.post("/api/run/custom")
@@ -307,81 +331,9 @@ async def run_custom_validation(
     llm_model: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs."""
-    script = SCRIPT_DIR / "run_e2e_test.sh"
-    if not script.exists():
-        raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
-
-    CUSTOM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    tmcf_path = CUSTOM_UPLOAD_DIR / "input.tmcf"
-    csv_path = CUSTOM_UPLOAD_DIR / "input.csv"
-    stat_vars_mcf_path = CUSTOM_UPLOAD_DIR / "input_stat_vars.mcf"
-    stat_vars_schema_mcf_path = CUSTOM_UPLOAD_DIR / "input_stat_vars_schema.mcf"
-
-    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
-    try:
-        tmcf_content = await tmcf.read()
-        if len(tmcf_content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"TMCF file exceeds {MAX_UPLOAD_MB}MB limit")
-        tmcf_path.write_bytes(tmcf_content)
-
-        csv_content = await csv.read()
-        if len(csv_content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"CSV file exceeds {MAX_UPLOAD_MB}MB limit")
-        csv_path.write_bytes(csv_content)
-
-        if stat_vars_mcf and stat_vars_mcf.filename:
-            content = await stat_vars_mcf.read()
-            if len(content) > max_bytes:
-                raise HTTPException(status_code=400, detail="Stat vars MCF file exceeds size limit")
-            stat_vars_mcf_path.write_bytes(content)
-        elif stat_vars_mcf_path.exists():
-            stat_vars_mcf_path.unlink(missing_ok=True)
-
-        if stat_vars_schema_mcf and stat_vars_schema_mcf.filename:
-            content = await stat_vars_schema_mcf.read()
-            if len(content) > max_bytes:
-                raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
-            stat_vars_schema_mcf_path.write_bytes(content)
-        elif stat_vars_schema_mcf_path.exists():
-            stat_vars_schema_mcf_path.unlink(missing_ok=True)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error saving custom uploads")
-        raise HTTPException(status_code=500, detail=f"Failed to save uploads: {e}")
-
-    rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
-    config_path = _create_filtered_config("custom", rule_ids)
-    try:
-        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}", f"--csv={csv_path}"]
-        if stat_vars_mcf_path.exists():
-            args.append(f"--stat-vars-mcf={stat_vars_mcf_path}")
-        if stat_vars_schema_mcf_path.exists():
-            args.append(f"--stat-vars-schema-mcf={stat_vars_schema_mcf_path}")
-        if config_path:
-            args.extend([f"--config={config_path}"])
-        llm_enabled = _llm_review_enabled(llm_review)
-        if llm_enabled:
-            args.append("--llm-review")
-            if llm_model:
-                args.append(f"--model={llm_model}")
-        else:
-            args.append("--no-llm-review")
-            logger.info("LLM review disabled for this run")
-        request_id = getattr(request.state, "request_id", "")
-        output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
-        canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
-        return await _run_validation_process(
-            args, request, config_path, stream=False, app_root=APP_ROOT,
-            output_dir=output_dir, dataset="custom", canonical_output_dir=canonical_output_dir,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        if config_path and config_path.exists():
-            config_path.unlink(missing_ok=True)
-        logger.exception("Error running custom validation")
-        raise HTTPException(status_code=500, detail=str(e))
+    return await _run_custom_validation_impl(
+        request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
+    )
 
 
 @app.post("/api/run/{dataset}")
@@ -422,6 +374,8 @@ async def run_validation(
     except HTTPException:
         raise
     except Exception as e:
+        if config_path and config_path.exists():
+            config_path.unlink(missing_ok=True)
         logger.exception("Error running validation for dataset %s", dataset)
         raise HTTPException(status_code=500, detail=str(e))
 

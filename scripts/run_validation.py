@@ -26,7 +26,7 @@ from pathlib import Path
 # Custom validator names that we run in this repo (DC runner does not know them).
 CUSTOM_VALIDATORS = frozenset({"STRUCTURAL_LINT_ERROR_COUNT", "OBSERVATION_DATE_GRANULARITY"})
 
-# Validators we do not pass to the DC runner (we replace or run them ourselves).
+# Validators implemented in this repository (not handled by the DC runner).
 DC_EXCLUDE_VALIDATORS = frozenset({"LINT_ERROR_COUNT", "STRUCTURAL_LINT_ERROR_COUNT"})
 
 
@@ -137,8 +137,14 @@ def _run_custom_validators(
             )
             results.append(result)
         else:
-            # Unknown custom validator; skip or could add more here
-            pass
+            # Unknown custom validator: surface as WARNING so config mistakes are visible
+            results.append({
+                "validation_name": rule_id,
+                "status": "WARNING",
+                "message": f"Unknown custom validator: {validator}",
+                "details": {"validator": validator},
+                "validation_params": params,
+            })
 
     return results
 

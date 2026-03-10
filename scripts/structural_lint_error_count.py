@@ -66,7 +66,7 @@ def run(
     return {
         "validation_name": rule_id,
         "status": "PASSED",
-        "message": "",
+        "message": "No structural lint errors detected.",
         "details": {"lint_error_count": lint_error_count},
         "validation_params": params,
     }
@@ -101,7 +101,7 @@ def main() -> None:
         print(json.dumps({
             "validation_name": args.rule_id,
             "status": "PASSED",
-            "message": "",
+            "message": "Lint report not found; structural check skipped.",
             "details": {"lint_error_count": 0},
             "validation_params": {},
         }), file=sys.stdout)
