@@ -542,6 +542,67 @@ def _get_fluctuation_samples_internal(dataset: str, run_id: str | None) -> tuple
     return True, samples
 
 
+def _get_lint_warnings_internal(dataset: str, run_id: str | None) -> tuple[bool, list[dict]]:
+    """Return (exists, warnings) by aggregating report["entries"] where level is WARNING; exclude Existence_FailedDcCall_* (resolution diagnostics). Group by counterKey, count, sort descending."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        return False, []
+    report = None
+    if run_id and _run_id_safe(run_id):
+        raw = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
+        if raw is not None:
+            try:
+                report = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        if report is None and not is_gcs_configured():
+            per_run_path = OUTPUT_DIR / dataset / run_id / "report.json"
+            if per_run_path.exists():
+                try:
+                    with open(per_run_path, encoding="utf-8") as f:
+                        report = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    pass
+    if report is None and (not run_id or not _run_id_safe(run_id) or not is_gcs_configured()):
+        output_dir = DATASET_OUTPUT_MAP[dataset]
+        path = output_dir / "report.json"
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    report = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+    if not report:
+        return False, []
+    entries = report.get("entries", [])
+    if not isinstance(entries, list):
+        return True, []
+    # Aggregate from entries where level is WARNING; skip Existence_FailedDcCall_* (resolution diagnostics); group by counterKey, count occurrences
+    LINT_RESOLUTION_PREFIX = "Existence_FailedDcCall_"
+    count_by_key: dict[str, int] = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        level = (e.get("level") or e.get("levelSummary") or "").strip()
+        if level not in ("LEVEL_WARNING", "WARNING"):
+            continue
+        key = e.get("counterKey") or e.get("counter") or ""
+        if not key or key.startswith(LINT_RESOLUTION_PREFIX):
+            continue
+        count_by_key[key] = count_by_key.get(key, 0) + 1
+    warnings = [{"key": k, "count": c} for k, c in count_by_key.items()]
+    warnings.sort(key=lambda x: (-x["count"], x["key"]))
+    return True, warnings
+
+
+@app.get("/api/lint-warnings/{dataset}")
+def get_lint_warnings(dataset: str, run_id: str | None = Query(None)):
+    """Return import tool LEVEL_WARNING counters from report.json (advisory only). Same report resolution as fluctuation-samples."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    exists, warnings = _get_lint_warnings_internal(dataset, run_id)
+    return {"exists": exists, "warnings": warnings}
+
+
 @app.get("/api/fluctuation-samples/{dataset}")
 def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
     """Return structured fluctuation samples from report.json. If run_id is set and GCS is configured, use GCS; else local per-run then canonical."""
