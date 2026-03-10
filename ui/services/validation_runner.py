@@ -13,7 +13,7 @@ import shutil
 import time
 from pathlib import Path
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ui.app_logging import get_logger
@@ -27,6 +27,23 @@ def _run_timeout_sec() -> int:
         return int(v) if v else 0
     except ValueError:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Concurrency guard: each validation run spawns a JVM (~500 MB heap) + Python
+# subprocess chain. Without a limit, concurrent runs exhaust memory on Cloud Run.
+# Configurable via MAX_CONCURRENT_RUNS (default: 3, minimum: 1).
+# ---------------------------------------------------------------------------
+
+def _max_concurrent_runs() -> int:
+    try:
+        return max(1, int(os.environ.get("MAX_CONCURRENT_RUNS", "3").strip()))
+    except ValueError:
+        return 3
+
+# Plain integer — safe without a lock: asyncio runs on a single thread, so
+# all increments/decrements happen within the event loop with no data races.
+_active_runs: int = 0
 
 # Artifacts to copy from per-run dir to canonical "latest" dir
 _CANONICAL_ARTIFACTS = (
@@ -272,7 +289,45 @@ async def run_validation_process(
     """Run the validation script; stream NDJSON or wait and return result. Cleans up config_path on exit.
     If output_dir and dataset are set, uploads reports to GCS (when GCS_REPORTS_BUCKET is set), then
     copies artifacts to canonical_output_dir when it differs from output_dir (per-run isolation).
+    Raises HTTP 429 if MAX_CONCURRENT_RUNS is exceeded.
     """
+    global _active_runs
+    max_runs = _max_concurrent_runs()
+    if _active_runs >= max_runs:
+        logger.warning(
+            "run_rejected_at_capacity active=%d max=%d request_id=%s",
+            _active_runs,
+            max_runs,
+            getattr(request.state, "request_id", ""),
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many concurrent validation runs ({_active_runs}/{max_runs}). "
+                "Try again shortly."
+            ),
+            headers={"Retry-After": "30"},
+        )
+    _active_runs += 1
+    try:
+        return await _run_validation_process_impl(
+            args, request, config_path, stream, app_root, output_dir, dataset, canonical_output_dir
+        )
+    finally:
+        _active_runs -= 1
+
+
+async def _run_validation_process_impl(
+    args: list,
+    request: Request,
+    config_path: Path | None,
+    stream: bool,
+    app_root: Path,
+    output_dir: Path | None = None,
+    dataset: str | None = None,
+    canonical_output_dir: Path | None = None,
+):
+    """Internal: spawn and manage the subprocess after the concurrency check."""
     request_id = getattr(request.state, "request_id", "")
     env = {**os.environ, "RUN_ID": request_id} if request_id else None
     run_start_time = time.monotonic()

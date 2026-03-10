@@ -595,64 +595,57 @@ def post_fluctuation_interpretation(body: FluctuationInterpretationRequest = Bod
 
 @app.get("/api/rule-failure-samples/{dataset}")
 def get_rule_failure_samples(dataset: str, run_id: str | None = Query(None)):
-    """Return structured rule failure samples from validation_output.json. If run_id is set and GCS is configured, use GCS; else local per-run then canonical (with enrichment when input.csv/report.json present)."""
+    """Return structured rule failure samples from validation_output.json. If run_id is set and GCS is
+    configured, use GCS; else local per-run then canonical (with enrichment when report.json/input.csv
+    are present). Artifact resolution uses _resolve_artifact; enrichment source is determined separately
+    because it requires a directory or raw GCS bytes depending on the storage tier."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
-    if run_id and _run_id_safe(run_id):
-        raw_vo = gcs_reports.get_report_from_gcs(run_id, dataset, "validation_output.json")
-        if raw_vo is not None:
-            try:
-                results = json.loads(raw_vo.decode("utf-8"))
-                if not isinstance(results, list):
-                    results = []
-                samples = extract_rule_failure_samples(results)
-                raw_report = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
-                raw_csv = gcs_reports.get_report_from_gcs(run_id, dataset, "input.csv")
-                if raw_report is not None and raw_csv is not None:
-                    try:
-                        report = json.loads(raw_report.decode("utf-8"))
-                        with tempfile.TemporaryDirectory(prefix="gcs_rule_failure_") as tmp:
-                            tmp_path = Path(tmp)
-                            (tmp_path / "input.csv").write_bytes(raw_csv)
-                            report["commandArgs"] = report.get("commandArgs") or {}
-                            report["commandArgs"]["inputFiles"] = [str(tmp_path / "input.csv")]
-                            (tmp_path / "report.json").write_text(
-                                json.dumps(report), encoding="utf-8"
-                            )
-                            enrich_rule_failure_samples(samples, tmp_path, results)
-                    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-                        pass
-                return {"exists": True, "samples": samples}
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        if is_gcs_configured():
-            return {"exists": False, "samples": []}
-        per_run_dir = OUTPUT_DIR / dataset / run_id
-        per_run_vo = per_run_dir / "validation_output.json"
-        if per_run_vo.exists():
-            try:
-                with open(per_run_vo, encoding="utf-8") as f:
-                    results = json.load(f)
-                if not isinstance(results, list):
-                    results = []
-                samples = extract_rule_failure_samples(results)
-                enrich_rule_failure_samples(samples, per_run_dir, results)
-                return {"exists": True, "samples": samples}
-            except (json.JSONDecodeError, OSError):
-                pass
-    output_dir = DATASET_OUTPUT_MAP[dataset]
-    path = output_dir / "validation_output.json"
-    if not path.exists():
+
+    # --- Step 1: resolve validation_output.json via the shared helper ---
+    raw_vo = _resolve_artifact(dataset, run_id, "validation_output.json")
+    if raw_vo is None:
         return {"exists": False, "samples": []}
     try:
-        with open(path, encoding="utf-8") as f:
-            results = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        results = json.loads(raw_vo.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return {"exists": True, "samples": []}
     if not isinstance(results, list):
         results = []
     samples = extract_rule_failure_samples(results)
-    enrich_rule_failure_samples(samples, output_dir, results)
+
+    # --- Step 2: enrich samples with per-row detail from report.json + input.csv ---
+    # Enrichment is best-effort: failures are silently ignored and samples are returned
+    # without enrichment. The enrichment source mirrors the storage tier that _resolve_artifact
+    # used: GCS when configured with a valid run_id, local per-run dir otherwise, or canonical.
+    if run_id and _run_id_safe(run_id):
+        raw_report = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
+        raw_csv = gcs_reports.get_report_from_gcs(run_id, dataset, "input.csv")
+        if raw_report is not None and raw_csv is not None:
+            # GCS path: write CSV to a temp dir so enrich_rule_failure_samples can read it
+            try:
+                report = json.loads(raw_report.decode("utf-8"))
+                with tempfile.TemporaryDirectory(prefix="gcs_rule_failure_") as tmp:
+                    tmp_path = Path(tmp)
+                    (tmp_path / "input.csv").write_bytes(raw_csv)
+                    report["commandArgs"] = report.get("commandArgs") or {}
+                    report["commandArgs"]["inputFiles"] = [str(tmp_path / "input.csv")]
+                    (tmp_path / "report.json").write_text(json.dumps(report), encoding="utf-8")
+                    enrich_rule_failure_samples(samples, tmp_path, results)
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                pass
+        elif not is_gcs_configured():
+            # Local path: enrich directly from the per-run output directory if it exists
+            per_run_dir = OUTPUT_DIR / dataset / run_id
+            if per_run_dir.is_dir():
+                enrich_rule_failure_samples(samples, per_run_dir, results)
+            else:
+                # Per-run dir absent (e.g. _resolve_artifact fell back to canonical).
+                # Enrich from canonical so callers always get the best available data.
+                enrich_rule_failure_samples(samples, DATASET_OUTPUT_MAP[dataset], results)
+    else:
+        enrich_rule_failure_samples(samples, DATASET_OUTPUT_MAP[dataset], results)
+
     return {"exists": True, "samples": samples}
 
 
@@ -662,7 +655,7 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     data = None
-    if run_id:
+    if run_id and _run_id_safe(run_id):
         raw_vo = gcs_reports.get_report_from_gcs(run_id, dataset, "validation_output.json")
         raw_llm = gcs_reports.get_report_from_gcs(run_id, dataset, "schema_review.json")
         raw_report = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
@@ -710,7 +703,7 @@ def serve_report_by_run_id(dataset: str, run_id: str):
     """Serve validation report from GCS when configured (so any instance can serve); otherwise local per-run."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
-    if "/" in run_id or ".." in run_id:
+    if not _run_id_safe(run_id):
         raise HTTPException(status_code=400, detail="Invalid run_id")
     content = gcs_reports.get_report_from_gcs(run_id, dataset, "validation_report.html")
     if content is None:
@@ -773,7 +766,7 @@ def serve_warnings_csv_by_run_id(dataset: str, run_id: str):
     """Serve warnings/advisories CSV from GCS when configured; otherwise local per-run."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
-    if "/" in run_id or ".." in run_id:
+    if not _run_id_safe(run_id):
         raise HTTPException(status_code=400, detail="Invalid run_id")
     content = gcs_reports.get_report_from_gcs(run_id, dataset, _CSV_FILENAME)
     if content is None:

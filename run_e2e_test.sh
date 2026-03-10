@@ -190,7 +190,7 @@ emit_failure() {
   # Escape $msg via Python so quotes, backslashes, newlines, etc. never corrupt the JSON.
   # json.dumps produces a quoted string ("…"); [1:-1] strips the outer quotes leaving only the content.
   local escaped_msg
-  escaped_msg=$(${PYTHON:-python3} -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" -- "$msg" 2>/dev/null) \
+  escaped_msg=$(${PYTHON:-python3} -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$msg" 2>/dev/null) \
     || escaped_msg="(message unavailable; see logs)"
   local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$escaped_msg\""
   if [[ -n "$limit" && "$limit" != "null" ]]; then
