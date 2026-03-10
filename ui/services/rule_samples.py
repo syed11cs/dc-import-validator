@@ -229,11 +229,8 @@ def extract_rule_failure_samples(results: list) -> list[dict]:
             })
         elif rule == "check_scaling_factor_consistency":
             failing_rows = details.get("failing_rows") or []
-            raw_expected = params.get("condition") or "consistent scaling factor"
-            if "ScalingFactors = (SELECT ScalingFactors FROM stats LIMIT 1)" in (raw_expected or ""):
-                expected = "one scaling factor per StatVar (all rows same)"
-            else:
-                expected = raw_expected
+            # Use a fixed display message keyed by rule_id; do not depend on DC runner's condition/SQL text.
+            expected = "all StatVars must use the same scaling factor"
             for row in failing_rows:
                 stat_var = row.get("StatVar") or row.get("stat_var") or ""
                 value = row.get("ScalingFactors") or row.get("scaling_factors")

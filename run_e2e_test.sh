@@ -600,8 +600,10 @@ if [[ -n "$TMCF" && -f "$TMCF" && -n "$CSV" && -f "$CSV" ]]; then
   VALIDATION_ARGS+=(--tmcf="$TMCF" --csv="$CSV")
 fi
 
-# differ_output is optional (not available for new imports)
-# Use empty_differ.csv when no differ data - avoids DuckDB error with empty DataFrame. Override with EMPTY_DIFFER_PATH.
+# differ_output is optional (not available for new imports). When no baseline comparison exists,
+# we pass empty_differ.csv so the DC validation runner can create the differ table in DuckDB
+# without failing; the file has a header row (StatVar,DELETED,MODIFIED,ADDED) and no data.
+# Override path via EMPTY_DIFFER_PATH if needed.
 EMPTY_DIFFER="${EMPTY_DIFFER_PATH:-$SCRIPT_DIR/sample_data/empty_differ.csv}"
 if [[ -n "$DIFFER_OUTPUT" && -f "$DIFFER_OUTPUT" ]]; then
   VALIDATION_ARGS+=(--differ_output="$DIFFER_OUTPUT")
@@ -611,7 +613,10 @@ else
   VALIDATION_ARGS+=(--differ_output=)
 fi
 
-# Preprocess summary_report.csv: normalize year-only MinDate/MaxDate to YYYY-01-01 so pd.to_datetime() in DC validator parses correctly (not as Unix epoch)
+# Preprocess summary_report.csv: rewrite year-only MinDate/MaxDate (YYYY) to YYYY-01-01.
+# The DC validation runner (and pandas) can interpret bare YYYY as Unix epoch or invalid;
+# normalizing to YYYY-01-01 ensures date parsing behaves correctly. If the upstream
+# validator changes to accept year-only values, this workaround may need revisiting.
 if [[ -n "$STATS_SUMMARY" && -f "$STATS_SUMMARY" ]]; then
   if $PYTHON -c '
 import pandas as pd

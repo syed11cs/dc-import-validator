@@ -248,7 +248,9 @@ async def _stream_run_output(proc):
                 step = int(_step_match.group(1))
                 if _step_match.group(2):
                     label = _step_match.group(2).strip()
-            # Fallback only; ::STEP::N is authoritative. Backend log "Step N" = UI step N (0–4).
+            # Fallback: infer step from log substrings when ::STEP::N is not present. This depends on
+            # the log format produced by run_e2e_test.sh (e.g. "Step 2", "Running dc-import genmcf").
+            # If the E2E script changes its log messages, fallback detection may need updating.
             elif "Pre-Import Checks" in text or "CSV quality" in text.lower():
                 step = 0
             elif "Step 1" in text or ("Gemini review" in text and "model:" in text):

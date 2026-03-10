@@ -75,6 +75,9 @@ def _validate_config(config: dict, path: str) -> list[str]:
                 if not isinstance(rv, dict):
                     errors.append(f"{prefix}: scope must be an object")
                 elif "data_source" in rv and rv["data_source"] not in VALID_DATA_SOURCES:
+                    # data_source is enforced here for schema consistency and documentation of rule intent.
+                    # The upstream DC validation runner may determine data source from validator type;
+                    # this field may not influence execution but keeps config self-describing.
                     errors.append(f"{prefix}: scope.data_source must be one of {VALID_DATA_SOURCES}")
             elif rk == "params":
                 if not isinstance(rv, dict):
