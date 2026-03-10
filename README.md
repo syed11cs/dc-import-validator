@@ -128,7 +128,7 @@ Perfect for automation, CI/CD, or power users:
 | `--skip-rules ID1,ID2` | Skip these rules |
 | `--llm-review` | Enable Gemini Review (requires API key) |
 | `--no-llm-review` | Disable Gemini Review |
-| `--model ID` | Gemini model (default: gemini-2.5-flash) |
+| `--model ID` | Gemini model — allowed values: `gemini-2.5-flash` (default), `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
 | `--help` | Show help |
 ### ☁️ Deployment
 
@@ -159,9 +159,14 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket name for report storage; upload/serve fails clearly if bucket not accessible |
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
+| `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM (~500 MB heap); tune to available memory. Returns HTTP 429 when at capacity. |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
 | `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks (default: `true`) |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
+
+#### Health Check
+
+The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load balancer probes.
 
 #### Recommended Modes
 
@@ -214,7 +219,7 @@ All supported environment variables in one place. See `.env.example` for an opti
 |-------|-------------|-----------|
 | File Preflight | TMCF/CSV exist, correct extensions | ✅ Yes |
 | CSV Quality | No duplicate columns/rows, numeric value column | ✅ Yes |
-| Gemini Review | Schema typos, naming conventions | ⚠️ Configurable |
+| Gemini Review | Schema typos, naming conventions | ⚠️ Always advisory (never blocking) |
 | Min Value | Values below threshold | ✅ Yes |
 | Unit Consistency | Same StatVar, same unit | ✅ Yes |
 | Scaling Factor | Consistent scaling per StatVar | ✅ Yes |
@@ -258,11 +263,14 @@ Control which failures block the pipeline in `validation_configs/warn_only_rules
 
 Rules listed here become WARNINGS instead of ERRORS (non-blocking).
 
-### 🧪 Predefined Dataset
+### 🧪 Predefined Datasets
 
 | Dataset | Description | Expected Result |
 |---------|-------------|-----------------|
-| child_birth | Sample data from DC repo (sample_data/child_birth/: TMCF, CSV, stat_vars.mcf) | ✅ PASS |
+| `child_birth` | Bundled in this repo (`sample_data/child_birth/`): TMCF, CSV, stat_vars.mcf | ✅ PASS |
+| `statistics_poland` | From DC data repo (`statvar_imports/statistics_poland/test/`): TMCF, CSV, stat_vars, stat_vars_schema | ✅ PASS |
+| `finland_census` | From DC data repo (`statvar_imports/finland_census/test_data/`): TMCF, CSV, stat_vars, stat_vars_schema | ✅ PASS |
+| `uae_population` | From DC data repo: TMCF, CSV | ✅ PASS |
 
 Use **Custom** (upload your own TMCF + CSV) to test failure cases or other schemas.
 
