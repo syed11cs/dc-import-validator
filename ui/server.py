@@ -229,11 +229,15 @@ async def _run_custom_validation_impl(
     if not script.exists():
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
 
-    CUSTOM_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    tmcf_path = CUSTOM_UPLOAD_DIR / "input.tmcf"
-    csv_path = CUSTOM_UPLOAD_DIR / "input.csv"
-    stat_vars_mcf_path = CUSTOM_UPLOAD_DIR / "input_stat_vars.mcf"
-    stat_vars_schema_mcf_path = CUSTOM_UPLOAD_DIR / "input_stat_vars_schema.mcf"
+    # Use per-run upload directory to prevent concurrent requests from overwriting each other's files.
+    # request_id is set by LoggingMiddleware before this function is called.
+    request_id = getattr(request.state, "request_id", "") or uuid.uuid4().hex[:12]
+    run_upload_dir = CUSTOM_UPLOAD_DIR / request_id
+    run_upload_dir.mkdir(parents=True, exist_ok=True)
+    tmcf_path = run_upload_dir / "input.tmcf"
+    csv_path = run_upload_dir / "input.csv"
+    stat_vars_mcf_path = run_upload_dir / "input_stat_vars.mcf"
+    stat_vars_schema_mcf_path = run_upload_dir / "input_stat_vars_schema.mcf"
 
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
     try:
@@ -252,16 +256,12 @@ async def _run_custom_validation_impl(
             if len(content) > max_bytes:
                 raise HTTPException(status_code=400, detail="Stat vars MCF file exceeds size limit")
             stat_vars_mcf_path.write_bytes(content)
-        elif stat_vars_mcf_path.exists():
-            stat_vars_mcf_path.unlink(missing_ok=True)
 
         if stat_vars_schema_mcf and stat_vars_schema_mcf.filename:
             content = await stat_vars_schema_mcf.read()
             if len(content) > max_bytes:
                 raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
             stat_vars_schema_mcf_path.write_bytes(content)
-        elif stat_vars_schema_mcf_path.exists():
-            stat_vars_schema_mcf_path.unlink(missing_ok=True)
     except HTTPException:
         raise
     except Exception as e:
@@ -286,7 +286,7 @@ async def _run_custom_validation_impl(
         else:
             args.append("--no-llm-review")
             logger.info("LLM review disabled for this run")
-        request_id = getattr(request.state, "request_id", "")
+        # request_id was already extracted for the upload dir above; reuse it here.
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
         return await _run_validation_process(
@@ -382,7 +382,39 @@ async def run_validation(
 
 def _run_id_safe(run_id: str) -> bool:
     """Reject run_id that could escape OUTPUT_DIR (path traversal)."""
-    return run_id is not None and "/" not in run_id and ".." not in run_id
+    return run_id is not None and "/" not in run_id and ".." not in run_id and "\x00" not in run_id
+
+
+def _resolve_artifact(dataset: str, run_id: str | None, filename: str) -> bytes | None:
+    """Resolve artifact bytes via: GCS (when configured) → local per-run dir → canonical output dir.
+
+    Returns raw bytes if found, None if not found at any level.
+    When GCS is configured and a run_id is present, GCS is the authoritative source so
+    any instance (e.g. Cloud Run replica) can serve results; local is not consulted.
+    """
+    if run_id and _run_id_safe(run_id):
+        raw = gcs_reports.get_report_from_gcs(run_id, dataset, filename)
+        if raw is not None:
+            return raw
+        if is_gcs_configured():
+            return None  # GCS is source of truth; do not fall through to local
+        per_run_path = OUTPUT_DIR / dataset / run_id / filename
+        if per_run_path.exists():
+            try:
+                return per_run_path.read_bytes()
+            except OSError:
+                return None
+    # Canonical (latest) fallback — used when no run_id or run_id lookup failed locally
+    output_dir = DATASET_OUTPUT_MAP.get(dataset)
+    if not output_dir:
+        return None
+    path = output_dir / filename
+    if not path.exists():
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
 
 
 @app.get("/api/validation-result/{dataset}")
@@ -390,35 +422,15 @@ def get_validation_result(dataset: str, run_id: str | None = Query(None)):
     """Return per-rule validation results from validation_output.json. When GCS is configured and run_id is set, read from GCS only (no local fallback) so any instance can serve."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
-    if run_id and _run_id_safe(run_id):
-        raw = gcs_reports.get_report_from_gcs(run_id, dataset, "validation_output.json")
-        if raw is not None:
-            try:
-                results = json.loads(raw.decode("utf-8"))
-                if not isinstance(results, list):
-                    results = []
-                return {"exists": True, "results": results}
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        if is_gcs_configured():
-            return {"exists": False, "results": []}
-        # Local per-run fallback (GCS not configured)
-        per_run_path = OUTPUT_DIR / dataset / run_id / "validation_output.json"
-        if per_run_path.exists():
-            try:
-                with open(per_run_path, encoding="utf-8") as f:
-                    results = json.load(f)
-                if not isinstance(results, list):
-                    results = []
-                return {"exists": True, "results": results}
-            except (json.JSONDecodeError, OSError):
-                pass
-    output_dir = DATASET_OUTPUT_MAP[dataset]
-    path = output_dir / "validation_output.json"
-    if not path.exists():
+    raw = _resolve_artifact(dataset, run_id, "validation_output.json")
+    if raw is None:
         return {"exists": False, "results": []}
-    with open(path, encoding="utf-8") as f:
-        results = json.load(f)
+    try:
+        results = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {"exists": True, "results": []}
+    if not isinstance(results, list):
+        results = []
     return {"exists": True, "results": results}
 
 
@@ -445,33 +457,12 @@ def get_llm_report(dataset: str, run_id: str | None = Query(None)):
         ai_advisory_count = len(issues) - len(blockers)
         return {"exists": True, "issues": issues, "passed": len(blockers) == 0, "ai_advisory_count": ai_advisory_count}
 
-    if run_id and _run_id_safe(run_id):
-        raw = gcs_reports.get_report_from_gcs(run_id, dataset, "schema_review.json")
-        if raw is not None:
-            try:
-                issues = json.loads(raw.decode("utf-8"))
-                return _issues_to_response(issues)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        if is_gcs_configured():
-            return {"exists": False, "issues": [], "passed": True, "ai_advisory_count": 0}
-        # Local per-run output (GCS not configured)
-        per_run_path = OUTPUT_DIR / dataset / run_id / "schema_review.json"
-        if per_run_path.exists():
-            try:
-                with open(per_run_path, encoding="utf-8") as f:
-                    issues = json.load(f)
-                return _issues_to_response(issues)
-            except (json.JSONDecodeError, OSError):
-                pass
-    output_dir = DATASET_OUTPUT_MAP[dataset]
-    path = output_dir / "schema_review.json"
-    if not path.exists():
+    raw = _resolve_artifact(dataset, run_id, "schema_review.json")
+    if raw is None:
         return {"exists": False, "issues": [], "passed": True, "ai_advisory_count": 0}
     try:
-        with open(path, encoding="utf-8") as f:
-            issues = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        issues = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return {"exists": True, "issues": [], "passed": False, "ai_advisory_count": 0}
     return _issues_to_response(issues)
 
@@ -509,68 +500,27 @@ def _get_fluctuation_samples_internal(dataset: str, run_id: str | None) -> tuple
     """Return (exists, samples) for the given dataset and optional run_id."""
     if dataset not in DATASET_OUTPUT_MAP:
         return False, []
-    if run_id and _run_id_safe(run_id):
-        raw = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
-        if raw is not None:
-            try:
-                report = json.loads(raw.decode("utf-8"))
-                samples = _extract_fluctuation_samples(report)
-                return True, samples
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        if is_gcs_configured():
-            return False, []
-        per_run_path = OUTPUT_DIR / dataset / run_id / "report.json"
-        if per_run_path.exists():
-            try:
-                with open(per_run_path, encoding="utf-8") as f:
-                    report = json.load(f)
-                samples = _extract_fluctuation_samples(report)
-                return True, samples
-            except (json.JSONDecodeError, OSError):
-                pass
-    output_dir = DATASET_OUTPUT_MAP[dataset]
-    path = output_dir / "report.json"
-    if not path.exists():
+    raw = _resolve_artifact(dataset, run_id, "report.json")
+    if raw is None:
         return False, []
     try:
-        with open(path, encoding="utf-8") as f:
-            report = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        report = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return True, []
-    samples = _extract_fluctuation_samples(report)
-    return True, samples
+    return True, _extract_fluctuation_samples(report)
 
 
 def _get_lint_warnings_internal(dataset: str, run_id: str | None) -> tuple[bool, list[dict]]:
     """Return (exists, warnings) by aggregating report["entries"] where level is WARNING; exclude Existence_FailedDcCall_* (resolution diagnostics). Group by counterKey, count, sort descending."""
     if dataset not in DATASET_OUTPUT_MAP:
         return False, []
-    report = None
-    if run_id and _run_id_safe(run_id):
-        raw = gcs_reports.get_report_from_gcs(run_id, dataset, "report.json")
-        if raw is not None:
-            try:
-                report = json.loads(raw.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        if report is None and not is_gcs_configured():
-            per_run_path = OUTPUT_DIR / dataset / run_id / "report.json"
-            if per_run_path.exists():
-                try:
-                    with open(per_run_path, encoding="utf-8") as f:
-                        report = json.load(f)
-                except (json.JSONDecodeError, OSError):
-                    pass
-    if report is None and (not run_id or not _run_id_safe(run_id) or not is_gcs_configured()):
-        output_dir = DATASET_OUTPUT_MAP[dataset]
-        path = output_dir / "report.json"
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    report = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                pass
+    raw = _resolve_artifact(dataset, run_id, "report.json")
+    if raw is None:
+        return False, []
+    try:
+        report = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return True, []
     if not report:
         return False, []
     entries = report.get("entries", [])

@@ -563,12 +563,10 @@ def _call_gemini(
     """Call Gemini API for TMCF review (uses google-genai SDK)."""
     try:
         from google import genai
-    except ImportError:
-        print(
-            "Error: google-genai not installed. Run: pip install google-genai",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    except ImportError as exc:
+        raise RuntimeError(
+            "google-genai is not installed. Run: pip install google-genai"
+        ) from exc
 
     client = genai.Client(api_key=api_key)
     prompt = _build_prompt(

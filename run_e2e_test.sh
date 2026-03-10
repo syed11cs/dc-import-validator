@@ -187,7 +187,12 @@ log_error() { echo -e "${RED}[ERROR]${NC} [session=$SESSION_ID] $1"; }
 # If limit (4th) is non-empty, adds "limit" to JSON. If details_file (5th) exists, embeds its JSON as "details".
 emit_failure() {
   local code=$1 step=$2 msg=$3 limit=${4:-} details_file=${5:-}
-  local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$msg\""
+  # Escape $msg via Python so quotes, backslashes, newlines, etc. never corrupt the JSON.
+  # json.dumps produces a quoted string ("…"); [1:-1] strips the outer quotes leaving only the content.
+  local escaped_msg
+  escaped_msg=$(${PYTHON:-python3} -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" -- "$msg" 2>/dev/null) \
+    || escaped_msg="(message unavailable; see logs)"
+  local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$escaped_msg\""
   if [[ -n "$limit" && "$limit" != "null" ]]; then
     base="${base},\"limit\":${limit}"
   fi
