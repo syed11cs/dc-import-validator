@@ -2951,6 +2951,7 @@
         hideStatusBanner();
         hideSummaryCard();
         clearValidationResults();
+        document.querySelectorAll('.rules-category').forEach(d => { d.open = false; });
         document.getElementById('log-completed-at').style.display = 'none';
         buildProgressPills();
         document.getElementById('progress-container').style.display = 'block';
