@@ -2961,13 +2961,7 @@
         }, 1000);
         updateProgressPctLabel();
         const mainEl = document.querySelector('.main');
-        const resultsSection = document.getElementById('results-section');
-        if (mainEl && resultsSection) {
-          setTimeout(() => {
-            const targetScrollTop = mainEl.scrollTop + (resultsSection.getBoundingClientRect().top - mainEl.getBoundingClientRect().top) - 16;
-            smoothScrollTo(mainEl, Math.max(0, targetScrollTop), 600);
-          }, 50);
-        }
+        if (mainEl) mainEl.scrollTop = 0;
         btn.textContent = '\u25A0 Stop run';
         btn.title = '';
         btn.classList.add('btn-stop');
