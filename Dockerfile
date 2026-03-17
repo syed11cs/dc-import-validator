@@ -12,10 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 ARG DATA_REPO_URL=https://github.com/datacommonsorg/data.git
 
-# Sparse clone: only tools/import_validation (child_birth testdata is in this repo)
+# Sparse clone: tools/import_validation (runner) + tools/import_differ (differ step)
 RUN git clone --depth 1 --filter=blob:none --sparse "${DATA_REPO_URL}" datacommonsorg/data \
     && cd datacommonsorg/data \
-    && git sparse-checkout set tools/import_validation \
+    && git sparse-checkout set tools/import_validation tools/import_differ \
     && rm -rf .git
 
 # ------------------------------------------------------------------------------

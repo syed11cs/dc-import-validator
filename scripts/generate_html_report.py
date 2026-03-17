@@ -151,6 +151,80 @@ def _load_pipeline_failure(output_dir: str) -> dict | None:
         return None
 
 
+def _load_differ_stats(output_dir: str) -> dict | None:
+    """Load differ statistics from differ_output/ subdirectory.
+
+    Returns a dict with keys: previous_obs_size, current_obs_size, obs_diff_size,
+    added, deleted, modified. All values are int or None. Returns None if no
+    differ output exists (baseline not available for this run).
+    """
+    differ_dir = os.path.join(output_dir, "differ_output")
+    summary_path = os.path.join(differ_dir, "differ_summary.json")
+    csv_path = os.path.join(differ_dir, "obs_diff_summary.csv")
+
+    if not os.path.isfile(summary_path) and not os.path.isfile(csv_path):
+        return None
+
+    stats: dict = {}
+
+    if os.path.isfile(summary_path):
+        try:
+            with open(summary_path, encoding="utf-8") as f:
+                data = json.load(f)
+            for key in ("previous_obs_size", "current_obs_size", "obs_diff_size"):
+                val = data.get(key)
+                stats[key] = int(val) if val is not None else None
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            pass
+
+    if os.path.isfile(csv_path):
+        try:
+            df = pd.read_csv(csv_path)
+            for col, dest in (("ADDED", "added"), ("DELETED", "deleted"), ("MODIFIED", "modified")):
+                if col in df.columns and not df.empty:
+                    stats[dest] = int(df[col].sum())
+        except Exception:
+            pass
+
+    return stats if stats else None
+
+
+def _render_differ_section(stats: dict | None) -> str:
+    """Render 'Dataset Changes vs Baseline' section. Returns empty string if no differ data."""
+    if not stats:
+        return ""
+
+    def _fmt(val) -> str:
+        return str(val) if val is not None else "N/A"
+
+    rows = ""
+    for label, key in (
+        ("Previous observations", "previous_obs_size"),
+        ("Current observations", "current_obs_size"),
+        ("Diff size", "obs_diff_size"),
+        ("Added", "added"),
+        ("Deleted", "deleted"),
+        ("Modified", "modified"),
+    ):
+        val = stats.get(key)
+        if val is None:
+            continue
+        rows += f"      <tr><th scope='row'>{label}</th><td>{_fmt(val)}</td></tr>\n"
+
+    if not rows:
+        return ""
+
+    return f"""
+    <section class="report-section" id="differ">
+      <h2>Dataset Changes vs Baseline</h2>
+      <table class="details lint-table">
+        <tbody>
+{rows}        </tbody>
+      </table>
+    </section>
+"""
+
+
 def _get_source_csv_path(report: dict | None) -> str:
     """Return first CSV path from report commandArgs.inputFiles, or empty string."""
     if not report or not isinstance(report, dict):
@@ -1500,6 +1574,7 @@ def generate_html(
     # Import tool details (after validation results)
     html += _render_import_run_section(report)
     html += _render_key_counters_section(report, stats_df)
+    html += _render_differ_section(_load_differ_stats(output_dir))
     html += _render_statvar_section(stats_df)
     html += _render_lint_summary_section(report)
     html += _render_counter_breakdown_section_wrapped(report)

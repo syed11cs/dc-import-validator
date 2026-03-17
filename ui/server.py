@@ -7,9 +7,11 @@ Logging: session ID + request_id; on Cloud Run logs go to stdout (captured by Cl
 locally to logs/dc_import_validator.log and console. See ui/app_logging.py.
 """
 
+import asyncio
 import html
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -22,6 +24,9 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent.parent
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
+_SCRIPTS_DIR = APP_ROOT / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, Body
 from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
@@ -48,6 +53,7 @@ from ui.services.review_summary import (
 )
 from ui import gcs_reports
 from ui.gcs_reports import GCSAccessError, is_gcs_configured
+import gcs_baselines as _gcs_baselines
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_MB = 50
@@ -238,6 +244,16 @@ def get_config(dataset: str):
         return json.load(f)
 
 
+def _sanitize_dataset_name(name: str) -> str:
+    """Validate a user-provided dataset name against the required format.
+
+    Returns the name unchanged if valid, or an empty string if invalid.
+    Valid format: ^[a-z0-9-]{3,48}$ (matches the UI enforcement rule).
+    """
+    name = name.strip()
+    return name if re.fullmatch(r"[a-z0-9-]{3,48}", name) else ""
+
+
 async def _run_custom_validation_impl(
     request: Request,
     tmcf: UploadFile,
@@ -248,6 +264,7 @@ async def _run_custom_validation_impl(
     llm_review: str | None,
     llm_model: str | None,
     stream: bool,
+    dataset_name: str | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream. Saves uploads, builds args, runs validation; cleans up temp config on exception."""
     script = SCRIPT_DIR / "run_e2e_test.sh"
@@ -296,10 +313,19 @@ async def _run_custom_validation_impl(
         logger.exception("Error saving custom uploads or preparing run")
         raise HTTPException(status_code=500, detail=str(e))
 
+    if not dataset_name or not _sanitize_dataset_name(dataset_name):
+        raise HTTPException(
+            status_code=400,
+            detail="dataset_name is required and must be 3–48 characters using only lowercase letters, numbers, and hyphens (e.g. canada-population).",
+        )
+    baseline_name = f"custom_{dataset_name.strip()}"
+    logger.info("custom run dataset_name=%r baseline_name=%s request_id=%s", dataset_name, baseline_name, request_id)
+
     rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
     config_path = _create_filtered_config("custom", rule_ids)
     try:
-        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}", f"--csv={csv_path}"]
+        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}", f"--csv={csv_path}",
+                f"--baseline-name={baseline_name}"]
         if stat_vars_mcf_path.exists():
             args.append(f"--stat-vars-mcf={stat_vars_mcf_path}")
         if stat_vars_schema_mcf_path.exists():
@@ -325,6 +351,8 @@ async def _run_custom_validation_impl(
             # For streaming runs this happens in the generator's finally; for non-streaming
             # runs in the impl's finally. Both paths run after the subprocess has exited.
             extra_cleanup_dirs=[run_upload_dir],
+            # baseline_id lets the UI call /api/accept-baseline/custom with the right dataset_id.
+            extra_done_fields={"baseline_id": baseline_name},
         )
     except HTTPException:
         # Runner raised before or during startup (e.g. 429). Clean up locally since the
@@ -351,10 +379,12 @@ async def run_custom_validation_stream(
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
+    dataset_name: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
+        dataset_name=dataset_name,
     )
 
 
@@ -368,10 +398,12 @@ async def run_custom_validation(
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
+    dataset_name: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs."""
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
+        dataset_name=dataset_name,
     )
 
 
@@ -743,7 +775,10 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
         if data is None and run_id and is_gcs_configured():
             raise HTTPException(status_code=404, detail="No validation result in GCS for this run. Run validation or try again shortly.")
     if data is None:
-        output_dir = DATASET_OUTPUT_MAP[dataset]
+        if run_id and _run_id_safe(run_id):
+            output_dir = OUTPUT_DIR / dataset / run_id
+        else:
+            output_dir = DATASET_OUTPUT_MAP[dataset]
         data = _build_review_summary(dataset, output_dir)
     if data is None:
         raise HTTPException(status_code=404, detail="No validation result. Run validation first.")
@@ -920,6 +955,136 @@ def serve_summary_report(dataset: str):
         media_type="text/html",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
     )
+
+
+@app.post("/api/accept-baseline/{dataset}")
+async def accept_baseline(dataset: str, body: dict = Body(default={})):
+    """Promote the MCF output of a completed run to become the new versioned baseline.
+
+    Body fields:
+      run_id      (optional) – used to locate the per-run output directory.
+      baseline_id (optional) – the baseline dataset_id to write to. Defaults to
+                                dataset for named datasets. Required for custom.
+      accepted_by (optional) – display name of the approver for the manifest.
+    """
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+
+    run_status = body.get("run_status") or None
+    if run_status != "success":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot accept baseline: the run did not succeed (run_status must be 'success').",
+        )
+
+    run_id = body.get("run_id") or None
+    if run_id and not _run_id_safe(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+
+    baseline_id: str = body.get("baseline_id") or (dataset if dataset != "custom" else "")
+    if not baseline_id:
+        raise HTTPException(status_code=400, detail="baseline_id is required for custom datasets")
+
+    accepted_by: str | None = body.get("accepted_by") or None
+
+    # Locate MCF files: per-run dir first (if run_id set and dir not yet cleaned up),
+    # then the canonical output dir (which always receives MCF copies after each run).
+    genmcf_dir: Path | None = None
+    if run_id:
+        candidate = OUTPUT_DIR / dataset / run_id
+        if candidate.is_dir() and list(candidate.glob("*.mcf")):
+            genmcf_dir = candidate
+    if genmcf_dir is None:
+        canonical = DATASET_OUTPUT_MAP[dataset]
+        if canonical.is_dir() and list(canonical.glob("*.mcf")):
+            genmcf_dir = canonical
+    if genmcf_dir is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "MCF output not found. The run output may have been cleaned up. "
+                "Re-run validation before accepting a new baseline."
+            ),
+        )
+
+    cmd = [
+        sys.executable,
+        str(_SCRIPTS_DIR / "run_differ.py"),
+        "--update_baseline",
+        f"--current_mcf_dir={genmcf_dir}",
+        f"--dataset_id={baseline_id}",
+    ]
+    if run_id:
+        cmd.append(f"--run_id={run_id}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(APP_ROOT),
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip() or "Baseline update failed"
+            logger.error(
+                "accept_baseline failed dataset=%s baseline_id=%s run_id=%s: %s",
+                dataset, baseline_id, run_id, err,
+            )
+            raise HTTPException(status_code=500, detail=err)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("accept_baseline error dataset=%s baseline_id=%s", dataset, baseline_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Read the version that was just written from the updated manifest.
+    version: str | None = None
+    try:
+        manifest_path = APP_ROOT / "output" / "baselines" / baseline_id / "latest" / "manifest.json"
+        if manifest_path.exists():
+            version = json.loads(manifest_path.read_text(encoding="utf-8")).get("version")
+    except Exception:
+        pass
+
+    # If accepted_by was provided but not yet in manifest (run_differ doesn't pass it through),
+    # patch it into both latest/ and the versioned copy now.
+    if accepted_by and version:
+        try:
+            for slot in ("latest", version):
+                p = APP_ROOT / "output" / "baselines" / baseline_id / slot / "manifest.json"
+                if p.exists():
+                    m = json.loads(p.read_text(encoding="utf-8"))
+                    m["accepted_by"] = accepted_by
+                    p.write_text(json.dumps(m, indent=2), encoding="utf-8")
+        except Exception:
+            pass  # non-fatal
+
+    logger.info(
+        "accept_baseline ok dataset=%s baseline_id=%s run_id=%s version=%s accepted_by=%s",
+        dataset, baseline_id, run_id, version, accepted_by,
+    )
+    return {"ok": True, "dataset": dataset, "baseline_id": baseline_id, "version": version, "run_id": run_id}
+
+
+@app.get("/api/baseline-versions/{dataset}")
+def get_baseline_versions(dataset: str, baseline_id: str | None = Query(None)):
+    """Return baseline version history for a dataset (newest first).
+
+    For named datasets the baseline_id equals the dataset name.
+    For custom datasets pass the baseline_id (custom_{hash}) as a query param.
+    Designed so a future history UI can call this without any other changes.
+    """
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    bid = baseline_id or (dataset if dataset != "custom" else None)
+    if not bid:
+        return {"versions": []}
+    try:
+        return {"versions": _gcs_baselines.list_baseline_versions(bid)}
+    except Exception as e:
+        logger.warning("baseline-versions error dataset=%s baseline_id=%s: %s", dataset, bid, e)
+        return {"versions": []}
 
 
 @app.get("/favicon.ico")

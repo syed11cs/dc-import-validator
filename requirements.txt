@@ -10,3 +10,6 @@ google-genai
 
 # Optional: for storing reports in GCS (set GCS_REPORTS_BUCKET to enable)
 google-cloud-storage
+
+# Required by tools/import_differ/import_differ.py (top-level import; needed even for local runner mode)
+google-api-python-client

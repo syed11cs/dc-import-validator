@@ -108,6 +108,34 @@
         "data_source": "lint"
       },
       "params": {}
+    },
+    {
+      "rule_id": "check_deleted_records_count",
+      "description": "Checks that the number of deleted observations does not exceed the allowed threshold.",
+      "validator": "DELETED_RECORDS_COUNT",
+      "scope": { "data_source": "differ" },
+      "params": { "threshold": 0 }
+    },
+    {
+      "rule_id": "check_deleted_records_percent",
+      "description": "Checks that deleted observations do not exceed 5% of the baseline dataset.",
+      "validator": "DELETED_RECORDS_PERCENT",
+      "scope": { "data_source": "differ" },
+      "params": { "threshold": 5.0 }
+    },
+    {
+      "rule_id": "check_modified_records_count",
+      "description": "Checks that modified observation counts are consistent across StatVars.",
+      "validator": "MODIFIED_RECORDS_COUNT",
+      "scope": { "data_source": "differ" },
+      "params": {}
+    },
+    {
+      "rule_id": "check_added_records_count",
+      "description": "Checks that added observation counts are consistent across StatVars.",
+      "validator": "ADDED_RECORDS_COUNT",
+      "scope": { "data_source": "differ" },
+      "params": {}
     }
   ]
 }

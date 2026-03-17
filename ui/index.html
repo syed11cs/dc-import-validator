@@ -211,6 +211,12 @@
     .rule-result-icon.passed { color: var(--success); }
     .rule-result-icon.failed { color: var(--fail); background: rgba(244,63,94,0.12); padding: 2px 8px; border-radius: 4px; font-weight: 500; }
     .rule-result-icon.warning { color: var(--warn); background: rgba(245,158,11,0.18); padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+    .rule-result-icon.failed.has-message,
+    .rule-result-icon.warning.has-message { background: none; padding: 0; }
+    .rule-result-icon .rule-status-badge { padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+    .rule-result-icon.failed .rule-status-badge { background: rgba(244,63,94,0.12); }
+    .rule-result-icon.warning .rule-status-badge { background: rgba(245,158,11,0.18); }
+    .rule-result-icon .rule-inline-message { font-weight: 400; margin-left: 8px; opacity: 0.85; }
     .rule-result-icon.skipped { color: var(--text-muted); opacity: 0.6; }
     .rule-item-disabled { opacity: 0.75; }
     .rule-item-disabled .rule-badge-disabled { font-size: 0.75rem; color: var(--text-muted); background: var(--bg-elevated); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
@@ -706,6 +712,7 @@
     }
     .report-group-heading--success { color: rgba(16, 185, 129, 0.95); }
     .report-group-heading--failure { color: rgba(244, 63, 94, 0.9); }
+    .report-group-heading--warning { color: rgba(245, 158, 11, 0.95); }
     .report-group-heading--advisory { color: var(--advisory); }
     .report-group-success { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
     .report-group-box {
@@ -718,6 +725,7 @@
     }
     .report-group-box--success { border-left-color: rgba(16, 185, 129, 0.45); }
     .report-group-box--advisory { border-left-color: rgba(14, 165, 233, 0.5); }
+    .report-group-box--warning { border-left-color: rgba(245, 158, 11, 0.55); }
     .report-group-box--blocking { border-left-color: rgba(244, 63, 94, 0.5); }
     .report-group-box--muted { border-left-color: rgba(113, 113, 122, 0.45); }
     .report-group-box .report-group-inner-details {
@@ -1145,6 +1153,86 @@
       border-color: var(--accent);
       color: var(--accent);
     }
+    .differ-section-context { font-size: 0.8rem; color: var(--text-muted); margin: 0 0 6px 0; }
+    .differ-baseline-meta { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 4px 0; }
+    .differ-baseline-approver { margin-bottom: 10px; }
+    .differ-no-changes-note { font-size: 0.82rem; color: var(--success); margin: 8px 0 0 0; }
+    .differ-no-baseline-msg { margin: 0 0 2px 0; font-size: 0.85rem; color: var(--text-secondary, #94a3b8); line-height: 1.5; }
+    .differ-baseline-created { font-size: 0.85rem; line-height: 1.5; margin: 0 0 4px 0; color: var(--success); font-weight: 500; }
+    /* Baseline history */
+    #baseline-history-container { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .baseline-history-title { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 6px 0; }
+    .baseline-history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+    .baseline-history-item { font-size: 0.78rem; color: var(--text-muted); }
+    .baseline-history-version { font-weight: 500; color: var(--text); margin-right: 2px; }
+    .baseline-history-current { color: var(--success); font-size: 0.72rem; margin: 0 2px; }
+    /* Baseline confirmation modal */
+    .baseline-modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .baseline-modal {
+      background: var(--surface, #1e293b); border: 1px solid var(--border, rgba(255,255,255,0.1));
+      border-radius: 10px; padding: 24px 28px; width: 380px; max-width: calc(100vw - 32px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .baseline-modal-title { margin: 0 0 10px 0; font-size: 1rem; font-weight: 600; }
+    .baseline-modal-body { margin: 0 0 14px 0; font-size: 0.85rem; color: var(--text-secondary, #94a3b8); line-height: 1.5; }
+    .baseline-modal-meta { margin: 0 0 20px 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 0.82rem; }
+    .baseline-modal-meta dt { color: var(--text-muted); }
+    .baseline-modal-meta dd { margin: 0; font-family: monospace; word-break: break-all; }
+    .baseline-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+    .baseline-modal-btn { padding: 6px 16px; border-radius: 6px; font-size: 0.82rem; font-weight: 500; cursor: pointer; border: none; }
+    .baseline-modal-cancel { background: var(--surface-2, #334155); color: var(--text, #e2e8f0); }
+    .baseline-modal-cancel:hover { opacity: 0.85; }
+    .baseline-modal-accept { background: var(--accent, #3b82f6); color: #fff; }
+    .baseline-modal-accept:hover:not(:disabled) { opacity: 0.85; }
+    .baseline-modal-accept:disabled { opacity: 0.55; cursor: default; }
+    .baseline-modal-danger { background: #dc2626; color: #fff; }
+    .baseline-modal-danger:hover { background: #b91c1c; }
+    .baseline-modal-input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 0.85rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); margin-bottom: 4px; }
+    .baseline-modal-input:focus { outline: none; box-shadow: 0 0 0 1px var(--accent, #6366f1); }
+    .baseline-modal-input-error { font-size: 0.78rem; color: var(--warn); display: none; }
+    .differ-accept-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
+    .accept-baseline-btn {
+      padding: 5px 13px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;
+      background: var(--accent, #3b82f6); color: #fff; border: none; cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .accept-baseline-btn:hover:not(:disabled) { opacity: 0.85; }
+    .accept-baseline-btn:disabled { opacity: 0.55; cursor: default; }
+    .accept-baseline-btn.accepted { background: var(--success, #22c55e); cursor: default; }
+    .differ-stats-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+    .differ-stats-table th, .differ-stats-table td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .differ-stats-table thead th {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .differ-stats-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .differ-stats-table th:last-child { text-align: right; }
+    .differ-row--deleted td { color: var(--fail); }
+    .differ-row--modified td { color: var(--warn); }
+    .differ-row--added td { color: var(--success); }
+    .differ-changed-statvars-table td { font-size: 0.82rem; }
+    .differ-changed-statvars-table td:not(:first-child) { text-align: right; width: 3.5rem; }
+    .differ-changed-statvars-table th:not(:first-child) { text-align: right; width: 3.5rem; }
+    .differ-sv-name { font-family: var(--font-mono, monospace); font-size: 0.8rem; word-break: break-all; }
+    .differ-cell--deleted  { color: var(--fail); font-weight: 500; }
+    .differ-cell--modified { color: var(--warn); font-weight: 500; }
+    .differ-cell--added    { color: var(--success); font-weight: 500; }
+    .differ-cell--zero     { color: var(--text-muted); }
     .rule-failure-group { margin-top: 16px; }
     .rule-failure-group:first-child { margin-top: 0; }
     .rule-failure-group-title {
@@ -1238,6 +1326,17 @@
     .dataset-desc.has-fail::before { content: ''; display: inline-block; width: 6px; height: 6px; background: var(--fail); border-radius: 50%; margin-right: 6px; vertical-align: middle; }
     .custom-upload { margin-top: 16px; }
     .custom-upload label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    .custom-upload-baseline-note { margin: 10px 0 0; font-size: 0.73rem; color: var(--text-muted); line-height: 1.4; }
+    .custom-dataset-name-row { margin-top: 14px; }
+    .custom-dataset-name-row label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    #custom-dataset-name { width: 100%; max-width: 320px; font-size: 0.82rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
+    #custom-dataset-name::placeholder { color: var(--text-muted); opacity: 0.7; }
+    #custom-dataset-name:focus { outline: none; box-shadow: 0 0 0 1px var(--accent, #6366f1); }
+    #custom-dataset-name.name-invalid { border-color: var(--warn); }
+    #custom-dataset-name.name-invalid:focus { box-shadow: 0 0 0 1px var(--warn); }
+    #custom-dataset-name.name-valid { border-color: var(--success, #22c55e); }
+    #custom-dataset-name.name-valid:focus { box-shadow: 0 0 0 1px var(--success, #22c55e); }
+    .custom-restore-notice { margin-top: 8px; font-size: 0.78rem; color: var(--text-secondary, #94a3b8); line-height: 1.4; }
     .custom-upload-optional { margin-top: 12px; }
     .custom-upload-optional-summary {
       font-size: 0.75rem;
@@ -1313,11 +1412,11 @@
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%) translateY(100px);
-      padding: 10px 20px;
+      padding: 10px 16px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      font-size: 0.875rem;
+      font-size: 0.9rem;
       color: var(--text);
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       opacity: 0;
@@ -1362,6 +1461,11 @@
             <button type="button" id="csv-choose-btn" class="file-choose-btn">Choose File</button>
             <span id="csv-file-name" class="file-name">No file chosen</span>
             <button type="button" id="csv-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+          </div>
+          <div class="custom-dataset-name-row">
+            <label for="custom-dataset-name">Dataset name <span class="required-asterisk" aria-label="required">*</span></label>
+            <input type="text" id="custom-dataset-name" placeholder="e.g. canada-population" maxlength="48" autocomplete="off" spellcheck="false" />
+            <p class="custom-upload-baseline-note" id="custom-dataset-name-hint">Enter a name (3–48 characters, lowercase letters, numbers, hyphens). Example: canada-population</p>
           </div>
           <details class="custom-upload-optional" id="custom-upload-optional">
             <summary class="custom-upload-optional-summary">Optional: Stat vars MCF files</summary>
@@ -1475,6 +1579,7 @@
         </div>
         <div id="summary-card" class="summary-card" aria-live="polite">
           <div id="summary-card-content"></div>
+          <div id="custom-restore-notice" class="custom-restore-notice" style="display:none;"></div>
         </div>
         <div class="output-header">
           <div class="tabs">
@@ -1508,24 +1613,25 @@
         <div id="report-panel" class="panel">
           <div class="review-insights">
             <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory</h4>
-              <p class="report-section-note">Advisory feedback generated by the AI review. These findings do not affect validation results.</p>
-              <div id="llm-report-container"></div>
-            </div>
-            <div class="report-group">
               <h4 id="report-heading-validation" class="report-group-heading">Blocking Issues</h4>
-              <p class="report-section-note">Validation rules that failed and must be fixed before the dataset can pass validation.</p>
               <div id="rule-failure-container"></div>
             </div>
             <div class="report-group">
               <h4 id="report-heading-data-import-warnings" class="report-group-heading">Data Import Warnings</h4>
-              <p class="report-section-note">Warnings detected by the import tool, such as missing or malformed values in the source data.</p>
               <div id="lint-warnings-container"></div>
+            </div>
+            <div class="report-group" id="differ-group" style="display:none;">
+              <h4 id="report-heading-differ" class="report-group-heading">Dataset Changes</h4>
+              <div id="differ-container"></div>
+              <div id="baseline-history-container" style="display:none;" aria-label="Baseline history"></div>
             </div>
             <div class="report-group">
               <h4 id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</h4>
-              <p class="report-section-note">Fluctuations are computed between consecutive available data points. Period length may vary.</p>
               <div id="fluctuation-samples-container"></div>
+            </div>
+            <div class="report-group">
+              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory</h4>
+              <div id="llm-report-container"></div>
             </div>
           </div>
         </div>
@@ -1601,6 +1707,14 @@
     let lastRunHadAiReview = false;
     /** When set, report was uploaded to GCS; use /report/{dataset}/{run_id} so any instance can serve it. */
     let lastRunReportId = null;
+    /** baseline_id for the last run (named datasets: same as dataset; custom: custom_{hash}). */
+    let lastRunBaselineId = null;
+    /** User-provided dataset name for the last custom run; used for baseline naming and restore. */
+    let lastRunCustomDatasetName = null;
+    /** 'success' | 'failed' | 'cancelled' | null — outcome of the most recent run for the current session. */
+    let lastRunStatus = null;
+    /** Datasets that completed a run in this page session; used to suppress the restore notice for fresh results. */
+    const _sessionRunDatasets = new Set();
 
     const LOG_PLACEHOLDER_HTML = '<p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul>';
 
@@ -1750,6 +1864,16 @@
     }
 
     function onDatasetChange() {
+      const notice = document.getElementById('custom-restore-notice');
+      if (notice) notice.style.display = 'none';
+      // Always reset the differ section immediately when the dataset changes so
+      // content from the previous dataset never bleeds into the new one.
+      const _dsGroup = document.getElementById('differ-group');
+      const _dsDC = document.getElementById('differ-container');
+      const _dsBH = document.getElementById('baseline-history-container');
+      if (_dsGroup) _dsGroup.style.display = 'none';
+      if (_dsDC) _dsDC.innerHTML = '';
+      if (_dsBH) { _dsBH.style.display = 'none'; _dsBH.innerHTML = ''; }
       if (runAbortController) {
         runAbortController.abort();
       }
@@ -1796,11 +1920,18 @@
       document.querySelectorAll('.dataset-option').forEach(opt => {
         opt.classList.toggle('selected', opt.getAttribute('data-value') === currentDataset);
       });
-      if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true });
       const storedRunState = getStoredLastRunState();
-      if (storedRunState && storedRunState.dataset === currentDataset && storedRunState.status) {
+      const hasRestore = !!(storedRunState && storedRunState.dataset === currentDataset && storedRunState.status);
+      const restoreApply = (hasRestore && storedRunState.status === 'success')
+        ? { runId: storedRunState.runId ?? null }
+        : null;
+      if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true, restoreApply });
+      if (hasRestore) {
         lastRunReportId = storedRunState.runId ?? null;
+        lastRunBaselineId = storedRunState.baselineId ?? (storedRunState.dataset !== 'custom' ? storedRunState.dataset : null);
         lastRunDataset = storedRunState.dataset;
+        lastRunStatus = storedRunState.status ?? null;
+        lastRunCustomDatasetName = storedRunState.customDatasetName ?? null;
         lastRunSummary = storedRunState.lastRunSummary ?? null;
         const summaryCard = storedRunState.summaryCard;
         if (summaryCard) {
@@ -1811,7 +1942,16 @@
         if (storedRunState.status === 'success') {
           lastRunReportGenerated = true;
           lastRunHadAiReview = true;
-          applyValidationResults(currentDataset, { runId: lastRunReportId });
+          // applyValidationResults is called by loadRules after the rule DOM is ready
+        }
+        const notice = document.getElementById('custom-restore-notice');
+        // Only show the restore notice when results come from a previous session.
+        // If a fresh run already happened in this session for this dataset, skip it.
+        if (notice && !_sessionRunDatasets.has(currentDataset)) {
+          notice.textContent = currentDataset === 'custom'
+            ? 'ℹ Showing results from a previous run. Upload files to run validation again.'
+            : 'ℹ Showing results from the last validation run.';
+          notice.style.display = '';
         }
         loadReport();
         return;
@@ -1826,10 +1966,15 @@
         resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed', 'execution-cancelled');
       }
       lastRunReportId = null;
+      lastRunBaselineId = null;
       lastRunDataset = null;
+      lastRunStatus = null;
       lastRunSummary = null;
       lastRunReportGenerated = false;
       lastRunHadAiReview = false;
+      lastRunCustomDatasetName = null;
+      const _nameInputReset = document.getElementById('custom-dataset-name');
+      if (_nameInputReset) { _nameInputReset.value = ''; _updateDatasetNameHint(); }
       // Clear log, status, and report when switching datasets
       setOutputContent(LOG_PLACEHOLDER_HTML, true);
       const outputEl = document.getElementById('output');
@@ -1848,18 +1993,22 @@
       const lintWarningsContainer = document.getElementById('lint-warnings-container');
       if (lintWarningsContainer) lintWarningsContainer.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
       renderLLMReportSection({ exists: false });
+      // Proactively load baseline state so the Dataset Changes section is populated
+      // immediately on dataset selection — no validation run required.
+      loadDifferSummary(currentDataset, null);
       loadReport();
     }
 
     // ═══════════════════════════════════════════════════════════════
     // Rules (grouped by category for scalability)
     // ═══════════════════════════════════════════════════════════════
-    const RULE_CATEGORY_ORDER = ['Data Quality', 'Temporal', 'Coverage', 'Structural', 'Other'];
+    const RULE_CATEGORY_ORDER = ['Data Quality', 'Temporal', 'Coverage', 'Structural', 'Change Detection', 'Other'];
     const RULE_CATEGORIES = {
       'Data Quality': ['check_min_value', 'check_unit_consistency', 'check_scaling_factor_consistency', 'check_max_value_percent'],
       'Temporal': ['check_max_date_latest', 'check_max_date_consistent', 'check_observation_date_granularity'],
       'Coverage': ['check_num_observations', 'check_num_places_count', 'check_num_places_consistent'],
-      'Structural': ['check_structural_lint_error_count', 'check_missing_refs_count']
+      'Structural': ['check_structural_lint_error_count', 'check_missing_refs_count'],
+      'Change Detection': ['check_deleted_records_count', 'check_deleted_records_percent', 'check_modified_records_count', 'check_added_records_count'],
     };
     function getRuleCategory(ruleId) {
       for (const [cat, ids] of Object.entries(RULE_CATEGORIES)) {
@@ -1934,7 +2083,11 @@
         updateExpandCollapseVisibility();
         updateRunButtonState();
         updateRulesSummary();
-        if (!options || !options.skipApplyValidationResults) applyValidationResults(dataset);
+        if (options?.restoreApply) {
+          applyValidationResults(dataset, options.restoreApply);
+        } else if (!options || !options.skipApplyValidationResults) {
+          applyValidationResults(dataset);
+        }
         const main = document.querySelector('.main');
         if (main) main.scrollTop = 0;
       } catch (e) {
@@ -2142,7 +2295,11 @@
         details.className = 'summary-card-details';
         const summary = document.createElement('summary');
         summary.className = 'summary-card-details-summary';
-        summary.textContent = opts.success ? 'View details' : 'View failure details';
+        const baseLabel = opts.success ? 'View details' : 'View failure details';
+        summary.textContent = baseLabel;
+        details.addEventListener('toggle', () => {
+          summary.textContent = details.open ? 'Hide details' : baseLabel;
+        });
         details.appendChild(summary);
 
         const hasBlocking = failedRules.length > 0 || (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) || (opts.pipelineFailedBeforeValidation && opts.failure_message);
@@ -2283,6 +2440,13 @@
       return items;
     }
 
+    const DIFFER_RULE_IDS = new Set([
+      'check_deleted_records_count',
+      'check_deleted_records_percent',
+      'check_modified_records_count',
+      'check_added_records_count',
+    ]);
+
     async function applyValidationResults(dataset, options = {}) {
       const ignoreStoredOutcome = options.ignoreStoredOutcome === true;
       const stored = localStorage.getItem(LAST_OUTCOME_KEY + dataset);
@@ -2302,11 +2466,14 @@
         if (!data.exists || !data.results) return;
         const byRule = {};
         data.results.forEach(v => { byRule[v.validation_name] = v; });
+        // Detect first-run (no baseline): any differ rule returning DATA_ERROR means baseline is unavailable for all differ rules
+        const noBaseline = [...DIFFER_RULE_IDS].some(id => byRule[id]?.status === 'DATA_ERROR');
         let runCount = 0, failCount = 0, warnCount = 0;
         document.querySelectorAll('.rule-result-icon').forEach(el => {
-          const result = byRule[el.dataset.ruleId];
+          const ruleId = el.dataset.ruleId;
+          const result = byRule[ruleId];
           const status = result?.status || '';
-          const checkbox = document.querySelector(`.rule-checkbox[data-rule-id="${el.dataset.ruleId}"]`);
+          const checkbox = document.querySelector(`.rule-checkbox[data-rule-id="${ruleId}"]`);
           const isChecked = checkbox ? checkbox.checked : true;
           el.textContent = '';
           el.className = 'rule-result-icon';
@@ -2316,16 +2483,34 @@
             el.textContent = '— Skipped';
             el.classList.add('skipped');
           } else if (status === 'PASSED') {
-            el.textContent = '✔ Passed'; el.classList.add('passed'); runCount++;
+            el.textContent = (noBaseline && DIFFER_RULE_IDS.has(ruleId)) ? '✔ Passed (No baseline available)' : '✔ Passed';
+            el.classList.add('passed'); runCount++;
             el.onclick = null;
           } else if (status === 'FAILED') {
-            el.textContent = '✖ Failed';
+            const failMsg = result?.message || el.closest('.rule-item')?.querySelector('.rule-desc')?.textContent?.trim() || '';
+            el.dataset.message = failMsg;
             el.classList.add('failed'); runCount++; failCount++;
             el.onclick = null;
+            if (failMsg) {
+              el.classList.add('has-message');
+              el.innerHTML = '<span class="rule-status-badge">✖ Failed</span><span class="rule-inline-message">' + escapeHtml(failMsg) + '</span>';
+            } else {
+              el.textContent = '✖ Failed';
+            }
           } else if (status === 'WARNING') {
-            el.textContent = '⚠ Warning';
+            const warnMsg = result?.message || el.closest('.rule-item')?.querySelector('.rule-desc')?.textContent?.trim() || '';
+            el.dataset.message = warnMsg;
             el.classList.add('warning'); runCount++; warnCount++;
             el.onclick = null;
+            if (warnMsg) {
+              el.classList.add('has-message');
+              el.innerHTML = '<span class="rule-status-badge">⚠ Warning</span><span class="rule-inline-message">' + escapeHtml(warnMsg) + '</span>';
+            } else {
+              el.textContent = '⚠ Warning';
+            }
+          } else if ((!result || !result.status || result.status === 'DATA_ERROR') && DIFFER_RULE_IDS.has(ruleId) && isChecked) {
+            el.textContent = '✔ Passed (No baseline available)';
+            el.classList.add('passed');
           }
         });
         if (runCount > 0) lastRunDataset = dataset;
@@ -2339,6 +2524,7 @@
         el.textContent = '';
         el.innerHTML = '';
         el.className = 'rule-result-icon';
+        el.dataset.message = '';
       });
     }
 
@@ -2354,11 +2540,18 @@
           el.className = 'rule-result-icon skipped';
           el.onclick = null;
         } else {
-          el.className = 'rule-result-icon ' + (status === 'PASSED' ? 'passed' : status === 'FAILED' ? 'failed' : 'warning');
+          const statusClass = status === 'PASSED' ? 'passed' : status === 'FAILED' ? 'failed' : 'warning';
+          const statusText = status === 'PASSED' ? '✔ Passed' : status === 'FAILED' ? '✖ Failed' : '⚠ Warning';
+          const storedMsg = (status === 'FAILED' || status === 'WARNING') ? (el.dataset.message || '') : '';
+          el.className = 'rule-result-icon ' + statusClass;
           el.onclick = null;
-          el.classList.remove('has-hint');
-          el.innerHTML = '';
-          el.textContent = status === 'PASSED' ? '✔ Passed' : status === 'FAILED' ? '✖ Failed' : '⚠ Warning';
+          if (storedMsg) {
+            el.classList.add('has-message');
+            el.innerHTML = '<span class="rule-status-badge">' + statusText + '</span><span class="rule-inline-message">' + escapeHtml(storedMsg) + '</span>';
+          } else {
+            el.innerHTML = '';
+            el.textContent = statusText;
+          }
         }
       });
     }
@@ -2595,7 +2788,8 @@
         return;
       }
       if (currentDataset === 'custom') {
-        btn.disabled = !customTmcfFile || !customCsvFile;
+        const _name = (document.getElementById('custom-dataset-name')?.value || '').trim();
+        btn.disabled = !customTmcfFile || !customCsvFile || !/^[a-z0-9-]{3,48}$/.test(_name);
       } else {
         btn.disabled = false;
       }
@@ -2941,6 +3135,8 @@
       document.getElementById('stat-vars-mcf-clear-btn').disabled = true;
       document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = true;
       setRulesSectionDisabled(true);
+      const _nameInput = document.getElementById('custom-dataset-name');
+      if (_nameInput) _nameInput.disabled = true;
       const summaryCard = document.getElementById('summary-card');
       const outputEl = document.getElementById('output');
       const reviewInsights = document.querySelector('.review-insights');
@@ -2951,6 +3147,14 @@
         hideStatusBanner();
         hideSummaryCard();
         clearValidationResults();
+        // Reset the differ section so stale content (e.g. a previous "Baseline created" message)
+        // never persists into a new run.
+        const _differGroup = document.getElementById('differ-group');
+        const _differContainer = document.getElementById('differ-container');
+        const _historyContainer = document.getElementById('baseline-history-container');
+        if (_differGroup) _differGroup.style.display = 'none';
+        if (_differContainer) _differContainer.innerHTML = '';
+        if (_historyContainer) { _historyContainer.style.display = 'none'; _historyContainer.innerHTML = ''; }
         document.querySelectorAll('.rules-category').forEach(d => { d.open = false; });
         document.getElementById('log-completed-at').style.display = 'none';
         buildProgressPills();
@@ -2989,6 +3193,8 @@
           if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
           if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
           if (rulesParam) formData.append('rules', rulesParam);
+          lastRunCustomDatasetName = (document.getElementById('custom-dataset-name')?.value || '').trim() || null;
+          formData.append('dataset_name', lastRunCustomDatasetName || '');
           formData.append('llm_review', '1');
           formData.append('llm_model', llmModel);
           r = await fetch(API + '/api/run/custom/stream', {
@@ -3046,7 +3252,7 @@
             btn.textContent = '\u25B6 Run validation';
             btn.title = '';
             btn.classList.remove('btn-stop');
-            btn.disabled = false;
+            updateRunButtonState();
           }
         }
         showStatusBanner(data);
@@ -3150,9 +3356,14 @@
           if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
           setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
         }
+        const _restoreNotice = document.getElementById('custom-restore-notice');
+        if (_restoreNotice) _restoreNotice.style.display = 'none';
         if (!data.cancelled && data.success) {
           lastRunDataset = runDataset;
+          lastRunStatus = 'success';
+          _sessionRunDatasets.add(runDataset);
           lastRunReportId = data.run_id || null;
+          lastRunBaselineId = data.baseline_id || (runDataset !== 'custom' ? runDataset : null);
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           const pipelineFailedBeforeValidation = false;
           const failureInfo = getFailureInfo(data);
@@ -3229,18 +3440,24 @@
           saveLastRunState({
             dataset: runDataset,
             runId: data.run_id || null,
+            baselineId: lastRunBaselineId,
             status: 'success',
             durationSec: lastRunDurationSec != null ? Math.round(lastRunDurationSec) : 0,
             summaryCard: summaryDataToShow,
             lastRunSummary: lastRunSummary,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            customDatasetName: lastRunCustomDatasetName || undefined,
           });
         } else if (data.cancelled) {
+          lastRunStatus = 'cancelled';
+          _sessionRunDatasets.add(runDataset);
           lastRunReportId = null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
           clearValidationResults();
         } else {
           lastRunDataset = runDataset;
+          lastRunStatus = 'failed';
+          _sessionRunDatasets.add(runDataset);
           lastRunReportId = data.run_id || null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'failed');
           const code = data.failure_code;
@@ -3334,6 +3551,8 @@
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
         runAbortController = null;
+        const _nameInputRestore = document.getElementById('custom-dataset-name');
+        if (_nameInputRestore) _nameInputRestore.disabled = false;
         document.getElementById('dataset').disabled = false;
         const datasetTrigger = document.getElementById('dataset-trigger');
         if (datasetTrigger) datasetTrigger.disabled = false;
@@ -3356,7 +3575,7 @@
           btn.textContent = '\u25B6 Run validation';
           btn.title = '';
           btn.classList.remove('btn-stop');
-          btn.disabled = false;
+          updateRunButtonState();
         }
         if (pendingHomeReset) {
           pendingHomeReset = false;
@@ -3375,7 +3594,7 @@
     }
 
     function updateReportHeadingStates() {
-      const stateClasses = ['report-group-heading--success', 'report-group-heading--failure', 'report-group-heading--advisory'];
+      const stateClasses = ['report-group-heading--success', 'report-group-heading--failure', 'report-group-heading--warning', 'report-group-heading--advisory'];
       function setHeadingState(headingId, state) {
         const h = document.getElementById(headingId);
         if (!h) return;
@@ -3388,6 +3607,7 @@
         const box = c.firstElementChild;
         if (box.classList.contains('report-group-box--success')) return 'success';
         if (box.classList.contains('report-group-box--blocking')) return 'failure';
+        if (box.classList.contains('report-group-box--warning')) return 'warning';
         if (box.classList.contains('report-group-box--advisory')) return 'advisory';
         return null;
       }
@@ -3397,6 +3617,7 @@
       setHeadingState('report-heading-validation', boxVariant('rule-failure-container'));
       setHeadingState('report-heading-statistical', boxVariant('fluctuation-samples-container'));
       setHeadingState('report-heading-data-import-warnings', boxVariant('lint-warnings-container'));
+      setHeadingState('report-heading-differ', boxVariant('differ-container'));
     }
 
     function renderLLMReportSection(data) {
@@ -3605,6 +3826,7 @@
           }
         } else {
           await Promise.all([
+            loadDifferSummary(reportDataset, reportRunId),
             loadFluctuationSamples(reportDataset, reportRunId),
             loadRuleFailureSamples(reportDataset, reportRunId),
             loadLintWarnings(reportDataset, reportRunId),
@@ -3750,6 +3972,343 @@
       if (slug === 'possible-data-issue') slug = 'issue';
       if (slug === 'insufficient-context') slug = 'context';
       return { assessment: assessment, explanation: explanation || raw, slug: slug };
+    }
+
+    function differVariant(stats) {
+      // No changes → green; any changes → orange; never red (changes are not errors).
+      const total = (stats.deleted || 0) + (stats.modified || 0) + (stats.added || 0);
+      return total === 0 ? 'success' : 'warning';
+    }
+
+    function acceptBaseline() {
+      const btn = document.getElementById('accept-baseline-btn');
+      if (!btn || btn.disabled) return;
+      // Detect bootstrap (first-time creation) vs normal accept based on current container state.
+      const container = document.getElementById('differ-container');
+      const isBootstrap = container && container.querySelector('.differ-no-baseline-msg') !== null;
+      const titleEl = document.getElementById('baseline-modal-title');
+      const bodyEl = document.getElementById('baseline-modal-body');
+      if (titleEl) titleEl.textContent = isBootstrap ? 'Create baseline' : 'Accept as baseline';
+      if (bodyEl) bodyEl.textContent = isBootstrap
+        ? 'This will create the first baseline for dataset change tracking.'
+        : 'This will replace the previous baseline used for dataset change detection.';
+      document.getElementById('baseline-modal-dataset').textContent = currentDataset || '—';
+      document.getElementById('baseline-modal-run-id').textContent = lastRunReportId || '(none)';
+      const confirmBtn = document.getElementById('baseline-modal-confirm-btn');
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = isBootstrap ? 'Create' : 'Accept'; }
+      document.getElementById('baseline-modal-overlay').style.display = 'flex';
+    }
+
+    function closeBaselineModal() {
+      document.getElementById('baseline-modal-overlay').style.display = 'none';
+    }
+
+    async function confirmBaselineModal() {
+      const confirmBtn = document.getElementById('baseline-modal-confirm-btn');
+      if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Updating…'; }
+      closeBaselineModal();
+
+      const btn = document.getElementById('accept-baseline-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+
+      try {
+        const body = {
+          run_id: lastRunReportId || null,
+          baseline_id: lastRunBaselineId || null,
+          run_status: lastRunStatus || null,
+        };
+        const r = await fetch(API + `/api/accept-baseline/${encodeURIComponent(currentDataset)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || 'Failed');
+        const version = data.version || null;
+        // For the bootstrap case (no prior baseline): replace the whole section content
+        // with a success message so the "no baseline" text no longer shows.
+        const container = document.getElementById('differ-container');
+        const isBootstrap = container &&
+          container.querySelector('.differ-no-baseline-msg') !== null;
+        if (isBootstrap && container) {
+          const versionLabel = version ? ` (${version})` : '';
+          container.innerHTML = reportBox('success',
+            '<p class="differ-baseline-created">✔ Baseline created successfully' + escapeHtml(versionLabel) + '</p>' +
+            '<p class="differ-no-baseline-msg">Run validation to compare this dataset against the baseline.</p>'
+          );
+          updateReportHeadingStates();
+          loadBaselineHistory(currentDataset, lastRunBaselineId || (currentDataset !== 'custom' ? currentDataset : null));
+          const toastMsg = version ? `✔ Baseline ${version} created successfully` : '✔ Baseline created successfully';
+          showToast(toastMsg, 3000);
+        } else {
+          // Normal accept case: replace the differ section with a success state so the
+          // old diff results (which were just promoted) are no longer shown.
+          const versionLabel = version ? ` to ${version}` : '';
+          if (container) {
+            container.innerHTML = reportBox('success',
+              '<p class="differ-baseline-created">✔ Baseline updated' + escapeHtml(versionLabel) + '</p>' +
+              '<p class="differ-no-baseline-msg">Run validation again to detect new dataset changes.</p>'
+            );
+            updateReportHeadingStates();
+          }
+          const toastMsg = version ? `✔ Baseline updated to ${version}` : '✔ Baseline updated';
+          showToast(toastMsg, 3000);
+          loadBaselineHistory(currentDataset, lastRunBaselineId || (currentDataset !== 'custom' ? currentDataset : null));
+        }
+      } catch (e) {
+        if (btn) { btn.textContent = '✖ Failed — ' + e.message; btn.disabled = false; }
+      }
+    }
+
+    // Close modal on overlay click (outside the dialog box)
+    document.addEventListener('DOMContentLoaded', () => {
+      const overlay = document.getElementById('baseline-modal-overlay');
+      if (overlay) {
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) closeBaselineModal();
+        });
+      }
+      const savePresetOverlay = document.getElementById('save-preset-modal-overlay');
+      if (savePresetOverlay) {
+        savePresetOverlay.addEventListener('click', (e) => {
+          if (e.target === savePresetOverlay) closeSavePresetModal();
+        });
+      }
+      const deletePresetsOverlay = document.getElementById('delete-presets-modal-overlay');
+      if (deletePresetsOverlay) {
+        deletePresetsOverlay.addEventListener('click', (e) => {
+          if (e.target === deletePresetsOverlay) closeDeletePresetsModal();
+        });
+      }
+    });
+
+    async function loadDifferSummary(dataset, runId) {
+      const group = document.getElementById('differ-group');
+      const container = document.getElementById('differ-container');
+      if (!group || !container) return;
+      group.style.display = 'none';
+      if (!dataset) return;
+      try {
+        const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
+        const r = await fetch(API + `/api/review-summary/${dataset}?t=${Date.now()}${runIdParam}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const stats = data && data.differ_stats;
+        if (!stats) {
+          // No differ output for this view. Always check whether a baseline exists —
+          // this covers passive page load and dataset selection with no active run.
+          const bid = lastRunBaselineId || (dataset !== 'custom' ? dataset : null);
+          let baselineVersions = [];
+          if (bid) {
+            try {
+              const bidParam = `?baseline_id=${encodeURIComponent(bid)}`;
+              const vr = await fetch(API + `/api/baseline-versions/${encodeURIComponent(dataset)}${bidParam}`);
+              if (vr.ok) baselineVersions = (await vr.json()).versions || [];
+            } catch (_) {}
+          }
+          if (baselineVersions.length > 0) {
+            // Baseline exists — render metadata using the most recent version entry.
+            const current = baselineVersions[0];
+            let metaLine = '<p class="differ-section-context">Compared to the previous baseline.</p>';
+            if (current && current.updated_at) {
+              try {
+                const d = new Date(current.updated_at);
+                const datePart = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const isFirstBaseline = current.version === 'v1';
+                const vPrefix = current.version ? escapeHtml(current.version) + ' · ' : '';
+                const comparedSuffix = isFirstBaseline ? '' : ' · Compared to previous baseline';
+                metaLine = '<p class="differ-baseline-meta">Baseline ' + vPrefix + escapeHtml(datePart) + ' · ' + escapeHtml(timePart) + comparedSuffix + '</p>';
+              } catch (_) {}
+            }
+            const isFirstBaseline = current && current.version === 'v1';
+            const noRunMsg = isFirstBaseline
+              ? '<p class="differ-no-baseline-msg" style="margin-top:6px;">This is the first baseline for this dataset. Run validation again to detect dataset changes.</p>'
+              : '<p class="differ-no-baseline-msg" style="margin-top:6px;">Run validation to compare this dataset against the baseline.</p>';
+            container.innerHTML = reportBox('muted', metaLine + noRunMsg);
+            group.style.display = '';
+            updateReportHeadingStates();
+            _renderBaselineHistoryFromVersions(baselineVersions);
+            return;
+          }
+          // No baseline exists. Show "Create baseline" only if there's a fresh run to promote.
+          const canCreate = (lastRunDataset === dataset) && lastRunStatus === 'success' && !!lastRunBaselineId;
+          if (canCreate) {
+            container.innerHTML = reportBox('muted',
+              '<p class="differ-no-baseline-msg">No baseline exists for this dataset yet.<br>Create a baseline from this run to start tracking dataset changes over time.</p>' +
+              '<div class="differ-accept-row"><button id="accept-baseline-btn" class="accept-baseline-btn" onclick="acceptBaseline()">Create baseline</button></div>'
+            );
+            group.style.display = '';
+            updateReportHeadingStates();
+            return;
+          }
+          // No baseline, no run — show neutral placeholder.
+          container.innerHTML = reportBox('muted', '<p class="report-group-success">No runs yet for this dataset. Run validation to generate a report.</p>');
+          group.style.display = '';
+          updateReportHeadingStates();
+          return;
+        }
+
+        const deleted  = stats.deleted  != null ? stats.deleted.toLocaleString('en-US')  : '—';
+        const added    = stats.added    != null ? stats.added.toLocaleString('en-US')    : '—';
+        const prevSize = stats.previous_obs_size != null ? stats.previous_obs_size.toLocaleString('en-US') : '—';
+        const totalSvCount = stats.total_stat_var_count != null ? stats.total_stat_var_count.toLocaleString('en-US') : '—';
+
+        // Modified with percent annotation only when modified > 0
+        let modifiedDisplay = stats.modified != null ? stats.modified.toLocaleString('en-US') : '—';
+        if (stats.modified != null && stats.modified > 0 && stats.modified_pct != null) {
+          modifiedDisplay += ' (' + stats.modified_pct.toFixed(1) + '% of baseline)';
+        }
+
+        const diffSize = stats.obs_diff_size != null ? stats.obs_diff_size.toLocaleString('en-US') : null;
+
+        let html = '<table class="differ-stats-table">' +
+          '<thead><tr><th>Metric</th><th>Count</th></tr></thead>' +
+          '<tbody>' +
+          '<tr><td>Baseline observations</td><td>' + prevSize + '</td></tr>' +
+          '<tr class="differ-row--deleted"><td>Deleted</td><td>' + deleted + '</td></tr>' +
+          '<tr class="differ-row--modified"><td>Modified</td><td>' + modifiedDisplay + '</td></tr>' +
+          '<tr class="differ-row--added"><td>Added</td><td>' + added + '</td></tr>' +
+          '<tr><td>StatVars compared</td><td>' + totalSvCount + '</td></tr>' +
+          '</tbody></table>';
+
+        // Changed StatVars list — collapsed by default
+        const changedSvs = stats.changed_statvars || [];
+        if (changedSvs.length > 0) {
+          html += '<details class="report-group-inner-details differ-changed-statvars-details">';
+          html += '<summary>Changed StatVars (' + changedSvs.length + ')</summary>';
+          html += '<table class="differ-stats-table differ-changed-statvars-table">';
+          html += '<thead><tr><th>StatVar</th><th>Del</th><th>Mod</th><th>Add</th></tr></thead><tbody>';
+          changedSvs.forEach(function(sv) {
+            const delCell = sv.deleted  > 0 ? '<span class="differ-cell--deleted">'  + sv.deleted  + '</span>' : '<span class="differ-cell--zero">0</span>';
+            const modCell = sv.modified > 0 ? '<span class="differ-cell--modified">' + sv.modified + '</span>' : '<span class="differ-cell--zero">0</span>';
+            const addCell = sv.added    > 0 ? '<span class="differ-cell--added">'    + sv.added    + '</span>' : '<span class="differ-cell--zero">0</span>';
+            html += '<tr><td class="differ-sv-name">' + escapeHtml(sv.name) + '</td><td>' + delCell + '</td><td>' + modCell + '</td><td>' + addCell + '</td></tr>';
+          });
+          html += '</tbody></table></details>';
+        }
+
+        const variant = differVariant(stats);
+        const totalChanges = (stats.deleted || 0) + (stats.modified || 0) + (stats.added || 0);
+        const changeHeading = totalChanges > 0 ? 'Dataset changes detected' : 'No changes vs previous baseline';
+        const label = totalChanges > 0
+          ? (stats.deleted || 0) + ' deleted · ' + (stats.modified || 0) + ' modified · ' + (stats.added || 0) + ' added'
+          : changeHeading;
+        let baselineMeta = '';
+        if (stats.baseline_updated_at) {
+          try {
+            const d = new Date(stats.baseline_updated_at);
+            const datePart = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            const isFirstBaseline = stats.baseline_version === 'v1';
+            const versionPrefix = stats.baseline_version ? escapeHtml(stats.baseline_version) + ' · ' : '';
+            const comparedSuffix = isFirstBaseline ? '' : ' · Compared to previous baseline';
+            baselineMeta = '<p class="differ-baseline-meta">Baseline ' + versionPrefix + escapeHtml(datePart) + ' · ' + escapeHtml(timePart) + comparedSuffix + '</p>';
+          } catch (_) {}
+        }
+        if (!baselineMeta) {
+          baselineMeta = '<p class="differ-section-context">Compared to the previous baseline.</p>';
+        }
+        if (stats.baseline_accepted_by) {
+          baselineMeta += '<p class="differ-baseline-meta differ-baseline-approver">Approved by: ' + escapeHtml(stats.baseline_accepted_by) + '</p>';
+        }
+        const summaryContent = totalChanges > 0
+          ? '<strong>' + escapeHtml(changeHeading) + '</strong> — ' + escapeHtml((stats.deleted || 0) + ' deleted · ' + (stats.modified || 0) + ' modified · ' + (stats.added || 0) + ' added')
+          : escapeHtml(changeHeading);
+        // Accept button logic:
+        //  - canAccept: last run succeeded for this dataset and has a baseline_id
+        //  - isCurrentBaseline: this run was already promoted — compare the top-level
+        //    current_baseline_run_id (populated by the backend from the baseline manifest,
+        //    using the exact dataset_id stored in differ_summary.json) against the run_id.
+        const canAccept = (lastRunDataset === dataset) && lastRunStatus === 'success' && !!lastRunBaselineId;
+        const _effectiveRunId = runId || lastRunReportId;
+        const _currentBaselineRunId = data.current_baseline_run_id || null;
+        const isCurrentBaseline = !!(_effectiveRunId && _currentBaselineRunId && _effectiveRunId === _currentBaselineRunId);
+        const acceptBtn = isCurrentBaseline
+          ? '<p class="differ-no-changes-note">✔ This run has been promoted as the current baseline.</p>'
+          : (canAccept && totalChanges > 0)
+            ? '<div class="differ-accept-row"><button id="accept-baseline-btn" class="accept-baseline-btn" onclick="acceptBaseline()">Accept as baseline</button></div>'
+            : (canAccept && totalChanges === 0)
+              ? '<p class="differ-no-changes-note">✔ No dataset changes vs previous baseline</p>'
+              : '';
+        // When this run IS the current baseline, replace the "Dataset changes detected" heading
+        // with a "Baseline vN (current) · date" title and collapse the metrics by default.
+        let renderSummary = summaryContent;
+        let renderMeta = baselineMeta;
+        let detailsOpen = 'open';
+        let renderVariant = variant;
+        if (isCurrentBaseline) {
+          const vPart = stats.baseline_version ? 'Baseline ' + escapeHtml(stats.baseline_version) : 'Baseline';
+          let dateSuffix = '';
+          if (stats.baseline_updated_at) {
+            try {
+              const _d = new Date(stats.baseline_updated_at);
+              dateSuffix = ' · ' + escapeHtml(_d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }))
+                         + ' · ' + escapeHtml(_d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }));
+            } catch (_) {}
+          }
+          renderSummary = vPart + ' <span class="baseline-history-current">(current)</span>' + dateSuffix;
+          renderMeta = stats.baseline_accepted_by
+            ? '<p class="differ-baseline-meta differ-baseline-approver">Approved by: ' + escapeHtml(stats.baseline_accepted_by) + '</p>'
+            : '';
+          detailsOpen = '';
+          renderVariant = 'success';
+        }
+        container.innerHTML = reportBox(renderVariant,
+          renderMeta +
+          '<details class="report-group-inner-details" ' + detailsOpen + '><summary>' + renderSummary + '</summary>' + html + '</details>' +
+          acceptBtn);
+        group.style.display = '';
+        updateReportHeadingStates();
+        // Load version history below the differ card (non-blocking).
+        loadBaselineHistory(dataset, lastRunBaselineId || (dataset !== 'custom' ? dataset : null));
+      } catch (e) {
+        // Non-fatal: differ section stays hidden
+      }
+    }
+
+    function _renderBaselineHistoryFromVersions(versions) {
+      const container = document.getElementById('baseline-history-container');
+      if (!container) return;
+      container.style.display = 'none';
+      container.innerHTML = '';
+      if (!versions || versions.length === 0) return;
+      let html = '<div class="baseline-history-title">Baseline history</div><ul class="baseline-history-list">';
+      versions.forEach((v, i) => {
+        const isCurrent = i === 0;
+        let datePart = '';
+        if (v.updated_at) {
+          try {
+            const d = new Date(v.updated_at);
+            const dp = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            const tp = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            datePart = ' · ' + dp + ' · ' + tp;
+          } catch (_) {}
+        }
+        const currentBadge = isCurrent ? '<span class="baseline-history-current">(current)</span>' : '';
+        const dateSep = datePart ? ' · ' : '';
+        html += '<li class="baseline-history-item"><span class="baseline-history-version">' + escapeHtml(v.version || '—') + '</span>' + (currentBadge ? ' ' + currentBadge : '') + dateSep + escapeHtml(datePart.replace(/^ · /, '')) + '</li>';
+      });
+      html += '</ul>';
+      container.innerHTML = html;
+      container.style.display = '';
+    }
+
+    async function loadBaselineHistory(dataset, baselineId) {
+      const container = document.getElementById('baseline-history-container');
+      if (!container) return;
+      container.style.display = 'none';
+      container.innerHTML = '';
+      if (!dataset) return;
+      try {
+        const bidParam = baselineId ? `?baseline_id=${encodeURIComponent(baselineId)}` : '';
+        const r = await fetch(API + `/api/baseline-versions/${encodeURIComponent(dataset)}${bidParam}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        _renderBaselineHistoryFromVersions(data.versions || []);
+      } catch (_) {
+        // non-fatal: history section stays hidden
+      }
     }
 
     async function loadFluctuationSamples(dataset, runId) {
@@ -4202,8 +4761,95 @@
         });
       }
     }
+    function _updateDatasetNameHint() {
+      const input = document.getElementById('custom-dataset-name');
+      const hint = document.getElementById('custom-dataset-name-hint');
+      if (!input || !hint) return;
+      const val = input.value.trim();
+      if (!val) {
+        hint.textContent = 'Enter a name (3–48 characters, lowercase letters, numbers, hyphens). Example: canada-population';
+        input.classList.remove('name-invalid', 'name-valid');
+      } else if (!/^[a-z0-9-]{3,48}$/.test(val)) {
+        hint.textContent = 'Use lowercase letters, numbers, and hyphens, 3–48 characters (e.g. canada-population).';
+        input.classList.remove('name-valid');
+        input.classList.add('name-invalid');
+      } else {
+        hint.textContent = 'Looks good. This name will identify the dataset across validation runs.';
+        input.classList.remove('name-invalid');
+        input.classList.add('name-valid');
+      }
+      updateRunButtonState();
+    }
+
+    const _datasetNameInput = document.getElementById('custom-dataset-name');
+    if (_datasetNameInput) {
+      _datasetNameInput.addEventListener('input', _updateDatasetNameHint);
+      _updateDatasetNameHint();
+    }
+
     setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { customTmcfFile = f; }, () => { customTmcfFile = null; });
-    setupCustomFileInput('csv-file', 'csv-choose-btn', 'csv-file-name', 'csv-clear-btn', (f) => { customCsvFile = f; }, () => { customCsvFile = null; });
+    setupCustomFileInput('csv-file', 'csv-choose-btn', 'csv-file-name', 'csv-clear-btn',
+      (f) => { customCsvFile = f; },
+      () => { customCsvFile = null; _updateDatasetNameHint(); }
+    );
+    ['tmcf-file', 'csv-file'].forEach(id => {
+      const inp = document.getElementById(id);
+      if (inp) inp.addEventListener('change', () => {
+        // Hide restore notice immediately
+        const notice = document.getElementById('custom-restore-notice');
+        if (notice) notice.style.display = 'none';
+        // Reset in-memory run state so previous results no longer show
+        lastRunDataset = null;
+        lastRunReportId = null;
+        lastRunBaselineId = null;
+        lastRunStatus = null;
+        lastRunSummary = null;
+        lastRunReportGenerated = false;
+        lastRunHadAiReview = false;
+        lastRunCustomDatasetName = null;
+        // Clear execution header
+        const executionHeaderStatus = document.getElementById('execution-header-status');
+        if (executionHeaderStatus) {
+          executionHeaderStatus.textContent = '';
+          executionHeaderStatus.classList.remove('running');
+        }
+        const resultsSection = document.getElementById('results-section');
+        if (resultsSection) {
+          resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed', 'execution-cancelled');
+        }
+        // Clear execution log
+        setOutputContent(LOG_PLACEHOLDER_HTML, true);
+        const outputEl = document.getElementById('output');
+        if (outputEl) outputEl.classList.remove('expanded');
+        const expandLogBtn = document.getElementById('expand-log-btn');
+        if (expandLogBtn) expandLogBtn.textContent = 'Expand';
+        // Clear report actions and status
+        setReportActionsVisible(false, false);
+        lastReportMtime = null;
+        const reportTimestamp = document.getElementById('report-timestamp');
+        if (reportTimestamp) reportTimestamp.textContent = '';
+        hideStatusBanner();
+        clearValidationResults();
+        hideSummaryCard();
+        // Reset report sections to neutral placeholders
+        const placeholder = 'Upload files and run validation to generate a report.';
+        const fluctuationContainer = document.getElementById('fluctuation-samples-container');
+        if (fluctuationContainer) fluctuationContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(placeholder) + '</p>');
+        const ruleFailureContainer = document.getElementById('rule-failure-container');
+        if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(placeholder) + '</p>');
+        const lintWarningsContainer = document.getElementById('lint-warnings-container');
+        if (lintWarningsContainer) lintWarningsContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(placeholder) + '</p>');
+        renderLLMReportSection({ exists: false });
+        // Reset differ / baseline-history sections then reload baseline state
+        const differGroup = document.getElementById('differ-group');
+        const differContainer = document.getElementById('differ-container');
+        const baselineHistoryContainer = document.getElementById('baseline-history-container');
+        if (differGroup) differGroup.style.display = 'none';
+        if (differContainer) differContainer.innerHTML = '';
+        if (baselineHistoryContainer) { baselineHistoryContainer.style.display = 'none'; baselineHistoryContainer.innerHTML = ''; }
+        loadDifferSummary(currentDataset, null);
+      });
+    });
     setupCustomFileInput('stat-vars-mcf-file', 'stat-vars-mcf-choose-btn', 'stat-vars-mcf-file-name', 'stat-vars-mcf-clear-btn', (f) => { customStatVarsMcfFile = f; }, () => { customStatVarsMcfFile = null; });
     setupCustomFileInput('stat-vars-schema-mcf-file', 'stat-vars-schema-mcf-choose-btn', 'stat-vars-schema-mcf-file-name', 'stat-vars-schema-mcf-clear-btn', (f) => { customStatVarsSchemaMcfFile = f; }, () => { customStatVarsSchemaMcfFile = null; });
     document.getElementById('preset-trigger').addEventListener('click', (e) => {
@@ -4267,32 +4913,69 @@
       applyPreset(e.target.value);
     });
     document.getElementById('save-preset-btn').addEventListener('click', () => {
-      const name = prompt('Preset name:');
-      if (!name || !name.trim()) return;
-      const ids = getSelectedRuleIds();
+      openSavePresetModal();
+    });
+    function openSavePresetModal() {
+      const input = document.getElementById('preset-name-input');
+      const err = document.getElementById('preset-name-error');
+      const saveBtn = document.getElementById('save-preset-modal-confirm-btn');
+      if (input) { input.value = ''; }
+      if (err) { err.textContent = ''; err.style.display = 'none'; }
+      if (saveBtn) saveBtn.disabled = true;
+      document.getElementById('save-preset-modal-overlay').style.display = 'flex';
+      if (input) input.focus();
+    }
+    function closeSavePresetModal() {
+      document.getElementById('save-preset-modal-overlay').style.display = 'none';
+    }
+    function confirmSavePresetModal() {
+      const input = document.getElementById('preset-name-input');
+      const err = document.getElementById('preset-name-error');
+      const name = (input?.value || '').trim();
+      if (!name) {
+        if (err) { err.textContent = 'Please enter a preset name.'; err.style.display = 'block'; }
+        input?.focus();
+        return;
+      }
       const presets = getSavedPresets();
-      presets[name.trim()] = ids;
+      if (Object.keys(presets).some(k => k.toLowerCase() === name.toLowerCase())) {
+        if (err) { err.textContent = 'A preset with this name already exists.'; err.style.display = 'block'; }
+        input?.focus();
+        return;
+      }
+      closeSavePresetModal();
+      const ids = getSelectedRuleIds();
+      presets[name] = ids;
       savePresets(presets);
       populatePresetSelect();
-      selectPreset('custom:' + name.trim());
+      selectPreset('custom:' + name);
       showToast('Preset saved');
-    });
+    }
     document.getElementById('clear-presets-btn').addEventListener('click', () => {
-      if (!confirm('Delete all saved presets?')) return;
+      openDeletePresetsModal();
+    });
+    function openDeletePresetsModal() {
+      document.getElementById('delete-presets-modal-overlay').style.display = 'flex';
+    }
+    function closeDeletePresetsModal() {
+      document.getElementById('delete-presets-modal-overlay').style.display = 'none';
+    }
+    function confirmDeletePresetsModal() {
+      closeDeletePresetsModal();
       savePresets({});
       populatePresetSelect();
       selectPreset('all');
       applyPreset('all');
       showToast('Presets cleared');
-    });
-    function showToast(message) {
+    }
+    function showToast(message, duration = 2000) {
       const toast = document.getElementById('toast');
       toast.textContent = message;
       toast.classList.add('visible');
       clearTimeout(showToast._timer);
       showToast._timer = setTimeout(() => {
         toast.classList.remove('visible');
-      }, 2000);
+      }, duration);
     }
 
     function formatRunTimestamp(d) {
@@ -4580,7 +5263,8 @@
         e.preventDefault();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        if (currentDataset && !runAbortController) {
+        const _runBtn = document.getElementById('run-btn');
+        if (currentDataset && !runAbortController && _runBtn && !_runBtn.disabled) {
           runValidation();
           e.preventDefault();
         }
@@ -4599,5 +5283,47 @@
     fetchDatasets();
     setOutputContent(LOG_PLACEHOLDER_HTML, true);
   </script>
+
+  <!-- Save preset modal -->
+  <div id="save-preset-modal-overlay" class="baseline-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="save-preset-modal-title">
+    <div class="baseline-modal">
+      <h3 id="save-preset-modal-title" class="baseline-modal-title">Save rule preset</h3>
+      <p class="baseline-modal-body">Enter a name for this preset.</p>
+      <input id="preset-name-input" class="baseline-modal-input" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="e.g. strict-schema" onkeydown="if(event.key==='Enter')confirmSavePresetModal();else if(event.key==='Escape')closeSavePresetModal();" oninput="document.getElementById('save-preset-modal-confirm-btn').disabled=!this.value.trim();" />
+      <p id="preset-name-error" class="baseline-modal-input-error"></p>
+      <div class="baseline-modal-actions">
+        <button class="baseline-modal-btn baseline-modal-cancel" onclick="closeSavePresetModal()">Cancel</button>
+        <button id="save-preset-modal-confirm-btn" class="baseline-modal-btn baseline-modal-accept" onclick="confirmSavePresetModal()" disabled>Save preset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete presets confirmation modal -->
+  <div id="delete-presets-modal-overlay" class="baseline-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="delete-presets-modal-title">
+    <div class="baseline-modal">
+      <h3 id="delete-presets-modal-title" class="baseline-modal-title">Delete all saved rule presets?</h3>
+      <p class="baseline-modal-body">This will remove all custom presets you created. This action cannot be undone.</p>
+      <div class="baseline-modal-actions">
+        <button class="baseline-modal-btn baseline-modal-cancel" onclick="closeDeletePresetsModal()">Cancel</button>
+        <button class="baseline-modal-btn baseline-modal-danger" onclick="confirmDeletePresetsModal()">Delete presets</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Baseline confirmation modal -->
+  <div id="baseline-modal-overlay" class="baseline-modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="baseline-modal-title">
+    <div class="baseline-modal">
+      <h3 id="baseline-modal-title" class="baseline-modal-title">Accept new baseline</h3>
+      <p class="baseline-modal-body">This will replace the previous baseline used for dataset change detection.</p>
+      <dl class="baseline-modal-meta">
+        <dt>Dataset</dt><dd id="baseline-modal-dataset">—</dd>
+        <dt>Run ID</dt><dd id="baseline-modal-run-id">—</dd>
+      </dl>
+      <div class="baseline-modal-actions">
+        <button class="baseline-modal-btn baseline-modal-cancel" onclick="closeBaselineModal()">Cancel</button>
+        <button class="baseline-modal-btn baseline-modal-accept" id="baseline-modal-confirm-btn" onclick="confirmBaselineModal()">Accept</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

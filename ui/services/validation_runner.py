@@ -75,6 +75,9 @@ def _copy_run_to_canonical(run_dir: Path, canonical_dir: Path) -> None:
             src = run_dir / name
             if src.exists():
                 shutil.copy2(src, canonical_dir / name)
+        # Also copy MCF files so accept-baseline can locate them after per-run dir cleanup.
+        for mcf in run_dir.glob("*.mcf"):
+            shutil.copy2(mcf, canonical_dir / mcf.name)
     except OSError as e:
         logger.warning("copy run to canonical failed run_dir=%s canonical_dir=%s: %s", run_dir, canonical_dir, e)
 
@@ -100,7 +103,12 @@ def _cleanup_run_dirs(
     output_dir is only removed when it differs from canonical_output_dir (i.e. when
     per-run isolation was used). extra_dirs (e.g. custom upload dir) are unconditionally
     removed. All removals use ignore_errors=True so this function never raises.
+    When KEEP_RUN_DIR=1 (or true/yes), no directories are removed (for local debugging).
     """
+    # Debug option: preserve run artifacts for inspection.
+    if os.environ.get("KEEP_RUN_DIR", "").strip().lower() in ("1", "true", "yes"):
+        logger.debug("KEEP_RUN_DIR set; skipping run dir cleanup run_id=%s", run_id)
+        return
     to_remove: list[Path] = []
     if output_dir and output_dir.is_dir():
         if not canonical_output_dir or output_dir.resolve() != canonical_output_dir.resolve():
@@ -313,11 +321,13 @@ async def run_validation_process(
     dataset: str | None = None,
     canonical_output_dir: Path | None = None,
     extra_cleanup_dirs: list[Path] | None = None,
+    extra_done_fields: dict | None = None,
 ):
     """Run the validation script; stream NDJSON or wait and return result. Cleans up config_path on exit.
     If output_dir and dataset are set, uploads reports to GCS (when GCS_REPORTS_BUCKET is set), then
     copies artifacts to canonical_output_dir when it differs from output_dir (per-run isolation).
     After upload and copy, per-run dirs are removed (output_dir when isolated, plus extra_cleanup_dirs).
+    extra_done_fields: optional dict merged into the done event (e.g. {"baseline_id": "custom_abc"}).
     Raises HTTP 429 if MAX_CONCURRENT_RUNS is exceeded.
     """
     global _active_runs
@@ -341,7 +351,7 @@ async def run_validation_process(
     try:
         return await _run_validation_process_impl(
             args, request, config_path, stream, app_root, output_dir, dataset,
-            canonical_output_dir, extra_cleanup_dirs,
+            canonical_output_dir, extra_cleanup_dirs, extra_done_fields,
         )
     finally:
         _active_runs -= 1
@@ -357,10 +367,13 @@ async def _run_validation_process_impl(
     dataset: str | None = None,
     canonical_output_dir: Path | None = None,
     extra_cleanup_dirs: list[Path] | None = None,
+    extra_done_fields: dict | None = None,
 ):
     """Internal: spawn and manage the subprocess after the concurrency check."""
     request_id = getattr(request.state, "request_id", "")
-    env = {**os.environ, "RUN_ID": request_id} if request_id else None
+    # Always set RUN_ID and disable auto baseline updates for UI-initiated runs.
+    # Baseline promotion is handled explicitly via POST /api/accept-baseline/{dataset}.
+    env = {**os.environ, "RUN_ID": request_id, "BASELINE_AUTO_UPDATE": "false"}
     run_start_time = time.monotonic()
     timeout_sec = _run_timeout_sec()  # 0 = no timeout
     proc = await asyncio.create_subprocess_exec(
@@ -411,8 +424,10 @@ async def _run_validation_process_impl(
                                     obj.get("cancelled"),
                                     duration_sec,
                                 )
-                                # Add run_id so UI can fetch report from GCS
+                                # Add run_id and any caller-supplied fields (e.g. baseline_id)
                                 obj["run_id"] = request_id
+                                if extra_done_fields:
+                                    obj.update(extra_done_fields)
                                 # Upload to GCS whenever a report was produced (success or failure) so any instance can serve it
                                 if output_dir and dataset:
                                     await asyncio.to_thread(
@@ -616,6 +631,7 @@ async def _run_validation_process_impl(
             "exit_code": exit_code,
             "output": output,
             "run_id": request_id,
+            **(extra_done_fields or {}),
         }
         if not success:
             failure = _parse_failure(output)

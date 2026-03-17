@@ -4,7 +4,7 @@
 # Run once when cloning the repo or onboarding a new team member.
 #
 # This script:
-# 1. Creates a Python venv and installs dependencies (absl, pandas, duckdb, omegaconf)
+# 1. Creates a Python venv and installs dependencies (absl, pandas, duckdb, omegaconf, googleapiclient)
 # 2. Ensures the import tool JAR is available (for demo and real datasets)
 #
 
@@ -37,7 +37,7 @@ fi
 echo "1. Setting up Python environment..."
 
 if [[ -f "$VENV_DIR/bin/python" ]]; then
-  if "$VENV_DIR/bin/python" -c "import absl, pandas, duckdb, omegaconf" 2>/dev/null; then
+  if "$VENV_DIR/bin/python" -c "import absl, pandas, duckdb, omegaconf, googleapiclient" 2>/dev/null; then
     echo "   ✓ Venv already exists with required packages"
     if ! "$VENV_DIR/bin/python" -c "from google import genai" 2>/dev/null; then
       echo "   Installing optional LLM package (google-genai)..."

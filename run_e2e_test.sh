@@ -45,6 +45,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_REPO="${DATA_REPO:-$PROJECTS_DIR/datacommonsorg/data}"
+export DATA_REPO
 # Import tool behavior: passed to Java process (env). Defaults support deterministic/local runs.
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
@@ -65,6 +66,7 @@ CUSTOM_STAT_VARS_MCF=""
 CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
 LLM_MODEL="gemini-2.5-flash"
+BASELINE_NAME=""
 
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
@@ -141,6 +143,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model=*)
       LLM_MODEL="${1#*=}"
+      shift
+      ;;
+    --baseline-name)
+      BASELINE_NAME="$2"
+      shift 2
+      ;;
+    --baseline-name=*)
+      BASELINE_NAME="${1#*=}"
       shift
       ;;
     --help|-h)
@@ -239,9 +249,9 @@ fi
 VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
 SYS_PYTHON="python3"
 JAR_PATH="${IMPORT_JAR_PATH:-$BIN_DIR/datacommons-import-tool.jar}"
-if [[ -f "$VENV_PYTHON" ]] && "$VENV_PYTHON" -c "import absl, pandas, duckdb, omegaconf" 2>/dev/null; then
+if [[ -f "$VENV_PYTHON" ]] && "$VENV_PYTHON" -c "import absl, pandas, duckdb, omegaconf, googleapiclient" 2>/dev/null; then
   : # venv ready
-elif [[ -f "$JAR_PATH" ]] && "$SYS_PYTHON" -c "import absl, pandas, duckdb, omegaconf" 2>/dev/null; then
+elif [[ -f "$JAR_PATH" ]] && "$SYS_PYTHON" -c "import absl, pandas, duckdb, omegaconf, googleapiclient" 2>/dev/null; then
   log_info "Using system Python (pre-installed environment)."
 else
   log_info "Python environment not ready. Running setup..."
@@ -552,6 +562,40 @@ log_info "Generated: $STATS_SUMMARY, report.json"
 log_info "Step 2 completed in $(( $(date +%s) - STEP2_START ))s"
 
 # =============================================================================
+# Step 2.4: Differ (run only when a baseline exists for this dataset)
+# Produces obs_diff_summary.csv + differ_summary.json consumed by Step 3.
+# Exit 0 → differ ran; exit 1 → no baseline (first run); exit 2 → error.
+# All non-zero exits are non-fatal: pipeline continues with empty_differ.csv.
+# =============================================================================
+# Resolve differ dataset ID: named datasets use their own name; custom datasets
+# require --baseline-name (no ID = no differ).
+_DIFFER_DATASET_ID="${BASELINE_NAME:-}"
+if [[ -z "$_DIFFER_DATASET_ID" && "$DATASET" != "custom" ]]; then
+  _DIFFER_DATASET_ID="$DATASET"
+fi
+
+DIFFER_OUTPUT=""
+if [[ -n "$_DIFFER_DATASET_ID" ]]; then
+  echo "::STEP::2.4:Differ"
+  DIFFER_OUT_DIR="$GENMCF_OUTPUT/differ_output"
+  _DIFFER_EXIT=0
+  $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
+    --current_mcf_dir="$GENMCF_OUTPUT" \
+    --dataset_id="$_DIFFER_DATASET_ID" \
+    --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
+  if [[ $_DIFFER_EXIT -eq 0 ]]; then
+    DIFFER_OUTPUT="$DIFFER_OUT_DIR"
+    log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT"
+  elif [[ $_DIFFER_EXIT -eq 1 ]]; then
+    log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped (first run)"
+  else
+    log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output"
+  fi
+else
+  log_info "Step 2.4: Differ skipped — no dataset_id (use --baseline-name for custom datasets)"
+fi
+
+# =============================================================================
 # Step 3: Run import_validation
 # =============================================================================
 # Validate config template (structure and required keys)
@@ -605,7 +649,7 @@ fi
 # without failing; the file has a header row (StatVar,DELETED,MODIFIED,ADDED) and no data.
 # Override path via EMPTY_DIFFER_PATH if needed.
 EMPTY_DIFFER="${EMPTY_DIFFER_PATH:-$SCRIPT_DIR/sample_data/empty_differ.csv}"
-if [[ -n "$DIFFER_OUTPUT" && -f "$DIFFER_OUTPUT" ]]; then
+if [[ -n "$DIFFER_OUTPUT" && -e "$DIFFER_OUTPUT" ]]; then
   VALIDATION_ARGS+=(--differ_output="$DIFFER_OUTPUT")
 elif [[ -f "$EMPTY_DIFFER" ]]; then
   VALIDATION_ARGS+=(--differ_output="$EMPTY_DIFFER")
@@ -646,7 +690,6 @@ df.to_csv(summary_path, index=False)
 fi
 
 # Orchestrator runs DC framework rules + our custom rules (e.g. STRUCTURAL_LINT_ERROR_COUNT), writes validation_output.json once
-export DATA_REPO
 if $PYTHON "$SCRIPT_DIR/scripts/run_validation.py" "${VALIDATION_ARGS[@]}"; then
   RUNNER_EXIT=0
 else
@@ -689,6 +732,26 @@ else
 fi
 # Counters match check is warn-only (resolution instability should not hard-fail)
 log_info "Step 3 completed in $(( $(date +%s) - STEP3_START ))s"
+
+# Update baseline only when validation fully passed (after warn_only overrides).
+# Never update on failure to avoid storing a bad import as the new baseline.
+# When BASELINE_AUTO_UPDATE=false (set by the UI server), skip auto-update so the
+# user can manually accept the baseline via the UI approval workflow.
+if [[ -n "$_DIFFER_DATASET_ID" && "${BASELINE_AUTO_UPDATE:-true}" == "true" ]]; then
+  if [[ "$VALIDATION_RESULT" -eq 0 ]]; then
+    log_info "Updating baseline for '$_DIFFER_DATASET_ID'..."
+    $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
+      --update_baseline \
+      --current_mcf_dir="$GENMCF_OUTPUT" \
+      --dataset_id="$_DIFFER_DATASET_ID" \
+      ${RUN_ID:+--run_id="$RUN_ID"} \
+      || log_warn "Baseline update failed (non-fatal)"
+  else
+    log_info "Skipping baseline update due to validation failure."
+  fi
+elif [[ -n "$_DIFFER_DATASET_ID" && "${BASELINE_AUTO_UPDATE:-true}" == "false" ]]; then
+  log_info "Baseline auto-update disabled (BASELINE_AUTO_UPDATE=false). Accept via UI to update baseline."
+fi
 
 # =============================================================================
 # Step 4: Generate HTML report (pass overall result so report shows FAIL when run failed)
