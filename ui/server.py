@@ -772,7 +772,7 @@ def get_rule_failure_samples(dataset: str, run_id: str | None = Query(None)):
 
 
 @app.get("/api/review-summary/{dataset}")
-def get_review_summary(dataset: str, format: str | None = Query(None), run_id: str | None = Query(None)):
+def get_review_summary(dataset: str, format: str | None = Query(None), run_id: str | None = Query(None), baseline_id: str | None = Query(None)):
     """Return combined review summary (validation + Gemini + fluctuation + rule failures). If run_id is set and GCS configured, use GCS."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
@@ -811,7 +811,11 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                 if data is not None:
                     _gcs_versions: list = []
                     try:
-                        _gcs_versions = _gcs_baselines.list_baseline_versions(dataset)
+                        # Use the caller-supplied baseline_id for custom datasets
+                        # (e.g. "custom_fbi-gov-crime"); fall back to dataset name
+                        # for built-in datasets where they are identical.
+                        _resolved_baseline_id = baseline_id or dataset
+                        _gcs_versions = _gcs_baselines.list_baseline_versions(_resolved_baseline_id)
                     except Exception:
                         pass
                     if _gcs_versions:

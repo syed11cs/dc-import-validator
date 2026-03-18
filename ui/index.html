@@ -4091,7 +4091,9 @@
       if (!dataset) return;
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
-        const r = await fetch(API + `/api/review-summary/${dataset}?t=${Date.now()}${runIdParam}`);
+        const _bid = lastRunBaselineId || (dataset !== 'custom' ? dataset : null);
+        const baselineIdParam = _bid ? `&baseline_id=${encodeURIComponent(_bid)}` : '';
+        const r = await fetch(API + `/api/review-summary/${dataset}?t=${Date.now()}${runIdParam}${baselineIdParam}`);
         if (!r.ok) return;
         const data = await r.json();
         const stats = data && data.differ_stats;
