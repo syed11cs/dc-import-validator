@@ -466,22 +466,25 @@ def _resolve_artifact(dataset: str, run_id: str | None, filename: str) -> bytes 
     """Resolve artifact bytes via: GCS (when configured) → local per-run dir → canonical output dir.
 
     Returns raw bytes if found, None if not found at any level.
+    When run_id is None, returns None immediately — canonical artifacts are not served
+    without an explicit run_id to prevent stale data from appearing before any run.
     When GCS is configured and a run_id is present, GCS is the authoritative source so
     any instance (e.g. Cloud Run replica) can serve results; local is not consulted.
     """
-    if run_id and _run_id_safe(run_id):
-        raw = gcs_reports.get_report_from_gcs(run_id, dataset, filename)
-        if raw is not None:
-            return raw
-        if is_gcs_configured():
-            return None  # GCS is source of truth; do not fall through to local
-        per_run_path = OUTPUT_DIR / dataset / run_id / filename
-        if per_run_path.exists():
-            try:
-                return per_run_path.read_bytes()
-            except OSError:
-                return None
-    # Canonical (latest) fallback — used when no run_id or run_id lookup failed locally
+    if not run_id or not _run_id_safe(run_id):
+        return None
+    raw = gcs_reports.get_report_from_gcs(run_id, dataset, filename)
+    if raw is not None:
+        return raw
+    if is_gcs_configured():
+        return None  # GCS is source of truth; do not fall through to local
+    per_run_path = OUTPUT_DIR / dataset / run_id / filename
+    if per_run_path.exists():
+        try:
+            return per_run_path.read_bytes()
+        except OSError:
+            return None
+    # Per-run dir was cleaned up — fall back to canonical (latest) output
     output_dir = DATASET_OUTPUT_MAP.get(dataset)
     if not output_dir:
         return None
@@ -549,28 +552,29 @@ def report_info(dataset: str, run_id: str | None = Query(None)):
     """Return report metadata including mtime. When GCS is configured and run_id is set, use GCS only (validation_report.html or schema_review.json mtime) so any instance can serve."""
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
-    if run_id and _run_id_safe(run_id):
-        if is_gcs_configured():
-            mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "validation_report.html")
-            if mtime is None:
-                mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "schema_review.json")
-            if mtime is not None:
-                return {"exists": True, "mtime": mtime}
-            return {"exists": False}
+    if not run_id or not _run_id_safe(run_id):
+        return {"exists": False}
+    if is_gcs_configured():
         mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "validation_report.html")
+        if mtime is None:
+            mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "schema_review.json")
         if mtime is not None:
             return {"exists": True, "mtime": mtime}
-        per_run = OUTPUT_DIR / dataset / run_id
-        for name in ("validation_report.html", "schema_review.json"):
-            p = per_run / name
-            if p.exists():
-                return {"exists": True, "mtime": p.stat().st_mtime}
+        return {"exists": False}
+    mtime = gcs_reports.get_report_updated_from_gcs(run_id, dataset, "validation_report.html")
+    if mtime is not None:
+        return {"exists": True, "mtime": mtime}
+    per_run = OUTPUT_DIR / dataset / run_id
+    for name in ("validation_report.html", "schema_review.json"):
+        p = per_run / name
+        if p.exists():
+            return {"exists": True, "mtime": p.stat().st_mtime}
+    # Per-run dir was cleaned up — fall back to canonical
     output_dir = DATASET_OUTPUT_MAP[dataset]
     path = output_dir / "validation_report.html"
     if not path.exists():
         return {"exists": False}
-    mtime = path.stat().st_mtime
-    return {"exists": True, "mtime": mtime}
+    return {"exists": True, "mtime": path.stat().st_mtime}
 
 
 def _get_fluctuation_samples_internal(dataset: str, run_id: str | None) -> tuple[bool, list]:
@@ -787,9 +791,13 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
     if data is None:
         if run_id and _run_id_safe(run_id):
             output_dir = OUTPUT_DIR / dataset / run_id
-        else:
-            output_dir = DATASET_OUTPUT_MAP[dataset]
-        data = _build_review_summary(dataset, output_dir)
+            data = _build_review_summary(dataset, output_dir)
+            # Per-run dir may have been cleaned up — fall back to canonical
+            if data is None:
+                canonical_dir = DATASET_OUTPUT_MAP.get(dataset)
+                if canonical_dir:
+                    data = _build_review_summary(dataset, canonical_dir)
+        # When run_id is None, do not read canonical artifacts — caller has no run yet
     if data is None:
         raise HTTPException(status_code=404, detail="No validation result. Run validation first.")
     if format and format.lower() == "md":

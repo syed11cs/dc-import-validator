@@ -4785,7 +4785,16 @@
 
     const _datasetNameInput = document.getElementById('custom-dataset-name');
     if (_datasetNameInput) {
-      _datasetNameInput.addEventListener('input', _updateDatasetNameHint);
+      _datasetNameInput.addEventListener('input', () => {
+        _updateDatasetNameHint();
+        // Dataset name changes the effective baseline_id — clear any stale differ/baseline UI
+        const _dcEl = document.getElementById('differ-container');
+        const _dgEl = document.getElementById('differ-group');
+        const _bhEl = document.getElementById('baseline-history-container');
+        if (_dcEl) _dcEl.innerHTML = '';
+        if (_dgEl) _dgEl.style.display = 'none';
+        if (_bhEl) { _bhEl.style.display = 'none'; _bhEl.innerHTML = ''; }
+      });
       _updateDatasetNameHint();
     }
 
