@@ -77,6 +77,35 @@ def _next_version(dataset_id: str) -> str:
     return "v1"
 
 
+def patch_manifest_field(dataset_id: str, version: str, field: str, value: str) -> None:
+    """Patch a single field into both latest/ and the versioned manifest.
+
+    Works for both local and GCS storage. Non-fatal: logs and returns on error.
+    Intended for post-write metadata updates (e.g. accepted_by) that upload_baseline
+    does not receive at write time.
+    """
+    try:
+        bucket = _get_bucket()
+        if bucket is not None:
+            for slot in ("latest", version):
+                blob = bucket.get_blob(f"baselines/{dataset_id}/{slot}/manifest.json")
+                if blob:
+                    m = json.loads(blob.download_as_text())
+                    m[field] = value
+                    bucket.blob(f"baselines/{dataset_id}/{slot}/manifest.json").upload_from_string(
+                        json.dumps(m, indent=2), content_type="application/json"
+                    )
+        else:
+            for slot in ("latest", version):
+                p = _PROJECT_ROOT / "output" / "baselines" / dataset_id / slot / "manifest.json"
+                if p.exists():
+                    m = json.loads(p.read_text(encoding="utf-8"))
+                    m[field] = value
+                    p.write_text(json.dumps(m, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: patch_manifest_field failed for '{dataset_id}': {e}", flush=True)
+
+
 def baseline_exists(dataset_id: str) -> bool:
     """Return True if a baseline exists for dataset_id. Fail-open: returns False on error."""
     try:

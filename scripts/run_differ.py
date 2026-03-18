@@ -217,6 +217,8 @@ def update_baseline(args: argparse.Namespace) -> int:
         args.dataset_id, Path(args.current_mcf_dir), run_id=run_id
     )
     if ok:
+        # Emit version as JSON so callers can parse it without a storage round-trip.
+        print(json.dumps({"baseline_version": version}), flush=True)
         return 0
     return 2
 

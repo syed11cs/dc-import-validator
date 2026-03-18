@@ -1038,25 +1038,33 @@ async def accept_baseline(dataset: str, body: dict = Body(default={})):
         logger.exception("accept_baseline error dataset=%s baseline_id=%s", dataset, baseline_id)
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Read the version that was just written from the updated manifest.
+    # Extract version from subprocess stdout first (fast path — no storage round-trip).
+    # run_differ.py emits {"baseline_version": "vN"} on success.
+    # Falls back to list_baseline_versions() which works for both local and GCS.
     version: str | None = None
     try:
-        manifest_path = APP_ROOT / "output" / "baselines" / baseline_id / "latest" / "manifest.json"
-        if manifest_path.exists():
-            version = json.loads(manifest_path.read_text(encoding="utf-8")).get("version")
+        for line in stdout.decode(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                parsed = json.loads(line)
+                version = parsed.get("baseline_version") or None
+                if version:
+                    break
     except Exception:
         pass
+    if not version:
+        try:
+            versions = _gcs_baselines.list_baseline_versions(baseline_id)
+            if versions:
+                version = versions[0].get("version")
+        except Exception:
+            pass
 
     # If accepted_by was provided but not yet in manifest (run_differ doesn't pass it through),
-    # patch it into both latest/ and the versioned copy now.
+    # patch it via the public storage API so it works for both local and GCS.
     if accepted_by and version:
         try:
-            for slot in ("latest", version):
-                p = APP_ROOT / "output" / "baselines" / baseline_id / slot / "manifest.json"
-                if p.exists():
-                    m = json.loads(p.read_text(encoding="utf-8"))
-                    m["accepted_by"] = accepted_by
-                    p.write_text(json.dumps(m, indent=2), encoding="utf-8")
+            _gcs_baselines.patch_manifest_field(baseline_id, version, "accepted_by", accepted_by)
         except Exception:
             pass  # non-fatal
 

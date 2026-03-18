@@ -4087,6 +4087,7 @@
       const container = document.getElementById('differ-container');
       if (!group || !container) return;
       group.style.display = 'none';
+      container.innerHTML = '';
       if (!dataset) return;
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
@@ -4190,7 +4191,8 @@
 
         const variant = differVariant(stats);
         const totalChanges = (stats.deleted || 0) + (stats.modified || 0) + (stats.added || 0);
-        const changeHeading = totalChanges > 0 ? 'Dataset changes detected' : 'No changes vs previous baseline';
+        const _noChangeVersion = stats.baseline_version ? ' relative to baseline ' + stats.baseline_version : '';
+        const changeHeading = totalChanges > 0 ? 'Dataset changes detected' : ('No dataset changes detected' + _noChangeVersion);
         const label = totalChanges > 0
           ? (stats.deleted || 0) + ' deleted · ' + (stats.modified || 0) + ' modified · ' + (stats.added || 0) + ' added'
           : changeHeading;
@@ -4229,7 +4231,7 @@
           : (canAccept && totalChanges > 0)
             ? '<div class="differ-accept-row"><button id="accept-baseline-btn" class="accept-baseline-btn" onclick="acceptBaseline()">Accept as baseline</button></div>'
             : (canAccept && totalChanges === 0)
-              ? '<p class="differ-no-changes-note">✔ No dataset changes vs previous baseline</p>'
+              ? '<p class="differ-no-changes-note">✔ ' + escapeHtml(changeHeading) + '</p>'
               : '';
         // When this run IS the current baseline, replace the "Dataset changes detected" heading
         // with a "Baseline vN (current) · date" title and collapse the metrics by default.
