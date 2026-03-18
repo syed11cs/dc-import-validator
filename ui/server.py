@@ -50,6 +50,7 @@ from ui.services.review_summary import (
     build_review_summary as _build_review_summary,
     build_review_summary_from_data as _build_review_summary_from_data,
     review_summary_to_markdown as _review_summary_to_markdown,
+    _load_differ_stats,
 )
 from ui import gcs_reports
 from ui.gcs_reports import GCSAccessError, is_gcs_configured
@@ -770,6 +771,15 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         pass
                 data = _build_review_summary_from_data(dataset, results, llm_issues, report)
+                # differ_stats are not stored in GCS — load them from the canonical output
+                # dir where _copy_run_to_canonical copies differ_output/ after each run.
+                if data is not None and data.get("differ_stats") is None:
+                    canonical = DATASET_OUTPUT_MAP.get(dataset)
+                    if canonical:
+                        differ_stats = _load_differ_stats(canonical, baseline_id=dataset)
+                        if differ_stats:
+                            data["differ_stats"] = differ_stats
+                            data["current_baseline_run_id"] = differ_stats.get("baseline_run_id")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
         if data is None and run_id and is_gcs_configured():

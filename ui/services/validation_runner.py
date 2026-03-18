@@ -78,6 +78,15 @@ def _copy_run_to_canonical(run_dir: Path, canonical_dir: Path) -> None:
         # Also copy MCF files so accept-baseline can locate them after per-run dir cleanup.
         for mcf in run_dir.glob("*.mcf"):
             shutil.copy2(mcf, canonical_dir / mcf.name)
+        # Copy differ output so review-summary can read it after per-run dir is cleaned up.
+        differ_src = run_dir / "differ_output"
+        if differ_src.is_dir():
+            differ_dst = canonical_dir / "differ_output"
+            differ_dst.mkdir(parents=True, exist_ok=True)
+            for name in ("differ_summary.json", "obs_diff_summary.csv"):
+                src = differ_src / name
+                if src.exists():
+                    shutil.copy2(src, differ_dst / name)
     except OSError as e:
         logger.warning("copy run to canonical failed run_dir=%s canonical_dir=%s: %s", run_dir, canonical_dir, e)
 
