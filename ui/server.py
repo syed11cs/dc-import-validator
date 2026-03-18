@@ -798,6 +798,17 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                 if canonical_dir:
                     data = _build_review_summary(dataset, canonical_dir)
         # When run_id is None, do not read canonical artifacts — caller has no run yet
+    # Ensure current_baseline_run_id is populated regardless of path (local or GCS).
+    # On Cloud Run, _load_differ_stats cannot read the local manifest, so the field
+    # stays None unless we look it up from gcs_baselines.list_baseline_versions here.
+    # list_baseline_versions() branches on _get_bucket() so it works for both backends.
+    if data is not None and run_id and data.get("current_baseline_run_id") is None:
+        try:
+            versions = _gcs_baselines.list_baseline_versions(dataset)
+            if versions:
+                data["current_baseline_run_id"] = versions[0].get("run_id")
+        except Exception:
+            pass
     if data is None:
         raise HTTPException(status_code=404, detail="No validation result. Run validation first.")
     if format and format.lower() == "md":
@@ -1004,6 +1015,20 @@ async def accept_baseline(dataset: str, body: dict = Body(default={})):
         raise HTTPException(status_code=400, detail="baseline_id is required for custom datasets")
 
     accepted_by: str | None = body.get("accepted_by") or None
+
+    # Idempotency guard: reject if this run_id is already the current baseline.
+    if run_id:
+        try:
+            versions = _gcs_baselines.list_baseline_versions(baseline_id)
+            if versions and versions[0].get("run_id") == run_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This run has already been accepted as the current baseline.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Non-fatal: if the check fails, allow the update to proceed
 
     # Locate MCF files: per-run dir first (if run_id set and dir not yet cleaned up),
     # then the canonical output dir (which always receives MCF copies after each run).
