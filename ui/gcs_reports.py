@@ -118,6 +118,19 @@ def upload_reports_to_gcs(
     except (json.JSONDecodeError, OSError, TypeError):
         pass
 
+    # differ output (dataset comparison across Cloud Run instances)
+    differ_dir = output_dir / "differ_output"
+    for filename, content_type in (
+        ("differ_summary.json", "application/json"),
+        ("obs_diff_summary.csv", "text/csv"),
+    ):
+        path = differ_dir / filename
+        if not path.exists():
+            continue
+        blob = bucket.blob(f"{prefix}/differ_output/{filename}")
+        blob.upload_from_filename(str(path), content_type=content_type)
+        uploaded += 1
+
     return uploaded > 0
 
 

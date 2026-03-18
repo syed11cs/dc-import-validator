@@ -462,6 +462,32 @@ def _run_id_safe(run_id: str) -> bool:
     return run_id is not None and "/" not in run_id and ".." not in run_id and "\x00" not in run_id
 
 
+def _load_differ_stats_from_gcs(run_id: str, dataset: str) -> dict | None:
+    """Download differ_output from GCS into a temp dir and return parsed differ_stats.
+
+    Returns None when the files are absent (run predates this feature, differ was
+    skipped, or GCS is not configured).  The caller is responsible for merging
+    baseline provenance fields from the GCS manifest on top of the returned dict.
+    """
+    raw_summary = gcs_reports.get_report_from_gcs(
+        run_id, dataset, "differ_output/differ_summary.json"
+    )
+    raw_csv = gcs_reports.get_report_from_gcs(
+        run_id, dataset, "differ_output/obs_diff_summary.csv"
+    )
+    if raw_summary is None and raw_csv is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="gcs_differ_") as tmp:
+        tmp_path = Path(tmp)
+        differ_dir = tmp_path / "differ_output"
+        differ_dir.mkdir()
+        if raw_summary is not None:
+            (differ_dir / "differ_summary.json").write_bytes(raw_summary)
+        if raw_csv is not None:
+            (differ_dir / "obs_diff_summary.csv").write_bytes(raw_csv)
+        return _load_differ_stats(tmp_path)
+
+
 def _resolve_artifact(dataset: str, run_id: str | None, filename: str) -> bytes | None:
     """Resolve artifact bytes via: GCS (when configured) → local per-run dir → canonical output dir.
 
@@ -776,11 +802,12 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                         pass
                 data = _build_review_summary_from_data(dataset, results, llm_issues, report)
                 # differ_stats / current_baseline_run_id — GCS path.
-                # GCS is the authoritative source for baseline existence on Cloud Run.
-                # Only populate differ_stats when at least one baseline version exists in
-                # GCS; if none exist, leave differ_stats=None so the UI shows the correct
-                # "No baseline exists for this dataset yet." state rather than stale local
-                # filesystem differ output.
+                # GCS is the sole authoritative source for differ_stats on Cloud Run.
+                # Canonical differ_output is not used here — it lives on the local filesystem
+                # and is not reliable across Cloud Run replicas or after container restarts.
+                # differ_output files are uploaded to GCS with each run so any instance can
+                # load the full diff counts. Provenance fields are always merged from the GCS
+                # baseline manifest, which is the authoritative source for version/date/approver.
                 if data is not None:
                     _gcs_versions: list = []
                     try:
@@ -788,16 +815,19 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                     except Exception:
                         pass
                     if _gcs_versions:
-                        canonical = DATASET_OUTPUT_MAP.get(dataset)
-                        if canonical:
-                            differ_stats = _load_differ_stats(canonical, baseline_id=dataset)
-                            if differ_stats:
-                                data["differ_stats"] = differ_stats
-                                data["current_baseline_run_id"] = differ_stats.get("baseline_run_id")
-                        # current_baseline_run_id may still be None if the local differ_output
-                        # was unavailable — fall back to the GCS manifest directly.
-                        if data.get("current_baseline_run_id") is None:
-                            data["current_baseline_run_id"] = _gcs_versions[0].get("run_id")
+                        latest = _gcs_versions[0]
+                        # Load full differ_stats (counts + changed StatVars) from GCS.
+                        # Falls back to an empty dict for runs that predate this feature
+                        # or where the differ was skipped — provenance is always filled in.
+                        differ_stats = _load_differ_stats_from_gcs(run_id, dataset) or {}
+                        # Provenance comes from the GCS manifest (authoritative on Cloud Run).
+                        # Local manifest files are not readable from Cloud Run instances.
+                        differ_stats["baseline_run_id"] = latest.get("run_id")
+                        differ_stats["baseline_version"] = latest.get("version")
+                        differ_stats["baseline_updated_at"] = latest.get("updated_at")
+                        differ_stats["baseline_accepted_by"] = latest.get("accepted_by")
+                        data["differ_stats"] = differ_stats
+                        data["current_baseline_run_id"] = latest.get("run_id")
                     # else: no GCS baselines — differ_stats and current_baseline_run_id stay None
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
