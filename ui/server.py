@@ -775,15 +775,30 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         pass
                 data = _build_review_summary_from_data(dataset, results, llm_issues, report)
-                # differ_stats are not stored in GCS — load them from the canonical output
-                # dir where _copy_run_to_canonical copies differ_output/ after each run.
-                if data is not None and data.get("differ_stats") is None:
-                    canonical = DATASET_OUTPUT_MAP.get(dataset)
-                    if canonical:
-                        differ_stats = _load_differ_stats(canonical, baseline_id=dataset)
-                        if differ_stats:
-                            data["differ_stats"] = differ_stats
-                            data["current_baseline_run_id"] = differ_stats.get("baseline_run_id")
+                # differ_stats / current_baseline_run_id — GCS path.
+                # GCS is the authoritative source for baseline existence on Cloud Run.
+                # Only populate differ_stats when at least one baseline version exists in
+                # GCS; if none exist, leave differ_stats=None so the UI shows the correct
+                # "No baseline exists for this dataset yet." state rather than stale local
+                # filesystem differ output.
+                if data is not None:
+                    _gcs_versions: list = []
+                    try:
+                        _gcs_versions = _gcs_baselines.list_baseline_versions(dataset)
+                    except Exception:
+                        pass
+                    if _gcs_versions:
+                        canonical = DATASET_OUTPUT_MAP.get(dataset)
+                        if canonical:
+                            differ_stats = _load_differ_stats(canonical, baseline_id=dataset)
+                            if differ_stats:
+                                data["differ_stats"] = differ_stats
+                                data["current_baseline_run_id"] = differ_stats.get("baseline_run_id")
+                        # current_baseline_run_id may still be None if the local differ_output
+                        # was unavailable — fall back to the GCS manifest directly.
+                        if data.get("current_baseline_run_id") is None:
+                            data["current_baseline_run_id"] = _gcs_versions[0].get("run_id")
+                    # else: no GCS baselines — differ_stats and current_baseline_run_id stay None
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
         if data is None and run_id and is_gcs_configured():
@@ -798,17 +813,6 @@ def get_review_summary(dataset: str, format: str | None = Query(None), run_id: s
                 if canonical_dir:
                     data = _build_review_summary(dataset, canonical_dir)
         # When run_id is None, do not read canonical artifacts — caller has no run yet
-    # Ensure current_baseline_run_id is populated regardless of path (local or GCS).
-    # On Cloud Run, _load_differ_stats cannot read the local manifest, so the field
-    # stays None unless we look it up from gcs_baselines.list_baseline_versions here.
-    # list_baseline_versions() branches on _get_bucket() so it works for both backends.
-    if data is not None and run_id and data.get("current_baseline_run_id") is None:
-        try:
-            versions = _gcs_baselines.list_baseline_versions(dataset)
-            if versions:
-                data["current_baseline_run_id"] = versions[0].get("run_id")
-        except Exception:
-            pass
     if data is None:
         raise HTTPException(status_code=404, detail="No validation result. Run validation first.")
     if format and format.lower() == "md":
