@@ -362,6 +362,7 @@ def _write_warnings_advisories_csv(
                 current_value=curr_str,
                 percent_change=pct_str,
                 series_points=series_len_str,
+                file=os.path.basename(source_file) if source_file else "",
                 message="Large fluctuation (>100%) between consecutive points",
                 source_file=source_file,
                 dataset=dataset,
