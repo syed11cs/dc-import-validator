@@ -4030,31 +4030,14 @@
         const container = document.getElementById('differ-container');
         const isBootstrap = container &&
           container.querySelector('.differ-no-baseline-msg') !== null;
-        if (isBootstrap && container) {
-          const versionLabel = version ? ` (${version})` : '';
-          container.innerHTML = reportBox('success',
-            '<p class="differ-baseline-created">✔ Baseline created successfully' + escapeHtml(versionLabel) + '</p>' +
-            '<p class="differ-no-baseline-msg">Run validation to compare this dataset against the baseline.</p>'
-          );
-          updateReportHeadingStates();
-          loadBaselineHistory(currentDataset, lastRunBaselineId || (currentDataset !== 'custom' ? currentDataset : null));
-          const toastMsg = version ? `✔ Baseline ${version} created successfully` : '✔ Baseline created successfully';
-          showToast(toastMsg, 3000);
-        } else {
-          // Normal accept case: replace the differ section with a success state so the
-          // old diff results (which were just promoted) are no longer shown.
-          const versionLabel = version ? ` to ${version}` : '';
-          if (container) {
-            container.innerHTML = reportBox('success',
-              '<p class="differ-baseline-created">✔ Baseline updated' + escapeHtml(versionLabel) + '</p>' +
-              '<p class="differ-no-baseline-msg">Run validation again to detect new dataset changes.</p>'
-            );
-            updateReportHeadingStates();
-          }
-          const toastMsg = version ? `✔ Baseline updated to ${version}` : '✔ Baseline updated';
-          showToast(toastMsg, 3000);
-          loadBaselineHistory(currentDataset, lastRunBaselineId || (currentDataset !== 'custom' ? currentDataset : null));
-        }
+        const toastMsg = isBootstrap
+          ? (version ? `✔ Baseline ${version} created successfully` : '✔ Baseline created successfully')
+          : (version ? `✔ Baseline updated to ${version}` : '✔ Baseline updated');
+        showToast(toastMsg, 3000);
+        // Reload the full review summary so the diff metrics remain visible and the
+        // banner updates to "✔ This run has been promoted as the current baseline."
+        // loadDifferSummary also refreshes the baseline history section.
+        await loadDifferSummary(currentDataset, lastRunReportId);
       } catch (e) {
         if (btn) { btn.textContent = '✖ Failed — ' + e.message; btn.disabled = false; }
       }
