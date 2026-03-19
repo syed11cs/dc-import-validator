@@ -84,24 +84,33 @@ Total data points in series: {series_length_str}
 Technical signals:
 {ts}
 
+The technical signals JSON includes previous_value and current_value (the raw numeric values before and after the jump). Use these alongside the percent change to reason about absolute magnitude — a jump from 0.3 to 5000 warrants different scrutiny than a jump from 800000 to 9000000.
+
+Fields such as scaling_changed and unit_changed may be null. A null value means scaling or unit information was not present in the dataset — treat null as unknown, not as confirmed-unchanged.
+
 Use the full context to assess the fluctuation.
 
-Technical signals (e.g. previous_near_zero, first_valid_after_placeholder, missing_intermediate_periods, scaling_changed, unit_changed) are hints that may support or weaken an interpretation—they are not strict rules.
+Boolean technical signals (previous_near_zero, first_valid_after_placeholder, missing_intermediate_periods, scaling_changed, unit_changed) are hints only — not strict rules. Mention them only when directly relevant to your reasoning.
 
-Mention technical signals only when they are relevant to the reasoning.
-Avoid repeating generic statements such as "no technical flags indicate an error."
+When all boolean signals are false or null, do NOT comment on the absence of signals. Instead base your explanation solely on the magnitude of change, the period gap, the series length, and the statistical plausibility of the jump.
 
 Do NOT guess or infer real-world place names from the Location ID.
 
 Consider together:
-• the magnitude of the change
-• the time period
+• the magnitude of the change (both percent and absolute, using previous_value / current_value)
+• the period gap and observation frequency
 • the statistical plausibility
 • the number of data points in the series
 • what the technical signals suggest
 
 If the series contains only two data points, prefer "Insufficient Context".
 However, if the magnitude of change is extremely large or statistically unusual, it may still warrant "Needs Review".
+
+Classification guidance:
+• Use "Possible Data Issue" when a technical signal directly suggests a data problem — for example: scaling_changed is true, unit_changed is true, or first_valid_after_placeholder is true with a suspiciously large jump.
+• Use "Needs Review" when the magnitude of change is unusually large but no technical signal clearly indicates a data error.
+• Use "Likely Valid" when the change is plausible given the series context. Note: "Likely Valid" means the fluctuation appears statistically plausible — it does not guarantee the data is correct.
+• Use "Insufficient Context" when the series is too short or the signals too ambiguous to make a confident assessment.
 
 Then choose the assessment that best fits.
 

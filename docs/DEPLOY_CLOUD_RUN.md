@@ -122,7 +122,11 @@ If `IMPORT_RESOLUTION_MODE=FULL` and `IMPORT_EXISTENCE_CHECKS=true`, then **DC_A
 
 - Instances scale to zero.
 - Uploads are ephemeral.
-- Set `GCS_REPORTS_BUCKET` for persistent reports.
+- Set `GCS_REPORTS_BUCKET` for persistent reports **and dataset baselines**.
+
+> **Important:** `GCS_REPORTS_BUCKET` is used for two distinct purposes:
+> 1. **Report storage** — validation HTML reports and JSON artifacts, served across replicas.
+> 2. **Baseline storage** — versioned dataset baselines accepted via the UI (`baselines/{dataset_id}/` in the bucket). Without this bucket, baselines are written to the local container filesystem and are permanently lost on every redeploy or scale-out event.
 
 ---
 
@@ -167,11 +171,12 @@ ENV DATA_REPO=/app/data
 - [ ] Environment variables set
 - [ ] Secrets configured (Gemini key)
 
-### GCS Reports (optional but recommended)
+### GCS Reports & Baselines (optional but strongly recommended)
 
 - [ ] Created bucket: `dc-import-validator-reports`
 - [ ] Granted Storage Object Admin to Cloud Run service account
 - [ ] Set `GCS_REPORTS_BUCKET` env var
+- [ ] Understood: this bucket stores both reports **and** dataset baselines — without it, accepted baselines are lost on redeploy
 
 ---
 

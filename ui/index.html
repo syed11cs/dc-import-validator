@@ -4347,7 +4347,7 @@
                 period_gap_years: s.period_gap_years != null ? s.period_gap_years : null,
                 series_length: s.series_length != null ? s.series_length : null
               });
-              explainBlock = '<div class="explain-fluctuation-wrap"><button type="button" class="explain-fluctuation-btn" data-explain-index="' + payloadIdx + '" title="AI will analyze technical signals behind this fluctuation.">\u2728 Explain with AI</button><div class="ai-interpretation-cell" id="fluctuation-ai-' + payloadIdx + '" aria-live="polite"></div></div>';
+              explainBlock = '<div class="explain-fluctuation-wrap"><button type="button" class="explain-fluctuation-btn" data-explain-index="' + payloadIdx + '" title="AI will analyze technical signals behind this fluctuation.">\u2728 Analyze fluctuation</button><div class="ai-interpretation-cell" id="fluctuation-ai-' + payloadIdx + '" aria-live="polite"></div></div>';
             }
             return '<div class="fluctuation-sample-card" data-justification="' + justificationAttr + '">' +
               '<div class="card-row stat-var">' + escapeHtml(m.statVar) + '</div>' +

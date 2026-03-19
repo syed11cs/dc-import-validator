@@ -208,9 +208,14 @@ The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load 
 └──────┬──────┘
        ↓
 ┌─────────────┐
+│   import_   │  OPTIONAL (when a baseline exists):
+│   differ    │  • Compare observations vs accepted baseline
+└──────┬──────┘  • Detect deleted / modified / added rows
+       ↓
+┌─────────────┐
 │    HTML     │  • Blockers (P0 errors)
 │   Report    │  • Warnings (non-blocking)
-└─────────────┘  • StatVar summary • Lint issues
+└─────────────┘  • StatVar summary • Lint issues • Dataset changes
 ```
 
 #### What Gets Validated
@@ -225,6 +230,7 @@ The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load 
 | Scaling Factor | Consistent scaling per StatVar | ✅ Yes |
 | Lint Errors | Import tool warnings/errors | ⚠️ Warning by default |
 | Data Fluctuation | Extreme changes detected | ⚠️ Warning |
+| Dataset Changes | Deleted / modified / added observations vs accepted baseline (requires a baseline to exist) | ✅ Yes (⚠️ Warning for custom datasets) |
 ### ⚙️ Configuration
 
 #### Rule Configuration
