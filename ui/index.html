@@ -2262,7 +2262,10 @@
         const badge = document.createElement('div');
         badge.className = 'summary-card-badge';
         badge.style.cssText = 'font-size:0.85em;color:var(--text-muted);margin-top:2px;';
-        badge.textContent = 'Validation did not run.';
+        const schemaReviewRan = typeof opts.failure_step === 'number' && opts.failure_step >= 2;
+        badge.textContent = schemaReviewRan
+          ? 'Validation was skipped due to earlier pipeline failure.'
+          : 'Validation did not run.';
         content.appendChild(badge);
       }
 
@@ -3790,15 +3793,17 @@
             return;
           }
           /* Run state belongs to current dataset: use run-specific messaging. */
+          const isPipelineFailed = !!(lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation);
           const reportUnavailableMsg = !lastRunReportGenerated
-            ? 'Validation was not executed for this run.'
+            ? (isPipelineFailed ? 'Skipped due to earlier pipeline failure.' : 'Validation was not executed for this run.')
             : "Report not available. Set GCS_REPORTS_BUCKET on Cloud Run so reports are stored in GCS; or try again in a few seconds.";
           setReportInsightsPlaceholder(reportUnavailableMsg);
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (isGeminiBlocking) {
             /* Leave LLM report as already rendered by loadLLMReportSection; do not overwrite with generic message. */
-          } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
-            renderLLMReportSection({ pipelineFailed: true });
+          } else if (isPipelineFailed) {
+            /* Schema Review step did not produce output — loadLLMReportSection already rendered the correct state. */
+            renderLLMReportSection({ notRun: true });
           } else {
             renderLLMReportSection({ neutral: true });
           }
@@ -3816,7 +3821,8 @@
           if (isGeminiBlocking) {
             /* Leave LLM report as-is; do not overwrite. */
           } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
-            renderLLMReportSection({ pipelineFailed: true });
+            /* Schema Review step did not produce output — loadLLMReportSection already rendered the correct state. */
+            renderLLMReportSection({ notRun: true });
           } else {
             renderLLMReportSection({ neutral: true });
           }
@@ -3828,8 +3834,9 @@
         if (runStateForThisDataset) {
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (!isGeminiBlocking) {
-            setReportInsightsPlaceholder('Validation was not executed for this run.');
-            renderLLMReportSection({ pipelineFailed: true });
+            // Validation/fluctuation/lint steps were skipped; LLM section was already loaded by
+            // loadLLMReportSection above and should not be overwritten here.
+            setReportInsightsPlaceholder('Skipped due to earlier pipeline failure.');
           }
         } else {
           await Promise.all([
