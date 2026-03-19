@@ -1637,7 +1637,7 @@
               <div id="fluctuation-samples-container"></div>
             </div>
             <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">AI Advisory</h4>
+              <h4 id="report-heading-ai" class="report-group-heading">Schema Review (AI-assisted)</h4>
               <div id="llm-report-container"></div>
             </div>
           </div>
@@ -4084,7 +4084,15 @@
         const _bid = lastRunBaselineId || (dataset !== 'custom' ? dataset : null);
         const baselineIdParam = _bid ? `&baseline_id=${encodeURIComponent(_bid)}` : '';
         const r = await fetch(API + `/api/review-summary/${dataset}?t=${Date.now()}${runIdParam}${baselineIdParam}`);
-        if (!r.ok) return;
+        if (!r.ok) {
+          const msg = runId
+            ? 'Report not available for this run.'
+            : 'No runs yet for this dataset. Run validation to generate a report.';
+          container.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(msg) + '</p>');
+          group.style.display = '';
+          updateReportHeadingStates();
+          return;
+        }
         const data = await r.json();
         const stats = data && data.differ_stats;
         if (!stats) {

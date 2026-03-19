@@ -630,6 +630,7 @@ def _build_prompt(
     if stat_vars_content or stat_vars_schema_content:
         if stat_vars_content:
             extra += "--- stat_vars.mcf (excerpt) ---\n" + (stat_vars_content[:12000] or "") + "\n"
+            extra += "Note: this reference may be truncated. If a StatVar DCID does not appear above, do not assume it is unknown — it may have been omitted from the excerpt. Only flag unknown_statvar when you are confident the reference is complete.\n"
         if stat_vars_schema_content:
             extra += "--- stat_vars_schema.mcf (excerpt) ---\n" + (stat_vars_schema_content[:8000] or "") + "\n"
 
@@ -675,7 +676,7 @@ Respond with a JSON array only.
 - Line number: Include the line number when the issue is on a specific line (e.g. duplicate property → line of the duplicate; typo → line with the wrong name; namespace → line with missing dcs:; naming → line with the unexpected property). Use null only for node-level issues where no single line is wrong (e.g. "missing required property" for a node — the node is incomplete, so null is fine).
 - Suggestion: Always provide a short fix when possible. For missing required property X: "Add X with a column mapping (e.g. X: C:table->columnId)." For duplicate: "Remove the duplicate line." For namespace: "Add dcs: prefix (e.g. dcs:Value)." For typo: give the correct spelling.
 - Use type: duplicate, required, namespace, format, typo, schema, naming, unknown_statvar, unused_column as defined in the checks.
-- Severity: typo, schema, unknown_statvar, duplicate, required, namespace -> "blocker". Naming, unused_column, format -> "warning" unless it breaks schema (then "blocker").
+- Include a severity field for each finding ("blocker" or "warning"). Severity will be normalized by the system after parsing, so focus primarily on identifying the issue accurately.
 - If no issues found, respond with: []
 - Return only valid JSON, no markdown or extra text.
 - Report at most 25 issues; if more exist, list the first 25 and omit the rest."""
