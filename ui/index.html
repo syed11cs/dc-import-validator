@@ -805,6 +805,11 @@
       font-size: 0.85rem;
       color: var(--text-muted);
     }
+    .report-loading {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding: 6px 0;
+    }
     @keyframes report-running-spin {
       to { transform: rotate(360deg); }
     }
@@ -1229,6 +1234,8 @@
     .differ-changed-statvars-table td:not(:first-child) { text-align: right; width: 3.5rem; }
     .differ-changed-statvars-table th:not(:first-child) { text-align: right; width: 3.5rem; }
     .differ-sv-name { font-family: var(--font-mono, monospace); font-size: 0.8rem; word-break: break-all; }
+    .differ-sv-name a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-focus); text-underline-offset: 2px; }
+    .differ-sv-name a:hover { color: var(--accent); text-decoration-color: var(--accent); }
     .differ-cell--deleted  { color: var(--fail); font-weight: 500; }
     .differ-cell--modified { color: var(--warn); font-weight: 500; }
     .differ-cell--added    { color: var(--success); font-weight: 500; }
@@ -4069,9 +4076,9 @@
       const group = document.getElementById('differ-group');
       const container = document.getElementById('differ-container');
       if (!group || !container) return;
-      group.style.display = 'none';
-      container.innerHTML = '';
-      if (!dataset) return;
+      if (!dataset) { group.style.display = 'none'; container.innerHTML = ''; return; }
+      group.style.display = '';
+      container.innerHTML = '<div class="report-loading">Loading…</div>';
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
         const _bid = lastRunBaselineId || (dataset !== 'custom' ? dataset : null);
@@ -4169,7 +4176,9 @@
             const delCell = sv.deleted  > 0 ? '<span class="differ-cell--deleted">'  + sv.deleted  + '</span>' : '<span class="differ-cell--zero">0</span>';
             const modCell = sv.modified > 0 ? '<span class="differ-cell--modified">' + sv.modified + '</span>' : '<span class="differ-cell--zero">0</span>';
             const addCell = sv.added    > 0 ? '<span class="differ-cell--added">'    + sv.added    + '</span>' : '<span class="differ-cell--zero">0</span>';
-            html += '<tr><td class="differ-sv-name">' + escapeHtml(sv.name) + '</td><td>' + delCell + '</td><td>' + modCell + '</td><td>' + addCell + '</td></tr>';
+            const svName = (sv.name || '').replace(/^dcid:/, '');
+            const svLink = '<a href="https://datacommons.org/tools/statvar#sv=' + encodeURIComponent(svName) + '" target="_blank" rel="noopener">' + escapeHtml(svName) + '</a>';
+            html += '<tr><td class="differ-sv-name">' + svLink + '</td><td>' + delCell + '</td><td>' + modCell + '</td><td>' + addCell + '</td></tr>';
           });
           html += '</tbody></table></details>';
         }
@@ -4306,6 +4315,7 @@
         updateReportHeadingStates();
         return;
       }
+      container.innerHTML = reportBox('muted', '<div class="report-loading">Loading…</div>');
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
         const r = await fetch(API + `/api/fluctuation-samples/${dataset}?t=${Date.now()}${runIdParam}`);
@@ -4406,6 +4416,7 @@
         updateReportHeadingStates();
         return;
       }
+      container.innerHTML = reportBox('muted', '<div class="report-loading">Loading…</div>');
       try {
         const runIdParam = runId ? '&run_id=' + encodeURIComponent(runId) : '';
         const r = await fetch(API + '/api/lint-warnings/' + dataset + '?t=' + Date.now() + runIdParam);
@@ -4470,6 +4481,7 @@
         updateReportHeadingStates();
         return;
       }
+      container.innerHTML = reportBox('muted', '<div class="report-loading">Loading…</div>');
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
         const r = await fetch(API + `/api/rule-failure-samples/${dataset}?t=${Date.now()}${runIdParam}`);
