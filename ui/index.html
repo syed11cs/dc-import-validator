@@ -3748,7 +3748,16 @@
       }
       const reportDataset = currentDataset;
       const reportRunId = (lastRunReportId && lastRunDataset === reportDataset) ? lastRunReportId : null;
+      // Schema Review (Step 1) only runs when Step 0 (Pre-Import) succeeds.
+      // If the current run failed at step 0, skip fetching schema_review.json entirely —
+      // the backend may serve a stale artifact from a previous run via its canonical fallback.
+      const schemaReviewSkipped = lastRunDataset === reportDataset
+        && lastRunSummary
+        && lastRunSummary.pipelineFailedBeforeValidation
+        && lastRunSummary.failure_step === 0;
       if (lastRunDataset === reportDataset && !lastRunHadAiReview) {
+        renderLLMReportSection({ notRun: true });
+      } else if (schemaReviewSkipped) {
         renderLLMReportSection({ notRun: true });
       } else {
         await loadLLMReportSection(reportDataset, { runId: reportRunId });
