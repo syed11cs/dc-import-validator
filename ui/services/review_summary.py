@@ -51,6 +51,12 @@ def _load_differ_stats(output_dir: Path, baseline_id: str | None = None) -> dict
             stats["modified"] = int(df["MODIFIED"].sum()) if "MODIFIED" in df.columns else 0
             stats["added"] = int(df["ADDED"].sum()) if "ADDED" in df.columns else 0
 
+            # Total unique StatVars present in the differ comparison.
+            # summary_report.csv (loaded below) overrides this with the accurate full count
+            # when available (local dev). On Cloud Run this is the best available value.
+            if "StatVar" in df.columns:
+                stats["total_stat_var_count"] = int(df["StatVar"].nunique())
+
             # Build per-StatVar change list (rows with any change, sorted by total desc, capped at 10)
             if "StatVar" in df.columns:
                 change_cols = [c for c in ("DELETED", "MODIFIED", "ADDED") if c in df.columns]
