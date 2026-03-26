@@ -226,14 +226,17 @@ def _render_differ_section(stats: dict | None) -> str:
 
 
 def _get_source_csv_path(report: dict | None) -> str:
-    """Return first CSV path from report commandArgs.inputFiles, or empty string."""
+    """Return comma-joined basenames of all CSV paths from report commandArgs.inputFiles, or empty string."""
     if not report or not isinstance(report, dict):
         return ""
-    for p in (report.get("commandArgs") or {}).get("inputFiles") or []:
-        path = str(p).strip()
-        if path.lower().endswith(".csv"):
-            return path
-    return ""
+    csv_paths = [
+        str(p).strip()
+        for p in ((report.get("commandArgs") or {}).get("inputFiles") or [])
+        if str(p).strip().lower().endswith(".csv")
+    ]
+    if not csv_paths:
+        return ""
+    return ", ".join(os.path.basename(p) for p in csv_paths)
 
 
 def _write_warnings_advisories_csv(

@@ -20,7 +20,7 @@
 #
 # Options:
 #   --tmcf PATH       Path to TMCF file (for custom dataset)
-#   --csv PATH        Path to CSV file (for custom dataset)
+#   --csv PATH        Path to CSV file (for custom dataset; repeatable for multiple CSVs)
 #   --stat-vars-mcf PATH       Optional stat vars MCF (for schema conformance; custom or when dataset has it)
 #   --stat-vars-schema-mcf PATH  Optional stat vars schema MCF (for schema conformance)
 #   --config PATH     Use custom validation config
@@ -61,7 +61,7 @@ CONFIG_OVERRIDE=""
 RULES_FILTER=""
 SKIP_RULES_FILTER=""
 CUSTOM_TMCF=""
-CUSTOM_CSV=""
+CUSTOM_CSVS=()
 CUSTOM_STAT_VARS_MCF=""
 CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
@@ -80,11 +80,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --csv)
-      CUSTOM_CSV="$2"
+      CUSTOM_CSVS+=("$2")
       shift 2
       ;;
     --csv=*)
-      CUSTOM_CSV="${1#*=}"
+      CUSTOM_CSVS+=("${1#*=}")
       shift
       ;;
     --stat-vars-mcf)
@@ -170,7 +170,7 @@ done
 
 # Default dataset if not specified
 if [[ -z "$DATASET" ]]; then
-  if [[ -n "$CUSTOM_TMCF" && -n "$CUSTOM_CSV" ]]; then
+  if [[ -n "$CUSTOM_TMCF" && ${#CUSTOM_CSVS[@]} -gt 0 ]]; then
     DATASET="custom"
   else
     DATASET="child_birth"
@@ -275,6 +275,7 @@ CB="$SCRIPT_DIR/sample_data/child_birth"
 if [[ "$DATASET" == "child_birth" ]]; then
   TMCF="$CB/child_birth.tmcf"
   CSV="$CB/child_birth.csv"
+  CSVS=("$CSV")
   GENMCF_OUTPUT="$OUTPUT_DIR/child_birth_genmcf"
   DATASET_OUTPUT="$GENMCF_OUTPUT"
   STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
@@ -289,6 +290,7 @@ elif [[ "$DATASET" == "statistics_poland" ]]; then
   SP="$SCRIPT_DIR/sample_data/statistics_poland"
   TMCF="$SP/StatisticsPoland_output.tmcf"
   CSV="$SP/StatisticsPoland_output.csv"
+  CSVS=("$CSV")
   GENMCF_OUTPUT="$OUTPUT_DIR/statistics_poland_genmcf"
   DATASET_OUTPUT="$GENMCF_OUTPUT"
   STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
@@ -302,6 +304,7 @@ elif [[ "$DATASET" == "finland_census" ]]; then
   FC="$SCRIPT_DIR/sample_data/finland_census"
   TMCF="$FC/finland_census_output.tmcf"
   CSV="$FC/finland_census_output.csv"
+  CSVS=("$CSV")
   GENMCF_OUTPUT="$OUTPUT_DIR/finland_census_genmcf"
   DATASET_OUTPUT="$GENMCF_OUTPUT"
   STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
@@ -315,6 +318,7 @@ elif [[ "$DATASET" == "uae_population" ]]; then
   UAE="$SCRIPT_DIR/sample_data/uae_population"
   TMCF="$UAE/uae_population_output.tmcf"
   CSV="$UAE/uae_population_output.csv"
+  CSVS=("$CSV")
   GENMCF_OUTPUT="$OUTPUT_DIR/uae_population_genmcf"
   DATASET_OUTPUT="$GENMCF_OUTPUT"
   STATS_SUMMARY="$GENMCF_OUTPUT/summary_report.csv"
@@ -325,13 +329,15 @@ elif [[ "$DATASET" == "uae_population" ]]; then
   [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
   log_info "Using uae_population (sample_data/uae_population/, from data repo uae_bayanat/uae_population/test_data/)"
 elif [[ "$DATASET" == "custom" ]]; then
-  if [[ -z "$CUSTOM_TMCF" || -z "$CUSTOM_CSV" ]]; then
+  if [[ -z "$CUSTOM_TMCF" || ${#CUSTOM_CSVS[@]} -eq 0 ]]; then
     log_error "Custom dataset requires --tmcf and --csv"
     echo "Example: ./run_e2e_test.sh --tmcf=path/to/file.tmcf --csv=path/to/file.csv"
+    echo "         ./run_e2e_test.sh --tmcf=path/to/file.tmcf --csv=a.csv --csv=b.csv"
     exit 1
   fi
   TMCF="$CUSTOM_TMCF"
-  CSV="$CUSTOM_CSV"
+  CSVS=("${CUSTOM_CSVS[@]}")
+  CSV="${CSVS[0]}"
   # CLI: fixed output dir so "latest" and docs align; Web UI sets RUN_ID so output goes to output/custom/{run_id}/
   GENMCF_OUTPUT="$OUTPUT_DIR/custom_input"
   DATASET_OUTPUT="$GENMCF_OUTPUT"
@@ -341,12 +347,19 @@ elif [[ "$DATASET" == "custom" ]]; then
   STAT_VARS_SCHEMA_MCF="${CUSTOM_STAT_VARS_SCHEMA_MCF:-}"
   DIFFER_OUTPUT=""  # No differ output for new imports
   [[ -z "$CONFIG_OVERRIDE" ]] && VALIDATION_CONFIG="$CONFIG_DIR/new_import_config.json"
-  log_info "Using custom data: TMCF=$TMCF, CSV=$CSV"
+  _csv_list="$(IFS=', '; echo "${CSVS[*]}")"
+  log_info "Using custom data: TMCF=$TMCF, CSVs=$_csv_list"
 else
   log_error "Unknown dataset: $DATASET"
   echo "Use: child_birth, statistics_poland, finland_census, uae_population, or custom (with --tmcf and --csv)"
   exit 1
 fi
+
+# Build --csv args array from CSVS for scripts that accept repeatable --csv
+CSV_ARGS=()
+for _csv_arg in "${CSVS[@]}"; do
+  CSV_ARGS+=(--csv="$_csv_arg")
+done
 
 # Per-run output dir when RUN_ID is set (e.g. by UI) to avoid concurrent-run overwrites
 if [[ -n "${RUN_ID:-}" ]]; then
@@ -405,8 +418,8 @@ mkdir -p "$DATASET_OUTPUT"
 PREFLIGHT_ERRORS_JSON="$DATASET_OUTPUT/preflight_errors.json"
 CSV_QUALITY_DETAILS_JSON="$DATASET_OUTPUT/csv_quality_details.json"
 VALIDATE_FILES_SCRIPT="$SCRIPT_DIR/scripts/validate_import_files.py"
-if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
-  PREFLIGHT_ARGS=(--tmcf="$TMCF" --csv="$CSV" --output-errors="$PREFLIGHT_ERRORS_JSON")
+if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
+  PREFLIGHT_ARGS=(--tmcf="$TMCF" "${CSV_ARGS[@]}" --output-errors="$PREFLIGHT_ERRORS_JSON")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
   if ! $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" 2>/dev/null; then
@@ -419,12 +432,12 @@ if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && -n "$CSV" ]]; then
 fi
 
 VALIDATE_CSV_SCRIPT="$SCRIPT_DIR/scripts/validate_csv_quality.py"
-if [[ -f "$VALIDATE_CSV_SCRIPT" && -n "$CSV" && -f "$CSV" ]]; then
+if [[ -f "$VALIDATE_CSV_SCRIPT" && ${#CSVS[@]} -gt 0 ]]; then
   CSV_QUALITY_EXTRA=(--allow-empty-columns)
-  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
+  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
     log_error "CSV quality check failed."
     emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed" "" "$CSV_QUALITY_DETAILS_JSON"
-    $PYTHON "$VALIDATE_CSV_SCRIPT" --csv="$CSV" --value-column=value "${CSV_QUALITY_EXTRA[@]}" || true
+    $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value "${CSV_QUALITY_EXTRA[@]}" || true
     ensure_failure_report "Pre-Import Checks" "CSV quality check failed"
     exit 1
   fi
@@ -459,7 +472,7 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
     LLM_EXTRA_ARGS=()
     [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
     [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
-    [[ -n "$CSV" && -f "$CSV" ]] && LLM_EXTRA_ARGS+=(--csv="$CSV")
+    [[ ${#CSVS[@]} -gt 0 && -f "${CSVS[0]}" ]] && LLM_EXTRA_ARGS+=(--csv="${CSVS[0]}")
     [[ "$LLM_REVIEW" == "true" ]] && LLM_EXTRA_ARGS+=(--llm-review)
     echo "::STEP::1:Gemini Review"
     if [[ "$LLM_REVIEW" == "true" ]]; then
@@ -515,8 +528,12 @@ else
   fi
 fi
 
-if [[ ! -f "$TMCF" || ! -f "$CSV" ]]; then
-  log_error "Input files not found: TMCF=$TMCF, CSV=$CSV"
+_missing_inputs=0
+[[ ! -f "$TMCF" ]] && { log_error "TMCF not found: $TMCF"; _missing_inputs=1; }
+for _csv_check in "${CSVS[@]}"; do
+  [[ ! -f "$_csv_check" ]] && { log_error "CSV not found: $_csv_check"; _missing_inputs=1; }
+done
+if [[ $_missing_inputs -ne 0 ]]; then
   ensure_failure_report "Setup" "Input files not found"
   exit 1
 fi
@@ -527,10 +544,10 @@ mkdir -p "$GENMCF_OUTPUT"
 LINT_WITH_MCF_OUTPUT="$GENMCF_OUTPUT/lint"
 if [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] || [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]]; then
   log_info "Running dc-import lint with schema MCF(s) for conformance check..."
-  LINT_FILES=("$TMCF" "$CSV")
+  LINT_FILES=("$TMCF" "${CSVS[@]}")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LINT_FILES+=("$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LINT_FILES+=("$STAT_VARS_SCHEMA_MCF")
-  if java -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
+  if java -Xmx8g -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
       --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" 2>/dev/null; then
     LINT_REPORT="$LINT_WITH_MCF_OUTPUT/report.json"
     if [[ -f "$LINT_REPORT" ]]; then
@@ -542,10 +559,10 @@ if [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] || [[ -n "$STAT_VARS_SCHEMA_
 fi
 
 # genmcf: same inputs as DE when schema MCFs exist (TMCF, CSV, optional stat_vars.mcf, stat_vars_schema.mcf)
-GENMCF_FILES=("$TMCF" "$CSV")
+GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
-java -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
+java -Xmx8g -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
   log_error "dc-import genmcf failed"
   emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
@@ -640,8 +657,8 @@ if [[ -n "$LINT_REPORT" && -f "$LINT_REPORT" ]]; then
   VALIDATION_ARGS+=(--lint_report="$LINT_REPORT")
 fi
 
-if [[ -n "$TMCF" && -f "$TMCF" && -n "$CSV" && -f "$CSV" ]]; then
-  VALIDATION_ARGS+=(--tmcf="$TMCF" --csv="$CSV")
+if [[ -n "$TMCF" && -f "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
+  VALIDATION_ARGS+=(--tmcf="$TMCF" "${CSV_ARGS[@]}")
 fi
 
 # differ_output is optional (not available for new imports). When no baseline comparison exists,

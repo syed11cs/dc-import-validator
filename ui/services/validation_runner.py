@@ -331,6 +331,7 @@ async def run_validation_process(
     canonical_output_dir: Path | None = None,
     extra_cleanup_dirs: list[Path] | None = None,
     extra_done_fields: dict | None = None,
+    extra_env: dict | None = None,
 ):
     """Run the validation script; stream NDJSON or wait and return result. Cleans up config_path on exit.
     If output_dir and dataset are set, uploads reports to GCS (when GCS_REPORTS_BUCKET is set), then
@@ -360,7 +361,7 @@ async def run_validation_process(
     try:
         return await _run_validation_process_impl(
             args, request, config_path, stream, app_root, output_dir, dataset,
-            canonical_output_dir, extra_cleanup_dirs, extra_done_fields,
+            canonical_output_dir, extra_cleanup_dirs, extra_done_fields, extra_env,
         )
     finally:
         _active_runs -= 1
@@ -377,12 +378,13 @@ async def _run_validation_process_impl(
     canonical_output_dir: Path | None = None,
     extra_cleanup_dirs: list[Path] | None = None,
     extra_done_fields: dict | None = None,
+    extra_env: dict | None = None,
 ):
     """Internal: spawn and manage the subprocess after the concurrency check."""
     request_id = getattr(request.state, "request_id", "")
     # Always set RUN_ID and disable auto baseline updates for UI-initiated runs.
     # Baseline promotion is handled explicitly via POST /api/accept-baseline/{dataset}.
-    env = {**os.environ, "RUN_ID": request_id, "BASELINE_AUTO_UPDATE": "false"}
+    env = {**os.environ, "RUN_ID": request_id, "BASELINE_AUTO_UPDATE": "false", **(extra_env or {})}
     run_start_time = time.monotonic()
     timeout_sec = _run_timeout_sec()  # 0 = no timeout
     proc = await asyncio.create_subprocess_exec(

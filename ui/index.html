@@ -919,6 +919,20 @@
     .summary-card-gemini-hint { font-size: 0.8rem; color: rgba(180, 140, 0, 0.95); margin-top: 6px; font-weight: 400; }
     .summary-card .warning-details-list { margin-top: 8px; padding-left: 18px; font-size: 0.85rem; list-style: disc; color: var(--text-muted); }
     .summary-card .warning-details-list .rule-detail-item { margin-bottom: 6px; }
+    .lint-error-summary { margin-top: 6px; padding: 6px 8px; background: rgba(244,63,94,0.07); border-left: 2px solid rgba(244,63,94,0.4); border-radius: 3px; }
+    .lint-error-summary-label { font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 3px; }
+    .lint-error-summary-list { list-style: none; margin: 0; padding: 0; }
+    .lint-error-summary-item { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.8rem; padding: 1px 0; gap: 8px; }
+    .lint-error-key { color: var(--text-muted); font-family: monospace; word-break: break-all; }
+    .lint-error-count { color: var(--fail); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+    .file-size-hint { margin: 5px 0 0; font-size: 0.7rem; color: var(--text-muted); }
+    .csv-size-warning { margin-top: 6px; padding: 7px 10px; border-radius: var(--radius-sm); font-size: 0.75rem; line-height: 1.4; }
+    .csv-size-warning-large { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.35); color: var(--warn); }
+    .csv-size-warning-severe { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.35); color: var(--fail); }
+    .existence-checks-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .existence-checks-row input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+    .existence-checks-row label { font-size: 0.8rem; color: var(--text); cursor: pointer; margin: 0; }
+    .existence-checks-hint { margin: 5px 0 0; font-size: 0.7rem; color: var(--text-muted); line-height: 1.4; }
     .summary-card-metrics { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 16px; font-size: 0.72rem; }
     .summary-card-metrics .metric-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
     .summary-card-metrics .metric-chip--blocking { background: rgba(244,63,94,0.2); color: var(--fail); }
@@ -1462,13 +1476,15 @@
             <span id="tmcf-file-name" class="file-name">No file chosen</span>
             <button type="button" id="tmcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
           </div>
-          <label>CSV file <span class="required-asterisk" aria-label="required">*</span></label>
+          <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
           <div class="file-input-row">
-            <input type="file" id="csv-file" accept=".csv" />
-            <button type="button" id="csv-choose-btn" class="file-choose-btn">Choose File</button>
+            <input type="file" id="csv-file" accept=".csv" multiple />
+            <button type="button" id="csv-choose-btn" class="file-choose-btn">Choose File(s)</button>
             <span id="csv-file-name" class="file-name">No file chosen</span>
-            <button type="button" id="csv-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+            <button type="button" id="csv-clear-btn" class="file-clear-btn" style="display: none;" title="Remove files" aria-label="Remove files">×</button>
           </div>
+          <p class="file-size-hint">Maximum CSV size: 10 GB per file.</p>
+          <div id="csv-size-warning" style="display: none;"></div>
           <div class="custom-dataset-name-row">
             <label for="custom-dataset-name">Dataset name <span class="required-asterisk" aria-label="required">*</span></label>
             <input type="text" id="custom-dataset-name" placeholder="e.g. canada-population" maxlength="48" autocomplete="off" spellcheck="false" />
@@ -1495,6 +1511,14 @@
             </div>
           </details>
         </div>
+      </div>
+      <div class="form-group" style="margin-bottom: 14px;">
+        <label style="font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; display: block;">Import Options</label>
+        <div class="existence-checks-row">
+          <input type="checkbox" id="existence-checks-toggle" />
+          <label for="existence-checks-toggle">Enable Data Commons existence checks</label>
+        </div>
+        <p class="existence-checks-hint">Validates entity IDs against Data Commons. Disabled by default — very slow for large datasets.</p>
       </div>
       <div id="ai-review-section" class="ai-review-section form-group">
         <div class="ai-review-row">
@@ -1659,7 +1683,7 @@
     let lastRunDataset = null;
     let currentRuleIds = [];
     let customTmcfFile = null;
-    let customCsvFile = null;
+    let customCsvFiles = [];
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
 
@@ -1891,7 +1915,7 @@
       customUpload.style.display = currentDataset === 'custom' ? 'block' : 'none';
       if (currentDataset === 'custom') {
         customTmcfFile = null;
-        customCsvFile = null;
+        customCsvFiles = [];
         customStatVarsMcfFile = null;
         customStatVarsSchemaMcfFile = null;
         document.getElementById('tmcf-file').value = '';
@@ -2150,25 +2174,32 @@
     }
 
     async function fetchValidationCounts(dataset, runId) {
-      if (!dataset) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+      if (!dataset) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [], lintErrors: [] };
       try {
         const runIdParam = runId ? '&run_id=' + encodeURIComponent(runId) : '';
         const r = await fetch(API + '/api/validation-result/' + dataset + '?t=' + Date.now() + runIdParam);
         const json = await r.json();
-        if (!json.exists || !json.results) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+        if (!json.exists || !json.results) return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [], lintErrors: [] };
         let runCount = 0, failCount = 0, warnCount = 0;
         json.results.forEach(v => {
           runCount++;
           if (v.status === 'FAILED') failCount++;
           else if (v.status === 'WARNING') warnCount++;
         });
-        return {
-          runCount, failCount, warnCount,
-          failedRules: json.results.filter(x => x.status === 'FAILED'),
-          warningRules: json.results.filter(x => x.status === 'WARNING'),
-        };
+        const failedRules = json.results.filter(x => x.status === 'FAILED');
+        const warningRules = json.results.filter(x => x.status === 'WARNING');
+        // Fetch structural lint error counters for inline summary when that rule fails
+        let lintErrors = [];
+        const structuralFailed = failedRules.some(x => x.validation_name === 'check_structural_lint_error_count');
+        if (structuralFailed) {
+          try {
+            const er = await fetch(API + '/api/lint-errors/' + dataset + '?t=' + Date.now() + runIdParam);
+            if (er.ok) { const erJson = await er.json(); lintErrors = erJson.errors || []; }
+          } catch (_) {}
+        }
+        return { runCount, failCount, warnCount, failedRules, warningRules, lintErrors };
       } catch (_) {
-        return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] };
+        return { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [], lintErrors: [] };
       }
     }
 
@@ -2325,7 +2356,16 @@
         if (isPreImportBlocking && opts.failure_details) {
           blockingListItems.push(...buildPreImportFailureDetailItems(opts.failure_code, opts.failure_details));
         }
-        blockingListItems.push(...failedRules.map(r => formatRuleItem(r, true)));
+        for (const r of failedRules) {
+          if (r.validation_name === 'check_structural_lint_error_count' && opts.lintErrors && opts.lintErrors.length > 0) {
+            const top3 = opts.lintErrors.slice(0, 3);
+            const lintItems = top3.map(e => '<li class="lint-error-summary-item"><span class="lint-error-key">' + escapeHtml(e.key) + '</span><span class="lint-error-count">(' + e.count + ')</span></li>').join('');
+            const lintSummary = '<div class="lint-error-summary"><span class="lint-error-summary-label">Top error counters:</span><ul class="lint-error-summary-list">' + lintItems + '</ul></div>';
+            blockingListItems.push(formatRuleItem(r, true).replace('</li>', lintSummary + '</li>'));
+          } else {
+            blockingListItems.push(formatRuleItem(r, true));
+          }
+        }
         const showBlockingSection = hasBlocking && (blockingListItems.length > 0 || pipelineFailedBeforeValidation);
         if (showBlockingSection) {
           let blockingTitle = 'Blocking Issues (' + blockingListItems.length + ')';
@@ -2799,7 +2839,7 @@
       }
       if (currentDataset === 'custom') {
         const _name = (document.getElementById('custom-dataset-name')?.value || '').trim();
-        btn.disabled = !customTmcfFile || !customCsvFile || !/^[a-z0-9-]{3,48}$/.test(_name);
+        btn.disabled = !customTmcfFile || customCsvFiles.length === 0 || !/^[a-z0-9-]{3,48}$/.test(_name);
       } else {
         btn.disabled = false;
       }
@@ -3193,13 +3233,15 @@
         let r, data;
         const llmModel = document.getElementById('llm-model-select').value;
         if (runDataset === 'custom') {
-          if (!customTmcfFile || !customCsvFile) {
+          if (!customTmcfFile || customCsvFiles.length === 0) {
             setOutputContent('Please select both TMCF and CSV files.', false);
             return;
           }
           const formData = new FormData();
           formData.append('tmcf', customTmcfFile);
-          formData.append('csv', customCsvFile);
+          for (const csvFile of customCsvFiles) {
+            formData.append('csv', csvFile);
+          }
           if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
           if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
           if (rulesParam) formData.append('rules', rulesParam);
@@ -3207,6 +3249,8 @@
           formData.append('dataset_name', lastRunCustomDatasetName || '');
           formData.append('llm_review', '1');
           formData.append('llm_model', llmModel);
+          const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
+          formData.append('existence_checks', existenceChecks);
           r = await fetch(API + '/api/run/custom/stream', {
             method: 'POST',
             body: formData,
@@ -3217,9 +3261,14 @@
           if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
           url += '&llm_review=1';
           url += `&llm_model=${encodeURIComponent(llmModel)}`;
+          const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
+          url += `&existence_checks=${existenceChecks}`;
           r = await fetch(url, { method: 'POST', signal: runAbortController.signal });
         }
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) {
+          const errJson = await r.json().catch(() => ({}));
+          throw new Error(errJson.detail || `Server error (${r.status})`);
+        }
         if (!r.body) throw new Error('Streaming not supported');
         data = await consumeStream(r.body, (msg) => {
           if (msg.t === 'step') {
@@ -3331,6 +3380,7 @@
               aiAdvisoryCount,
               failedRules: counts.failedRules || [],
               warningRules: counts.warningRules || [],
+              lintErrors: counts.lintErrors || [],
               durationSec: lastRunDurationSec,
               hasWarnings: hasWarnings || false,
             };
@@ -3346,6 +3396,7 @@
               aiAdvisoryCount,
               failedRules: counts.failedRules || [],
               warningRules: counts.warningRules || [],
+              lintErrors: counts.lintErrors || [],
               durationSec: lastRunDurationSec,
               reportGenerated: lastRunReportGenerated,
               pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || undefined,
@@ -3417,6 +3468,7 @@
             aiAdvisoryCount,
             failedRules: counts.failedRules || [],
             warningRules: counts.warningRules || [],
+            lintErrors: counts.lintErrors || [],
             durationSec: lastRunDurationSec,
             hasWarnings: hasWarnings || false,
           };
@@ -3430,6 +3482,7 @@
             aiAdvisoryCount,
             failedRules: counts.failedRules || [],
             warningRules: counts.warningRules || [],
+            lintErrors: counts.lintErrors || [],
             durationSec: lastRunDurationSec,
             reportGenerated: lastRunReportGenerated,
             pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || undefined,
@@ -3547,14 +3600,15 @@
             timestamp: Date.now()
           });
         } else {
-          const prev = output.classList.contains('empty') ? '' : output.innerText;
-          setOutputContent(prev + '\nError: ' + e.message, false, true);
-          console.error('Async error:', e);
+          const durationSec = (Date.now() - runStartTime) / 1000;
+          finishProgressBar(false, durationSec, null);
+          setOutputContent('Validation failed to start.\n' + e.message, false);
+          console.error('Validation error:', e);
           showStatusBanner({ success: false, cancelled: false });
         }
         lastRunCompletedAt = new Date();
         const completedEl = document.getElementById('log-completed-at');
-        const timeLabel = e.name === 'AbortError' ? 'Cancelled at ' : 'Completed at ';
+        const timeLabel = e.name === 'AbortError' ? 'Cancelled at ' : 'Failed at ';
         completedEl.textContent = timeLabel + formatRunTimestamp(lastRunCompletedAt);
         completedEl.style.display = 'block';
       } finally {
@@ -3636,7 +3690,7 @@
       try {
       if (data && data.neutral === true) {
         container.style.display = '';
-        container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">No validation runs yet. Run validation to generate a report.</p>');
         updateReportHeadingStates();
         return;
       }
@@ -3795,7 +3849,7 @@
           const runStateForThisDataset = sameDataset && lastRunSummary && lastRunSummary.dataset === reportDataset;
           if (!runStateForThisDataset) {
             /* No in-memory run for this dataset, or run state is from another dataset: show neutral state. */
-            const noRunsMsg = 'No runs yet for this dataset. Run validation to generate a report.';
+            const noRunsMsg = 'No validation runs yet. Run validation to generate a report.';
             setReportInsightsPlaceholder(noRunsMsg);
             renderLLMReportSection({ neutral: true });
             setReportActionsVisible(false, false);
@@ -4103,7 +4157,7 @@
         if (!r.ok) {
           const msg = runId
             ? 'Report not available for this run.'
-            : 'No runs yet for this dataset. Run validation to generate a report.';
+            : 'No validation runs yet. Run validation to generate a report.';
           container.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(msg) + '</p>');
           group.style.display = '';
           updateReportHeadingStates();
@@ -4160,7 +4214,7 @@
             return;
           }
           // No baseline, no run — show neutral placeholder.
-          container.innerHTML = reportBox('muted', '<p class="report-group-success">No runs yet for this dataset. Run validation to generate a report.</p>');
+          container.innerHTML = reportBox('muted', '<p class="report-group-success">No validation runs yet. Run validation to generate a report.</p>');
           group.style.display = '';
           updateReportHeadingStates();
           return;
@@ -4820,10 +4874,62 @@
     }
 
     setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { customTmcfFile = f; }, () => { customTmcfFile = null; });
-    setupCustomFileInput('csv-file', 'csv-choose-btn', 'csv-file-name', 'csv-clear-btn',
-      (f) => { customCsvFile = f; },
-      () => { customCsvFile = null; _updateDatasetNameHint(); }
-    );
+    (function() {
+      const input = document.getElementById('csv-file');
+      const btn = document.getElementById('csv-choose-btn');
+      const nameEl = document.getElementById('csv-file-name');
+      const clearBtn = document.getElementById('csv-clear-btn');
+      btn.addEventListener('click', () => input.click());
+      function _updateCsvSizeWarning() {
+        const warningEl = document.getElementById('csv-size-warning');
+        if (!warningEl) return;
+        if (customCsvFiles.length === 0) { warningEl.style.display = 'none'; return; }
+        const MB = 1024 * 1024;
+        const GB = 1024 * MB;
+        const maxFileSize = Math.max(...customCsvFiles.map(f => f.size));
+        if (maxFileSize > 5 * GB) {
+          warningEl.style.display = 'block';
+          warningEl.className = 'csv-size-warning csv-size-warning-severe';
+          warningEl.textContent = '⚠ Very large file detected (>5 GB). Validation may take 30+ minutes. Disable existence checks for faster runs.';
+        } else if (maxFileSize > 500 * MB) {
+          warningEl.style.display = 'block';
+          warningEl.className = 'csv-size-warning csv-size-warning-large';
+          warningEl.textContent = '⚠ Large dataset detected. Validation may take several minutes.';
+        } else {
+          warningEl.style.display = 'none';
+        }
+      }
+      input.addEventListener('change', () => {
+        if (input.files && input.files.length > 0) {
+          customCsvFiles = Array.from(input.files);
+          const MAX_SHOWN = 5;
+          const names = customCsvFiles.map(f => f.name);
+          if (names.length <= MAX_SHOWN) {
+            nameEl.textContent = names.join('\n');
+          } else {
+            nameEl.textContent = names.slice(0, MAX_SHOWN).join('\n') + `\n… +${names.length - MAX_SHOWN} more`;
+          }
+          nameEl.style.whiteSpace = 'pre-line';
+          nameEl.classList.add('has-file');
+          if (clearBtn) clearBtn.style.display = 'inline';
+          _updateCsvSizeWarning();
+          updateRunButtonState();
+        }
+      });
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          customCsvFiles = [];
+          input.value = '';
+          nameEl.textContent = 'No file chosen';
+          nameEl.style.whiteSpace = '';
+          nameEl.classList.remove('has-file');
+          clearBtn.style.display = 'none';
+          _updateCsvSizeWarning();
+          _updateDatasetNameHint();
+          updateRunButtonState();
+        });
+      }
+    })();
     ['tmcf-file', 'csv-file'].forEach(id => {
       const inp = document.getElementById(id);
       if (inp) inp.addEventListener('change', () => {

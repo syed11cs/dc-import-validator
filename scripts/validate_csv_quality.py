@@ -145,7 +145,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="CSV data quality checks (duplicate columns, empty columns, duplicate rows, non-numeric value column)"
     )
-    parser.add_argument("--csv", required=True, help="Path to CSV file")
+    parser.add_argument("--csv", required=True, action="append", help="Path to CSV file (repeatable)")
     parser.add_argument(
         "--value-column",
         default="value",
@@ -164,26 +164,37 @@ def main():
     args = parser.parse_args()
 
     value_col = (args.value_column or "").strip() or None
-    errors, details = validate_csv(
-        args.csv, value_col, allow_empty_columns=args.allow_empty_columns
-    )
+    all_errors: list[str] = []
+    merged_details: dict = {
+        "empty_columns": [],
+        "duplicate_columns": [],
+        "duplicate_rows": [],
+        "non_numeric_rows": [],
+    }
+    for csv_arg in args.csv:
+        errors, details = validate_csv(
+            csv_arg, value_col, allow_empty_columns=args.allow_empty_columns
+        )
+        all_errors.extend(errors)
+        for key in merged_details:
+            merged_details[key].extend(details.get(key, []))
 
     out_path = (args.output_details or "").strip()
     if out_path:
         out_path = Path(out_path)
-        write_details = bool(errors) or (
-            args.allow_empty_columns and details.get("empty_columns")
+        write_details = bool(all_errors) or (
+            args.allow_empty_columns and merged_details.get("empty_columns")
         )
         if write_details:
             try:
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(out_path, "w", encoding="utf-8") as f:
-                    json.dump(details, f, indent=2)
+                    json.dump(merged_details, f, indent=2)
             except OSError:
                 pass
 
-    if errors:
-        for err in errors:
+    if all_errors:
+        for err in all_errors:
             print(err, file=sys.stderr)
         sys.exit(1)
     sys.exit(0)

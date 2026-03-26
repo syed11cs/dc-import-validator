@@ -57,7 +57,7 @@ from ui.gcs_reports import GCSAccessError, is_gcs_configured
 import gcs_baselines as _gcs_baselines
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
-MAX_UPLOAD_MB = 50
+MAX_UPLOAD_MB = 10 * 1024  # 10 GB per file
 SCRIPT_DIR = APP_ROOT
 OUTPUT_DIR = APP_ROOT / "output"
 CONFIG_DIR = APP_ROOT / "validation_configs"
@@ -136,6 +136,45 @@ _ALLOWED_LLM_MODELS: frozenset[str] = frozenset({
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
 })
+
+
+def _existence_checks_env(existence_checks: str | None) -> dict[str, str]:
+    """Return extra_env dict for IMPORT_EXISTENCE_CHECKS based on the UI toggle value.
+
+    Default is OFF so large local datasets run quickly without DC API calls.
+    Pass 'true'/'1'/'yes'/'on' to enable; anything else (including None) disables.
+    """
+    enabled = (
+        existence_checks is not None
+        and existence_checks.strip().lower() in ("1", "true", "yes", "on")
+    )
+    return {"IMPORT_EXISTENCE_CHECKS": "true" if enabled else "false"}
+
+
+async def _stream_upload_to_file(
+    upload: UploadFile, dest: Path, max_bytes: int, error_detail: str
+) -> None:
+    """Stream-copy an UploadFile to dest in 8 MB chunks, enforcing max_bytes.
+
+    Uses asyncio.to_thread so the event loop is not blocked during disk I/O.
+    Raises HTTPException(400) mid-stream if the file exceeds max_bytes.
+    """
+    CHUNK = 8 * 1024 * 1024  # 8 MB per read
+
+    def _copy() -> None:
+        total = 0
+        upload.file.seek(0)
+        with dest.open("wb") as out:
+            while True:
+                data = upload.file.read(CHUNK)
+                if not data:
+                    break
+                total += len(data)
+                if total > max_bytes:
+                    raise HTTPException(status_code=400, detail=error_detail)
+                out.write(data)
+
+    await asyncio.to_thread(_copy)
 
 
 def _validated_llm_model(model: str | None) -> str | None:
@@ -258,7 +297,7 @@ def _sanitize_dataset_name(name: str) -> str:
 async def _run_custom_validation_impl(
     request: Request,
     tmcf: UploadFile,
-    csv: UploadFile,
+    csv: list[UploadFile],
     stat_vars_mcf: UploadFile | None,
     stat_vars_schema_mcf: UploadFile | None,
     rules: str | None,
@@ -266,6 +305,7 @@ async def _run_custom_validation_impl(
     llm_model: str | None,
     stream: bool,
     dataset_name: str | None = None,
+    existence_checks: str | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream. Saves uploads, builds args, runs validation; cleans up temp config on exception."""
     script = SCRIPT_DIR / "run_e2e_test.sh"
@@ -278,21 +318,47 @@ async def _run_custom_validation_impl(
     run_upload_dir = CUSTOM_UPLOAD_DIR / request_id
     run_upload_dir.mkdir(parents=True, exist_ok=True)
     tmcf_path = run_upload_dir / "input.tmcf"
-    csv_path = run_upload_dir / "input.csv"
+    csvs_dir = run_upload_dir / "csvs"
+    csvs_dir.mkdir(parents=True, exist_ok=True)
     stat_vars_mcf_path = run_upload_dir / "input_stat_vars.mcf"
     stat_vars_schema_mcf_path = run_upload_dir / "input_stat_vars_schema.mcf"
 
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
+    _size_display = f"{MAX_UPLOAD_MB // 1024} GB" if MAX_UPLOAD_MB >= 1024 else f"{MAX_UPLOAD_MB} MB"
+
+    # Early reject: Content-Length of the whole multipart body exceeds the per-file limit.
+    # This is a fast-path guard; the per-file streaming check is the authoritative enforcement.
+    _cl_header = request.headers.get("content-length")
+    if _cl_header and _cl_header.isdigit() and int(_cl_header) > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload too large. Maximum CSV size is {_size_display} per file.",
+        )
+
     try:
+        # TMCF files are always small — load into memory as before.
         tmcf_content = await tmcf.read()
         if len(tmcf_content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"TMCF file exceeds {MAX_UPLOAD_MB}MB limit")
+            raise HTTPException(status_code=400, detail=f"TMCF file exceeds {_size_display} limit")
         tmcf_path.write_bytes(tmcf_content)
 
-        csv_content = await csv.read()
-        if len(csv_content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"CSV file exceeds {MAX_UPLOAD_MB}MB limit")
-        csv_path.write_bytes(csv_content)
+        csv_paths: list[Path] = []
+        for i, csv_file in enumerate(csv):
+            # Preserve the original filename (sanitized) so the TMCF table reference C:name->col
+            # matches the saved file (dc-import derives the table name from the filename stem).
+            # Uniqueness is guaranteed by the per-run upload directory, not by filename prefixing.
+            orig_name = Path(csv_file.filename).name if csv_file.filename else ""
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", orig_name) if orig_name else ""
+            csv_save_name = safe_name if safe_name.lower().endswith(".csv") else f"input_{i:02d}.csv"
+            csv_save_path = csvs_dir / csv_save_name
+            # Stream-copy in chunks to avoid loading multi-GB files into RAM.
+            await _stream_upload_to_file(
+                csv_file, csv_save_path, max_bytes,
+                f"CSV file '{csv_file.filename or csv_save_name}' exceeds {_size_display} limit",
+            )
+            csv_paths.append(csv_save_path)
+        if not csv_paths:
+            raise HTTPException(status_code=400, detail="At least one CSV file is required")
 
         if stat_vars_mcf and stat_vars_mcf.filename:
             content = await stat_vars_mcf.read()
@@ -324,9 +390,19 @@ async def _run_custom_validation_impl(
 
     rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
     config_path = _create_filtered_config("custom", rule_ids)
+
+    extra_env = _existence_checks_env(existence_checks)
+    logger.info(
+        "custom run existence_checks=%s request_id=%s",
+        extra_env["IMPORT_EXISTENCE_CHECKS"],
+        request_id,
+    )
+
     try:
-        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}", f"--csv={csv_path}",
-                f"--baseline-name={baseline_name}"]
+        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}"]
+        for _csv_path in csv_paths:
+            args.append(f"--csv={_csv_path}")
+        args.append(f"--baseline-name={baseline_name}")
         if stat_vars_mcf_path.exists():
             args.append(f"--stat-vars-mcf={stat_vars_mcf_path}")
         if stat_vars_schema_mcf_path.exists():
@@ -354,6 +430,7 @@ async def _run_custom_validation_impl(
             extra_cleanup_dirs=[run_upload_dir],
             # baseline_id lets the UI call /api/accept-baseline/custom with the right dataset_id.
             extra_done_fields={"baseline_id": baseline_name},
+            extra_env=extra_env,
         )
     except HTTPException:
         # Runner raised before or during startup (e.g. 429). Clean up locally since the
@@ -374,18 +451,19 @@ async def _run_custom_validation_impl(
 async def run_custom_validation_stream(
     request: Request,
     tmcf: UploadFile = File(...),
-    csv: UploadFile = File(...),
+    csv: list[UploadFile] = File(...),
     stat_vars_mcf: UploadFile | None = File(None),
     stat_vars_schema_mcf: UploadFile | None = File(None),
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
     dataset_name: str | None = Form(None),
+    existence_checks: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
-        dataset_name=dataset_name,
+        dataset_name=dataset_name, existence_checks=existence_checks,
     )
 
 
@@ -393,18 +471,19 @@ async def run_custom_validation_stream(
 async def run_custom_validation(
     request: Request,
     tmcf: UploadFile = File(...),
-    csv: UploadFile = File(...),
+    csv: list[UploadFile] = File(...),
     stat_vars_mcf: UploadFile | None = File(None),
     stat_vars_schema_mcf: UploadFile | None = File(None),
     rules: str | None = Form(None),
     llm_review: str | None = Form(None),
     llm_model: str | None = Form(None),
     dataset_name: str | None = Form(None),
+    existence_checks: str | None = Form(None),
 ):
     """Run validation on uploaded TMCF + CSV files. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs."""
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
-        dataset_name=dataset_name,
+        dataset_name=dataset_name, existence_checks=existence_checks,
     )
 
 
@@ -416,6 +495,7 @@ async def run_validation(
     stream: bool = Query(False),
     llm_review: str | None = Query(None),
     llm_model: str | None = Query(None),
+    existence_checks: str | None = Query(None),
 ):
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
@@ -424,6 +504,13 @@ async def run_validation(
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
     rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
     config_path = _create_filtered_config(dataset, rule_ids)
+    extra_env = _existence_checks_env(existence_checks)
+    logger.info(
+        "run existence_checks=%s dataset=%s request_id=%s",
+        extra_env["IMPORT_EXISTENCE_CHECKS"],
+        dataset,
+        getattr(request.state, "request_id", ""),
+    )
     try:
         args = ["bash", str(script), dataset]
         if config_path:
@@ -443,6 +530,7 @@ async def run_validation(
         return await _run_validation_process(
             args, request, config_path, stream, app_root=APP_ROOT,
             output_dir=output_dir, dataset=dataset, canonical_output_dir=canonical_output_dir,
+            extra_env=extra_env,
         )
     except HTTPException:
         # Clean up temp config on 429 or other HTTP errors raised before the runner
@@ -658,6 +746,41 @@ def get_lint_warnings(dataset: str, run_id: str | None = Query(None)):
         raise HTTPException(status_code=404, detail="Unknown dataset")
     exists, warnings = _get_lint_warnings_internal(dataset, run_id)
     return {"exists": exists, "warnings": warnings}
+
+
+def _get_lint_errors_internal(dataset: str, run_id: str | None) -> tuple[bool, list[dict]]:
+    """Return (exists, errors) from report.levelSummary.LEVEL_ERROR.counters,
+    excluding Existence_FailedDcCall_* keys. Returns [{key, count}] sorted descending."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        return False, []
+    raw = _resolve_artifact(dataset, run_id, "report.json")
+    if raw is None:
+        return False, []
+    try:
+        report = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return True, []
+    if not report:
+        return False, []
+    counters = (report.get("levelSummary") or {}).get("LEVEL_ERROR", {}).get("counters") or {}
+    EXCLUDE_PREFIX = "Existence_FailedDcCall_"
+    errors = [
+        {"key": k, "count": int(v)}
+        for k, v in counters.items()
+        if not k.startswith(EXCLUDE_PREFIX)
+    ]
+    errors.sort(key=lambda x: (-x["count"], x["key"]))
+    return True, errors
+
+
+@app.get("/api/lint-errors/{dataset}")
+def get_lint_errors(dataset: str, run_id: str | None = Query(None)):
+    """Return structural LEVEL_ERROR counters from report.json (excludes Existence_FailedDcCall_*).
+    Used by the UI to show a top-errors summary when check_structural_lint_error_count fails."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    exists, errors = _get_lint_errors_internal(dataset, run_id)
+    return {"exists": exists, "errors": errors}
 
 
 @app.get("/api/fluctuation-samples/{dataset}")

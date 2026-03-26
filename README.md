@@ -93,7 +93,7 @@ The web interface makes validation accessible to everyone:
 3. (Optional) Add StatVars MCF for enhanced schema validation.
 4. Click **Run Validation**.
 
-File limit: 50MB per file.
+File limit: 10 GB per file. Multiple CSV files can be uploaded for multi-CSV imports.
 
 ### 💻 CLI Usage
 
@@ -161,7 +161,7 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
 | `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM (~500 MB heap); tune to available memory. Returns HTTP 429 when at capacity. |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
-| `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks (default: `true`) |
+| `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks. The UI toggle (Import Options → Enable Data Commons existence checks) overrides this per-run; the toggle defaults to OFF for performance. Server-level default: `true` when running via CLI. |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
 
 #### Health Check

@@ -3,7 +3,7 @@
 
 Validates:
 - TMCF file exists and has .tmcf extension
-- CSV file exists and has .csv extension
+- One or more CSV files exist and each has .csv extension
 - Optional stat_vars.mcf / stat_vars_schema.mcf exist and have .mcf extension
 
 Exits 0 if all provided paths are valid, 1 otherwise (prints errors to stderr).
@@ -11,7 +11,7 @@ Optional --output-errors PATH writes {"errors": ["...", ...]} as JSON when valid
 
 Usage:
   python validate_import_files.py --tmcf path/to/file.tmcf --csv path/to/file.csv
-  python validate_import_files.py --tmcf file.tmcf --csv file.csv [--stat-vars-mcf x.mcf] [--output-errors PATH]
+  python validate_import_files.py --tmcf file.tmcf --csv a.csv --csv b.csv [--stat-vars-mcf x.mcf] [--output-errors PATH]
 """
 
 import argparse
@@ -25,7 +25,7 @@ def main():
         description="Validate import files exist and have expected extensions"
     )
     parser.add_argument("--tmcf", required=True, help="Path to TMCF file")
-    parser.add_argument("--csv", required=True, help="Path to CSV file")
+    parser.add_argument("--csv", required=True, action="append", help="Path to CSV file (repeatable)")
     parser.add_argument("--stat-vars-mcf", default="", help="Optional stat_vars.mcf path")
     parser.add_argument("--stat-vars-schema-mcf", default="", help="Optional stat_vars_schema.mcf path")
     parser.add_argument(
@@ -43,11 +43,12 @@ def main():
     elif tmcf.suffix.lower() not in (".tmcf", ".mcf"):
         errors.append(f"TMCF file must have .tmcf or .mcf extension: {args.tmcf}")
 
-    csv_path = Path(args.csv)
-    if not csv_path.exists():
-        errors.append(f"CSV file not found: {args.csv}")
-    elif csv_path.suffix.lower() != ".csv":
-        errors.append(f"CSV file must have .csv extension: {args.csv}")
+    for csv_arg in args.csv:
+        csv_path = Path(csv_arg)
+        if not csv_path.exists():
+            errors.append(f"CSV file not found: {csv_arg}")
+        elif csv_path.suffix.lower() != ".csv":
+            errors.append(f"CSV file must have .csv extension: {csv_arg}")
 
     for label, path_arg in (
         ("stat_vars.mcf", args.stat_vars_mcf),

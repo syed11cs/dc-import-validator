@@ -164,7 +164,7 @@ def main() -> int:
     parser.add_argument("--lint_report", default=None, help="Path to lint report JSON (for DC and custom rules)")
     parser.add_argument("--differ_output", default=None, help="Path to differ output (optional)")
     parser.add_argument("--tmcf", default=None, help="Path to TMCF (for OBSERVATION_DATE_GRANULARITY)")
-    parser.add_argument("--csv", default=None, help="Path to CSV (for OBSERVATION_DATE_GRANULARITY)")
+    parser.add_argument("--csv", default=None, action="append", help="Path to CSV (repeatable; first CSV used for OBSERVATION_DATE_GRANULARITY)")
     args = parser.parse_args()
 
     config_path = args.validation_config
@@ -223,7 +223,7 @@ def main() -> int:
         args.lint_report,
         args.stats_summary,
         tmcf_path=args.tmcf,
-        csv_path=args.csv,
+        csv_path=(args.csv[0] if args.csv else None),
     )
     combined = dc_results + custom_results
 
