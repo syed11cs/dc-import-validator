@@ -278,7 +278,22 @@ async def download_session_to_dir(session_id: str, dest_dir: Path) -> dict:
     semaphore = _asyncio.Semaphore(_MAX_PARALLEL_DOWNLOADS)
 
     def _download(gcs_path: str, dest_path: Path) -> None:
-        bucket.blob(gcs_path).download_to_filename(str(dest_path))
+        try:
+            bucket.blob(gcs_path).download_to_filename(str(dest_path))
+        except Exception as exc:
+            # GCS raises google.cloud.exceptions.NotFound (HTTP 404) when the object
+            # does not exist — which happens when the browser upload was interrupted or
+            # only partially completed.  Convert to FileNotFoundError so the caller
+            # in server.py returns HTTP 400 with a clear user-facing message instead
+            # of an opaque HTTP 500 with a raw GCS error string.
+            exc_type = type(exc).__name__
+            if exc_type == "NotFound" or getattr(exc, "code", None) == 404:
+                filename = Path(gcs_path).name
+                raise FileNotFoundError(
+                    f"Upload incomplete: '{filename}' was not found in the upload session. "
+                    "The upload may have been interrupted. Please try again."
+                ) from exc
+            raise
 
     async def _download_task(gcs_path: str, dest_path: Path) -> None:
         async with semaphore:

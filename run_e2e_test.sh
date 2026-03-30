@@ -49,6 +49,7 @@ export DATA_REPO
 # Import tool behavior: passed to Java process (env). Defaults support deterministic/local runs.
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
+JAVA_HEAP="${JAVA_HEAP:-14g}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -212,6 +213,29 @@ emit_failure() {
     base="${base},\"details\":${details}"
   fi
   echo "${base}}"
+}
+
+# Log container memory usage at key pipeline stages. Reads from the cgroup filesystem so the
+# value reflects total container RSS (including the JVM), not just this shell process.
+log_mem() {
+  local step="$1"
+  local rss_gb
+  rss_gb=$(${PYTHON:-python3} -c "
+import sys
+try:
+    # cgroups v2 (Cloud Run, modern kernels)
+    with open('/sys/fs/cgroup/memory.current') as f:
+        rss = int(f.read().strip())
+except Exception:
+    try:
+        # cgroups v1 fallback
+        with open('/sys/fs/cgroup/memory/memory.usage_in_bytes') as f:
+            rss = int(f.read().strip())
+    except Exception:
+        sys.exit(1)
+print(f'{rss / (1024**3):.1f}GB')
+" 2>/dev/null) || return 0
+  echo "[MEM] step=$step rss=$rss_gb"
 }
 
 # Ensure validation_output.json and validation_report.html exist before exiting with failure (so GCS upload and /report/... work on Cloud Run).
@@ -469,6 +493,7 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
   mkdir -p "$DATASET_OUTPUT"
   if [[ -f "$LLM_REVIEW_SCRIPT" ]]; then
     STEP1_START=$(date +%s)
+    log_mem "step1_gemini"
     LLM_EXTRA_ARGS=()
     [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
     [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
@@ -504,6 +529,7 @@ fi
 # Step 2: Run dc-import genmcf
 # =============================================================================
 STEP2_START=$(date +%s)
+log_mem "step2_genmcf"
 echo "::STEP::2:DC Import Tool"
 log_info "Step 2: Running dc-import genmcf..."
 
@@ -547,7 +573,7 @@ if [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] || [[ -n "$STAT_VARS_SCHEMA_
   LINT_FILES=("$TMCF" "${CSVS[@]}")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LINT_FILES+=("$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LINT_FILES+=("$STAT_VARS_SCHEMA_MCF")
-  if java -Xmx8g -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
+  if java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
       --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" 2>/dev/null; then
     LINT_REPORT="$LINT_WITH_MCF_OUTPUT/report.json"
     if [[ -f "$LINT_REPORT" ]]; then
@@ -562,7 +588,7 @@ fi
 GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
-java -Xmx8g -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
+java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
   log_error "dc-import genmcf failed"
   emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
@@ -575,6 +601,7 @@ if [[ ! -f "$STATS_SUMMARY" ]]; then
   ensure_failure_report "Data Processing" "summary_report.csv not produced"
   exit 1
 fi
+log_mem "step2_done"
 log_info "Generated: $STATS_SUMMARY, report.json"
 log_info "Step 2 completed in $(( $(date +%s) - STEP2_START ))s"
 
@@ -617,6 +644,7 @@ fi
 # =============================================================================
 # Validate config template (structure and required keys)
 STEP3_START=$(date +%s)
+log_mem "step3_validation"
 VALIDATE_CONFIG_SCRIPT="$SCRIPT_DIR/scripts/validate_config_template.py"
 if [[ -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
   if ! $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" 2>/dev/null; then
@@ -785,6 +813,7 @@ if [[ -f "$VALIDATION_OUTPUT" ]]; then
   if $PYTHON "$SCRIPT_DIR/scripts/generate_html_report.py" "$VALIDATION_OUTPUT" "$HTML_REPORT" --dataset="$DATASET" $OVERALL_ARG $AI_REVIEW_ARG; then
     log_info "HTML report: $HTML_REPORT"
   fi
+  log_mem "step4_done"
   log_info "Step 4 completed in $(( $(date +%s) - STEP4_START ))s"
 fi
 

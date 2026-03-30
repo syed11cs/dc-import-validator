@@ -427,6 +427,19 @@ async def _run_validation_process_impl(
                                     obj["failure_code"] = "RUN_TIMEOUT"
                                     obj["failure_step"] = None
                                     obj["failure_message"] = "Validation run timed out."
+                                elif (
+                                    not obj.get("success")
+                                    and not obj.get("cancelled")
+                                    and not obj.get("failure_code")
+                                    and output_dir is not None
+                                    and not (output_dir / "validation_output.json").exists()
+                                ):
+                                    obj["failure_code"] = "OOM_SUSPECTED"
+                                    obj["failure_step"] = None
+                                    obj["failure_message"] = (
+                                        "Validation terminated unexpectedly. The dataset may be too large"
+                                        " for the current server memory limit."
+                                    )
                                 duration_sec = round(time.monotonic() - run_start_time, 2)
                                 logger.info(
                                     "run_finished request_id=%s success=%s cancelled=%s duration_sec=%s",
@@ -654,6 +667,13 @@ async def _run_validation_process_impl(
                     result["failure_limit"] = failure["limit"]
                 if isinstance(failure.get("details"), dict):
                     result["failure_details"] = failure["details"]
+            elif output_dir is not None and not (output_dir / "validation_output.json").exists():
+                result["failure_code"] = "OOM_SUSPECTED"
+                result["failure_step"] = None
+                result["failure_message"] = (
+                    "Validation terminated unexpectedly. The dataset may be too large"
+                    " for the current server memory limit."
+                )
         return result
     finally:
         if not stream and config_path and config_path.exists():

@@ -210,18 +210,35 @@ app = FastAPI(title="DC Import Validator", version="1.0", lifespan=_lifespan)
 logger = get_logger(__name__)
 
 
+_POLLING_PATH_PREFIXES = (
+    "/api/review-summary/",
+    "/api/validation-result/",
+    "/api/lint-errors/",
+    "/api/llm-status",
+    "/api/upload-config",
+    "/healthz",
+)
+
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Assign request_id per request and log run_started for /api/run/*."""
+    """Assign request_id per request and log run_started for /api/run/*.
+
+    Frequent polling endpoints are logged at DEBUG to keep Cloud Run logs
+    focused on meaningful events (run_started, upload_session_created, etc.).
+    """
 
     async def dispatch(self, request: Request, call_next):
         rid = uuid.uuid4().hex[:12]
         set_request_id(rid)
         request.state.request_id = rid
         try:
-            logger.info("request_started method=%s path=%s request_id=%s", request.method, request.url.path, rid)
-            if request.url.path.startswith("/api/run/"):
+            path = request.url.path
+            if any(path.startswith(p) for p in _POLLING_PATH_PREFIXES):
+                logger.debug("request_started method=%s path=%s request_id=%s", request.method, path, rid)
+            else:
+                logger.info("request_started method=%s path=%s request_id=%s", request.method, path, rid)
+            if path.startswith("/api/run/"):
                 # Middleware runs before route match, so path_params is not set; parse path instead
-                suffix = request.url.path.split("/api/run/", 1)[-1].lstrip("/")
+                suffix = path.split("/api/run/", 1)[-1].lstrip("/")
                 dataset = suffix.split("/")[0] if suffix else "?"
                 logger.info("run_started request_id=%s dataset=%s", rid, dataset)
             response = await call_next(request)

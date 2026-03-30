@@ -3299,13 +3299,13 @@
               ...(customStatVarsMcfFile ? [[customStatVarsMcfFile.name, customStatVarsMcfFile]] : []),
               ...(customStatVarsSchemaMcfFile ? [[customStatVarsSchemaMcfFile.name, customStatVarsSchemaMcfFile]] : []),
             ]);
-            setOutputContent('Uploading files directly to cloud storage...\n', false);
+            setOutputContent('Uploading dataset files...\n', false);
             for (let i = 0; i < upload_urls.length; i++) {
               const { filename, url, content_type } = upload_urls[i];
               const file = fileByName.get(filename);
               if (!file) throw new Error(`File not found for upload: ${filename}`);
               setOutputContent(
-                `Uploading files directly to cloud storage (${i + 1}/${upload_urls.length}): ${filename}\n`,
+                `Uploading dataset files (${i + 1}/${upload_urls.length}): ${filename}\n`,
                 false,
               );
               await new Promise((resolve, reject) => {
@@ -3318,7 +3318,7 @@
                     const loaded = (e.loaded / 1048576).toFixed(1);
                     const total = (e.total / 1048576).toFixed(1);
                     setOutputContent(
-                      `Uploading files directly to cloud storage (${i + 1}/${upload_urls.length}): ${filename}\n  ${pct}%  (${loaded} MB / ${total} MB)\n`,
+                      `Uploading dataset files (${i + 1}/${upload_urls.length}): ${filename}\n  ${pct}%  (${loaded} MB / ${total} MB)\n`,
                       false,
                     );
                   }
@@ -3336,7 +3336,9 @@
             }
 
             // Phase 3: trigger validation using the session_id (no file bytes through Cloud Run).
-            setOutputContent('Running validation...\n', false);
+            // "Preparing dataset..." is shown during the brief window where Cloud Run downloads
+            // the session files from GCS before the validation pipeline begins streaming output.
+            setOutputContent('Preparing dataset...\n', false);
             const sessionFormData = new FormData();
             sessionFormData.append('session_id', session_id);
             sessionFormData.append('dataset_name', lastRunCustomDatasetName || '');
