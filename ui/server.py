@@ -54,6 +54,7 @@ from ui.services.review_summary import (
 )
 from ui import gcs_reports
 from ui.gcs_reports import GCSAccessError, is_gcs_configured
+from ui import gcs_uploads as _gcs_uploads
 import gcs_baselines as _gcs_baselines
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
@@ -259,6 +260,61 @@ def llm_status():
     return {"key_set": bool(key and key.strip())}
 
 
+@app.get("/api/upload-config")
+def upload_config():
+    """Return upload capability flags so the UI can choose between direct and GCS-backed upload.
+
+    When gcs_uploads_configured is true the UI should use the two-phase GCS upload flow
+    (POST /api/prepare-upload → browser PUT to GCS → POST /api/run/custom/stream with session_id)
+    to bypass Cloud Run's 32 MB HTTP request limit.
+    """
+    return {"gcs_uploads_configured": _gcs_uploads.is_gcs_uploads_configured()}
+
+
+class _PrepareUploadRequest(BaseModel):
+    files: list[dict]
+
+
+@app.post("/api/prepare-upload")
+async def prepare_upload(body: _PrepareUploadRequest):
+    """Create a GCS upload session and return signed PUT URLs for direct browser-to-GCS upload.
+
+    Request body:
+        {
+            "files": [
+                {"name": "data.tmcf", "size": 1234, "role": "tmcf"},
+                {"name": "data.csv",  "size": 5000000, "role": "csv"},
+                {"name": "stat_vars.mcf", "size": 2000, "role": "stat_vars_mcf"}
+            ]
+        }
+
+    Response:
+        {
+            "session_id": "abc123...",
+            "upload_urls": [
+                {"filename": "data.tmcf", "url": "https://storage.googleapis.com/...", "content_type": "text/plain", "role": "tmcf"},
+                ...
+            ]
+        }
+
+    Returns 503 if GCS is not configured, 400 for invalid input.
+    """
+    if not _gcs_uploads.is_gcs_uploads_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="GCS uploads are not configured (GCS_REPORTS_BUCKET not set). Use direct file upload instead.",
+        )
+    try:
+        result = await asyncio.to_thread(_gcs_uploads.create_upload_session, body.files)
+        logger.info("upload_session_created session_id=%s files=%d", result["session_id"], len(body.files))
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Failed to create upload session")
+        raise HTTPException(status_code=500, detail=f"Failed to create upload session: {exc}")
+
+
 @app.get("/api/datasets")
 def list_datasets():
     return {
@@ -294,10 +350,19 @@ def _sanitize_dataset_name(name: str) -> str:
     return name if re.fullmatch(r"[a-z0-9-]{3,48}", name) else ""
 
 
+async def _delete_gcs_session_bg(session_id: str) -> None:
+    """Best-effort background task to delete a GCS upload session after validation."""
+    try:
+        deleted = await asyncio.to_thread(_gcs_uploads.delete_session, session_id)
+        logger.info("gcs_session_deleted session_id=%s blobs=%d", session_id, deleted)
+    except Exception:
+        logger.warning("gcs_session_delete_failed session_id=%s", session_id)
+
+
 async def _run_custom_validation_impl(
     request: Request,
-    tmcf: UploadFile,
-    csv: list[UploadFile],
+    tmcf: UploadFile | None,
+    csv: list[UploadFile] | None,
     stat_vars_mcf: UploadFile | None,
     stat_vars_schema_mcf: UploadFile | None,
     rules: str | None,
@@ -306,8 +371,17 @@ async def _run_custom_validation_impl(
     stream: bool,
     dataset_name: str | None = None,
     existence_checks: str | None = None,
+    session_id: str | None = None,
 ):
-    """Shared implementation for /api/run/custom and /api/run/custom/stream. Saves uploads, builds args, runs validation; cleans up temp config on exception."""
+    """Shared implementation for /api/run/custom and /api/run/custom/stream.
+
+    Supports two file-delivery modes:
+    - Direct upload: tmcf and csv are UploadFile objects (existing behaviour).
+    - GCS session:   session_id is set; files are downloaded from GCS (Cloud Run
+                     large-file path — bypasses the 32 MB HTTP body limit).
+
+    Either session_id OR (tmcf + csv) must be supplied; never both.
+    """
     script = SCRIPT_DIR / "run_e2e_test.sh"
     if not script.exists():
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
@@ -326,51 +400,82 @@ async def _run_custom_validation_impl(
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
     _size_display = f"{MAX_UPLOAD_MB // 1024} GB" if MAX_UPLOAD_MB >= 1024 else f"{MAX_UPLOAD_MB} MB"
 
-    # Early reject: Content-Length of the whole multipart body exceeds the per-file limit.
-    # This is a fast-path guard; the per-file streaming check is the authoritative enforcement.
-    _cl_header = request.headers.get("content-length")
-    if _cl_header and _cl_header.isdigit() and int(_cl_header) > max_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Upload too large. Maximum CSV size is {_size_display} per file.",
-        )
-
     try:
-        # TMCF files are always small — load into memory as before.
-        tmcf_content = await tmcf.read()
-        if len(tmcf_content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"TMCF file exceeds {_size_display} limit")
-        tmcf_path.write_bytes(tmcf_content)
+        if session_id:
+            # ── GCS session path: download files from GCS to local disk ──────────────
+            logger.info("gcs_session_download session_id=%s request_id=%s", session_id, request_id)
+            try:
+                downloaded = await _gcs_uploads.download_session_to_dir(session_id, run_upload_dir)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            except Exception as exc:
+                logger.exception("GCS session download failed session_id=%s", session_id)
+                raise HTTPException(status_code=500, detail=f"Failed to download upload session: {exc}")
 
-        csv_paths: list[Path] = []
-        for i, csv_file in enumerate(csv):
-            # Preserve the original filename (sanitized) so the TMCF table reference C:name->col
-            # matches the saved file (dc-import derives the table name from the filename stem).
-            # Uniqueness is guaranteed by the per-run upload directory, not by filename prefixing.
-            orig_name = Path(csv_file.filename).name if csv_file.filename else ""
-            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", orig_name) if orig_name else ""
-            csv_save_name = safe_name if safe_name.lower().endswith(".csv") else f"input_{i:02d}.csv"
-            csv_save_path = csvs_dir / csv_save_name
-            # Stream-copy in chunks to avoid loading multi-GB files into RAM.
-            await _stream_upload_to_file(
-                csv_file, csv_save_path, max_bytes,
-                f"CSV file '{csv_file.filename or csv_save_name}' exceeds {_size_display} limit",
-            )
-            csv_paths.append(csv_save_path)
-        if not csv_paths:
-            raise HTTPException(status_code=400, detail="At least one CSV file is required")
+            tmcf_path = downloaded.get("tmcf")
+            csv_paths: list[Path] = downloaded.get("csvs") or []
 
-        if stat_vars_mcf and stat_vars_mcf.filename:
-            content = await stat_vars_mcf.read()
-            if len(content) > max_bytes:
-                raise HTTPException(status_code=400, detail="Stat vars MCF file exceeds size limit")
-            stat_vars_mcf_path.write_bytes(content)
+            if not tmcf_path or not tmcf_path.exists():
+                raise HTTPException(status_code=400, detail="TMCF file missing from upload session")
+            if not csv_paths:
+                raise HTTPException(status_code=400, detail="No CSV files found in upload session")
 
-        if stat_vars_schema_mcf and stat_vars_schema_mcf.filename:
-            content = await stat_vars_schema_mcf.read()
-            if len(content) > max_bytes:
-                raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
-            stat_vars_schema_mcf_path.write_bytes(content)
+            # Kick off background GCS session cleanup (non-blocking, best-effort).
+            # The files have been copied to local disk so the session is no longer needed.
+            asyncio.create_task(_delete_gcs_session_bg(session_id))
+
+        else:
+            # ── Direct upload path: stream UploadFile objects to disk ────────────────
+            if not tmcf:
+                raise HTTPException(status_code=400, detail="TMCF file is required")
+            if not csv:
+                raise HTTPException(status_code=400, detail="At least one CSV file is required")
+
+            # Early reject: Content-Length of the whole multipart body exceeds the per-file limit.
+            # This is a fast-path guard; the per-file streaming check is the authoritative enforcement.
+            _cl_header = request.headers.get("content-length")
+            if _cl_header and _cl_header.isdigit() and int(_cl_header) > max_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Upload too large. Maximum CSV size is {_size_display} per file.",
+                )
+
+            # TMCF files are always small — load into memory as before.
+            tmcf_content = await tmcf.read()
+            if len(tmcf_content) > max_bytes:
+                raise HTTPException(status_code=400, detail=f"TMCF file exceeds {_size_display} limit")
+            tmcf_path.write_bytes(tmcf_content)
+
+            csv_paths = []
+            for i, csv_file in enumerate(csv):
+                # Preserve the original filename (sanitized) so the TMCF table reference C:name->col
+                # matches the saved file (dc-import derives the table name from the filename stem).
+                # Uniqueness is guaranteed by the per-run upload directory, not by filename prefixing.
+                orig_name = Path(csv_file.filename).name if csv_file.filename else ""
+                safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", orig_name) if orig_name else ""
+                csv_save_name = safe_name if safe_name.lower().endswith(".csv") else f"input_{i:02d}.csv"
+                csv_save_path = csvs_dir / csv_save_name
+                # Stream-copy in chunks to avoid loading multi-GB files into RAM.
+                await _stream_upload_to_file(
+                    csv_file, csv_save_path, max_bytes,
+                    f"CSV file '{csv_file.filename or csv_save_name}' exceeds {_size_display} limit",
+                )
+                csv_paths.append(csv_save_path)
+
+            if stat_vars_mcf and stat_vars_mcf.filename:
+                content = await stat_vars_mcf.read()
+                if len(content) > max_bytes:
+                    raise HTTPException(status_code=400, detail="Stat vars MCF file exceeds size limit")
+                stat_vars_mcf_path.write_bytes(content)
+
+            if stat_vars_schema_mcf and stat_vars_schema_mcf.filename:
+                content = await stat_vars_schema_mcf.read()
+                if len(content) > max_bytes:
+                    raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
+                stat_vars_schema_mcf_path.write_bytes(content)
+
     except HTTPException:
         # Clean up the upload dir so rejected requests do not accumulate files on disk.
         shutil.rmtree(run_upload_dir, ignore_errors=True)
@@ -450,8 +555,9 @@ async def _run_custom_validation_impl(
 @app.post("/api/run/custom/stream")
 async def run_custom_validation_stream(
     request: Request,
-    tmcf: UploadFile = File(...),
-    csv: list[UploadFile] = File(...),
+    session_id: str | None = Form(None),
+    tmcf: UploadFile | None = File(None),
+    csv: list[UploadFile] | None = File(None),
     stat_vars_mcf: UploadFile | None = File(None),
     stat_vars_schema_mcf: UploadFile | None = File(None),
     rules: str | None = Form(None),
@@ -460,18 +566,25 @@ async def run_custom_validation_stream(
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
 ):
-    """Run validation on uploaded TMCF + CSV files with streaming output. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs for schema conformance."""
+    """Run validation with streaming output.
+
+    Supports two file-delivery modes:
+    - Direct upload: include tmcf and csv as multipart file fields (default).
+    - GCS session:   include session_id (from /api/prepare-upload) without file fields;
+                     the server downloads the files from GCS before running validation.
+    """
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
-        dataset_name=dataset_name, existence_checks=existence_checks,
+        dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
     )
 
 
 @app.post("/api/run/custom")
 async def run_custom_validation(
     request: Request,
-    tmcf: UploadFile = File(...),
-    csv: list[UploadFile] = File(...),
+    session_id: str | None = Form(None),
+    tmcf: UploadFile | None = File(None),
+    csv: list[UploadFile] | None = File(None),
     stat_vars_mcf: UploadFile | None = File(None),
     stat_vars_schema_mcf: UploadFile | None = File(None),
     rules: str | None = Form(None),
@@ -480,10 +593,15 @@ async def run_custom_validation(
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
 ):
-    """Run validation on uploaded TMCF + CSV files. Optional stat_vars.mcf and stat_vars_schema.mcf enable lint-with-MCFs."""
+    """Run validation (non-streaming).
+
+    Supports two file-delivery modes:
+    - Direct upload: include tmcf and csv as multipart file fields (default).
+    - GCS session:   include session_id (from /api/prepare-upload) without file fields.
+    """
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
-        dataset_name=dataset_name, existence_checks=existence_checks,
+        dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
     )
 
 

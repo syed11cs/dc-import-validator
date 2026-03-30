@@ -93,7 +93,9 @@ The web interface makes validation accessible to everyone:
 3. (Optional) Add StatVars MCF for enhanced schema validation.
 4. Click **Run Validation**.
 
-File limit: 10 GB per file. Multiple CSV files can be uploaded for multi-CSV imports.
+File limit: 50 GB total per validation session. Multiple CSV files can be uploaded.
+
+When `GCS_REPORTS_BUCKET` is configured, files are uploaded directly to Google Cloud Storage using signed URLs, bypassing the Cloud Run 32 MB HTTP request limit.
 
 ### 💻 CLI Usage
 
@@ -156,7 +158,7 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `GEMINI_API_KEY` | For AI review | Google AI Studio API key for Gemini schema review |
 | `GOOGLE_API_KEY` | Alternative | Alternative API key variable (used if `GEMINI_API_KEY` not set) |
 | `DC_API_KEY` | Required for FULL mode | Data Commons API key used by Java import tool for Recon and existence checks |
-| `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket name for report storage; upload/serve fails clearly if bucket not accessible |
+| `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket for validation report storage **and** large-file upload sessions. When set, the UI uploads files directly to GCS via signed URLs before triggering validation, bypassing the Cloud Run 32 MB HTTP request limit. Upload/serve fails clearly if the bucket is not accessible. |
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
 | `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM (~500 MB heap); tune to available memory. Returns HTTP 429 when at capacity. |

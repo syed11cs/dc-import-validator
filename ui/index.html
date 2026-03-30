@@ -1483,7 +1483,7 @@
             <span id="csv-file-name" class="file-name">No file chosen</span>
             <button type="button" id="csv-clear-btn" class="file-clear-btn" style="display: none;" title="Remove files" aria-label="Remove files">×</button>
           </div>
-          <p class="file-size-hint">Maximum CSV size: 10 GB per file.</p>
+          <p class="file-size-hint">Maximum dataset size: 50 GB total.</p>
           <div id="csv-size-warning" style="display: none;"></div>
           <div class="custom-dataset-name-row">
             <label for="custom-dataset-name">Dataset name <span class="required-asterisk" aria-label="required">*</span></label>
@@ -1686,6 +1686,8 @@
     let customCsvFiles = [];
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
+    /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
+    let gcsUploadsConfigured = false;
 
     const PRESET_QUICK = ['check_min_value', 'check_num_observations'];
     let lastLogText = '';
@@ -1748,6 +1750,21 @@
     const _sessionRunDatasets = new Set();
 
     const LOG_PLACEHOLDER_HTML = '<p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul>';
+
+    // ═══════════════════════════════════════════════════════════════
+    // Upload config (GCS large-file path availability)
+    // ═══════════════════════════════════════════════════════════════
+    async function fetchUploadConfig() {
+      try {
+        const r = await fetch(API + '/api/upload-config');
+        if (r.ok) {
+          const data = await r.json();
+          gcsUploadsConfigured = !!data.gcs_uploads_configured;
+        }
+      } catch (_) {
+        // Non-fatal: fall back to direct upload
+      }
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Dataset / UI
@@ -3237,25 +3254,122 @@
             setOutputContent('Please select both TMCF and CSV files.', false);
             return;
           }
-          const formData = new FormData();
-          formData.append('tmcf', customTmcfFile);
-          for (const csvFile of customCsvFiles) {
-            formData.append('csv', csvFile);
+          const MAX_TOTAL_BYTES = 50 * 1024 * 1024 * 1024; // 50 GB — mirrors MAX_SESSION_SIZE
+          const allSelectedFiles = [
+            customTmcfFile,
+            ...customCsvFiles,
+            ...(customStatVarsMcfFile ? [customStatVarsMcfFile] : []),
+            ...(customStatVarsSchemaMcfFile ? [customStatVarsSchemaMcfFile] : []),
+          ];
+          const totalBytes = allSelectedFiles.reduce((sum, f) => sum + f.size, 0);
+          if (totalBytes > MAX_TOTAL_BYTES) {
+            const actualGb = (totalBytes / (1024 ** 3)).toFixed(1);
+            setOutputContent(`Total dataset size is ${actualGb} GB (limit: 50 GB).`, false);
+            return;
           }
-          if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
-          if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
-          if (rulesParam) formData.append('rules', rulesParam);
           lastRunCustomDatasetName = (document.getElementById('custom-dataset-name')?.value || '').trim() || null;
-          formData.append('dataset_name', lastRunCustomDatasetName || '');
-          formData.append('llm_review', '1');
-          formData.append('llm_model', llmModel);
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
-          formData.append('existence_checks', existenceChecks);
-          r = await fetch(API + '/api/run/custom/stream', {
-            method: 'POST',
-            body: formData,
-            signal: runAbortController.signal,
-          });
+
+          if (gcsUploadsConfigured) {
+            // ── Two-phase GCS upload (Cloud Run large-file path) ──────────────────
+            // Phase 1: obtain signed PUT URLs from the server.
+            setOutputContent('Preparing secure upload session...\n', false);
+            const allFiles = [
+              { name: customTmcfFile.name, size: customTmcfFile.size, role: 'tmcf' },
+              ...customCsvFiles.map(f => ({ name: f.name, size: f.size, role: 'csv' })),
+              ...(customStatVarsMcfFile ? [{ name: customStatVarsMcfFile.name, size: customStatVarsMcfFile.size, role: 'stat_vars_mcf' }] : []),
+              ...(customStatVarsSchemaMcfFile ? [{ name: customStatVarsSchemaMcfFile.name, size: customStatVarsSchemaMcfFile.size, role: 'stat_vars_schema_mcf' }] : []),
+            ];
+            const prepResp = await fetch(API + '/api/prepare-upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ files: allFiles }),
+              signal: runAbortController.signal,
+            });
+            if (!prepResp.ok) {
+              const errJson = await prepResp.json().catch(() => ({}));
+              throw new Error(errJson.detail || `Failed to prepare upload (${prepResp.status})`);
+            }
+            const { session_id, upload_urls } = await prepResp.json();
+
+            // Phase 2: upload each file directly to GCS via the signed PUT URL.
+            const fileByName = new Map([
+              [customTmcfFile.name, customTmcfFile],
+              ...customCsvFiles.map(f => [f.name, f]),
+              ...(customStatVarsMcfFile ? [[customStatVarsMcfFile.name, customStatVarsMcfFile]] : []),
+              ...(customStatVarsSchemaMcfFile ? [[customStatVarsSchemaMcfFile.name, customStatVarsSchemaMcfFile]] : []),
+            ]);
+            setOutputContent('Uploading files directly to cloud storage...\n', false);
+            for (let i = 0; i < upload_urls.length; i++) {
+              const { filename, url, content_type } = upload_urls[i];
+              const file = fileByName.get(filename);
+              if (!file) throw new Error(`File not found for upload: ${filename}`);
+              setOutputContent(
+                `Uploading files directly to cloud storage (${i + 1}/${upload_urls.length}): ${filename}\n`,
+                false,
+              );
+              await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('PUT', url, true);
+                xhr.setRequestHeader('Content-Type', content_type || 'application/octet-stream');
+                xhr.upload.onprogress = (e) => {
+                  if (e.lengthComputable && e.total > 0) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    const loaded = (e.loaded / 1048576).toFixed(1);
+                    const total = (e.total / 1048576).toFixed(1);
+                    setOutputContent(
+                      `Uploading files directly to cloud storage (${i + 1}/${upload_urls.length}): ${filename}\n  ${pct}%  (${loaded} MB / ${total} MB)\n`,
+                      false,
+                    );
+                  }
+                };
+                xhr.onload = () => {
+                  if (xhr.status >= 200 && xhr.status < 300) resolve();
+                  else reject(new Error(`GCS upload failed for ${filename}: HTTP ${xhr.status}`));
+                };
+                xhr.onerror = () => reject(new Error(`GCS upload network error for ${filename}`));
+                xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+                // Honour the run abort controller so Stop run cancels in-flight XHR uploads.
+                runAbortController.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+                xhr.send(file);
+              });
+            }
+
+            // Phase 3: trigger validation using the session_id (no file bytes through Cloud Run).
+            setOutputContent('Running validation...\n', false);
+            const sessionFormData = new FormData();
+            sessionFormData.append('session_id', session_id);
+            sessionFormData.append('dataset_name', lastRunCustomDatasetName || '');
+            sessionFormData.append('llm_review', '1');
+            sessionFormData.append('llm_model', llmModel);
+            sessionFormData.append('existence_checks', existenceChecks);
+            if (rulesParam) sessionFormData.append('rules', rulesParam);
+            r = await fetch(API + '/api/run/custom/stream', {
+              method: 'POST',
+              body: sessionFormData,
+              signal: runAbortController.signal,
+            });
+
+          } else {
+            // ── Direct multipart upload (local / small-file path) ─────────────────
+            const formData = new FormData();
+            formData.append('tmcf', customTmcfFile);
+            for (const csvFile of customCsvFiles) {
+              formData.append('csv', csvFile);
+            }
+            if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
+            if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
+            if (rulesParam) formData.append('rules', rulesParam);
+            formData.append('dataset_name', lastRunCustomDatasetName || '');
+            formData.append('llm_review', '1');
+            formData.append('llm_model', llmModel);
+            formData.append('existence_checks', existenceChecks);
+            r = await fetch(API + '/api/run/custom/stream', {
+              method: 'POST',
+              body: formData,
+              signal: runAbortController.signal,
+            });
+          }
         } else {
           let url = `${API}/api/run/${runDataset}?stream=true`;
           if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
@@ -5419,6 +5533,7 @@
     });
 
     fetchDatasets();
+    fetchUploadConfig();
     setOutputContent(LOG_PLACEHOLDER_HTML, true);
   </script>
 
