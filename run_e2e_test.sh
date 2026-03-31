@@ -1,12 +1,12 @@
 #!/bin/bash
 #
 # End-to-end validation test script for DC Import Validator.
-# Orchestrates: optional dc-import lint (with stat_vars/schema MCFs when present)
-#              -> dc-import genmcf -> import_validation
+# Orchestrates: dc-import genmcf -> import_validation
 #
-# When a dataset has stat_vars.mcf and/or stat_vars_schema.mcf, lint is run
-# with those MCFs first for schema conformance; that report is used by
-# import_validation. Custom runs can pass --stat-vars-mcf and --stat-vars-schema-mcf.
+# genmcf performs all validations that lint mode performs (per DC documentation),
+# so lint is not run as a separate step. genmcf's report.json is used as the
+# lint report for downstream validation rules (STRUCTURAL_LINT_ERROR_COUNT,
+# MISSING_REFS_COUNT). Custom runs can pass --stat-vars-mcf and --stat-vars-schema-mcf.
 #
 # Usage:
 #   ./run_e2e_test.sh [OPTIONS] [DATASET]
@@ -50,6 +50,7 @@ export DATA_REPO
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 JAVA_HEAP="${JAVA_HEAP:-14g}"
+JAVA_THREADS="${JAVA_THREADS:-4}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -566,29 +567,14 @@ fi
 
 mkdir -p "$GENMCF_OUTPUT"
 
-# Optional: run lint with stat_vars / stat_vars_schema MCFs when present (schema conformance)
-LINT_WITH_MCF_OUTPUT="$GENMCF_OUTPUT/lint"
-if [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] || [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]]; then
-  log_info "Running dc-import lint with schema MCF(s) for conformance check..."
-  LINT_FILES=("$TMCF" "${CSVS[@]}")
-  [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LINT_FILES+=("$STAT_VARS_MCF")
-  [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LINT_FILES+=("$STAT_VARS_SCHEMA_MCF")
-  if java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC -jar "$JAR_PATH" lint "${LINT_FILES[@]}" -o="$LINT_WITH_MCF_OUTPUT" \
-      --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" 2>/dev/null; then
-    LINT_REPORT="$LINT_WITH_MCF_OUTPUT/report.json"
-    if [[ -f "$LINT_REPORT" ]]; then
-      log_info "Using lint report from schema MCF run: $LINT_REPORT"
-    fi
-  else
-    log_warn "Lint with MCFs failed or produced no report; import_validation will use genmcf report.json"
-  fi
-fi
-
-# genmcf: same inputs as DE when schema MCFs exist (TMCF, CSV, optional stat_vars.mcf, stat_vars_schema.mcf)
+# genmcf performs all validations that lint mode performs (per DC documentation), so lint
+# is not run separately. genmcf's report.json is used as the lint report for downstream rules.
 GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
-java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
+java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC \
+  -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
+  --num-threads="$JAVA_THREADS" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
   log_error "dc-import genmcf failed"
   emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
@@ -742,9 +728,8 @@ else
 fi
 
 # =============================================================================
-# Step 2.25: Check counters match (warn-only; use same-source report only)
-# NumObservations and NumNodeSuccesses must come from the same genmcf output
-# to avoid false mismatches when resolution differs between genmcf and lint.
+# Step 2.25: Check counters match (warn-only; use genmcf report only)
+# NumObservations and NumNodeSuccesses must come from the same genmcf output.
 # =============================================================================
 REPORT_FOR_COUNTERS=""
 if [[ -n "$STATS_SUMMARY" && -f "$STATS_SUMMARY" ]]; then
