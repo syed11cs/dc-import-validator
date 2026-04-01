@@ -1507,7 +1507,7 @@
                 <span id="stat-vars-schema-mcf-file-name" class="file-name">No file chosen</span>
                 <button type="button" id="stat-vars-schema-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
               </div>
-              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">If provided, lint runs with these for schema conformance before genmcf.</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">If provided, passed to genmcf for schema conformance validation.</div>
             </div>
           </details>
         </div>
@@ -3718,7 +3718,7 @@
         } else {
           const durationSec = (Date.now() - runStartTime) / 1000;
           finishProgressBar(false, durationSec, null);
-          setOutputContent('Validation failed to start.\n' + e.message, false);
+          setOutputContent('Connection lost. The validation run may have been interrupted \u2014 please try again.', false);
           console.error('Validation error:', e);
           showStatusBanner({ success: false, cancelled: false });
         }
