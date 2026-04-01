@@ -14,15 +14,14 @@ Prevent bad imports from reaching production by catching schema issues, data inc
 | Feature | Description |
 |---------|-------------|
 | 🔍 Comprehensive Validation | Preflight checks, CSV quality, TMCF validation, schema conformance, and Data Commons import_validation |
-| 🤖 AI Schema Review | Gemini-powered review (always on in Web UI; set API key to enable) catches typos and schema issues before validation |
-| 📊 Rich Reports | HTML reports with blockers/warnings, StatVar summaries, lint issues, and import tool integration |
+| 🤖 AI Schema Review | Gemini-powered review (requires API key) catches typos and schema issues before validation |
+| 📊 Rich Reports | HTML reports with blockers/warnings, StatVar summaries, schema errors, and import tool integration |
 | 🚀 Multiple Run Modes | Docker (zero setup), CLI (development), or Cloud Run (production) |
 | ☁️ Cloud Ready | Deploy to Cloud Run with automatic GCS report storage and CI/CD via GitHub Actions |
 
 ### 🚀 Quick Start (Recommended: Docker)
 
-Run the validator with zero local setup.  
-In the Web UI, Gemini review runs on every validation; set an API key (see below) to enable it.
+Run the validator with zero local setup.
 
 ```bash
 git clone https://github.com/syed11cs/dc-import-validator.git
@@ -35,7 +34,7 @@ Open http://localhost:8080 and start validating.
 
 ### 🤖 Enable AI Review (Optional)
 
-To use Gemini for schema and typo review:
+To use Gemini for schema and typo review, set a Gemini API key:
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -44,6 +43,8 @@ docker run --rm -p 8080:8080 \
 ```
 
 Replace `your_key` with an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+
+Without an API key the validator runs fully — the Gemini review step is skipped.
 
 #### Platform notes
 
@@ -82,8 +83,8 @@ The web interface makes validation accessible to everyone:
 | Dataset Browser | Test with built-in dataset (child_birth) or upload your own |
 | Interactive Rules | Select which validation rules to run with checkbox interface |
 | Live Logs | Real-time terminal output with syntax highlighting and copy support |
-| Rich Reports | Combined view of blockers, warnings, StatVar summaries, and lint issues |
-| Gemini Integration | AI review runs on every run; select model (2.5 Flash, Pro, etc.). Set GEMINI_API_KEY or GOOGLE_API_KEY to enable. |
+| Rich Reports | Combined view of blockers, warnings, StatVar summaries, and schema errors |
+| Gemini Integration | AI review runs when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set; select model: `gemini-2.5-flash` (default), `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
 | Run Management | Cancel long-running validations, view history |
 
 #### Upload Custom Files
@@ -123,14 +124,16 @@ Perfect for automation, CI/CD, or power users:
 | Option | Description |
 |--------|-------------|
 | `--tmcf PATH` | TMCF file (for custom datasets) |
-| `--csv PATH` | CSV file (for custom datasets) |
+| `--csv PATH` | CSV file (for custom datasets; repeatable for multiple CSVs) |
 | `--stat-vars-mcf PATH` | Optional StatVars MCF for schema conformance |
 | `--stat-vars-schema-mcf PATH` | Optional schema MCF |
+| `--config PATH` | Use a custom validation config file |
 | `--rules ID1,ID2` | Run only these rules |
 | `--skip-rules ID1,ID2` | Skip these rules |
 | `--llm-review` | Enable Gemini Review (requires API key) |
 | `--no-llm-review` | Disable Gemini Review |
 | `--model ID` | Gemini model — allowed values: `gemini-2.5-flash` (default), `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
+| `--baseline-name NAME` | Name used to identify the differ baseline for custom datasets |
 | `--help` | Show help |
 ### ☁️ Deployment
 
@@ -161,7 +164,9 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket for validation report storage **and** large-file upload sessions. When set, the UI uploads files directly to GCS via signed URLs before triggering validation, bypassing the Cloud Run 32 MB HTTP request limit. Upload/serve fails clearly if the bucket is not accessible. |
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
-| `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM (~500 MB heap); tune to available memory. Returns HTTP 429 when at capacity. |
+| `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM; tune to available memory. Returns HTTP 429 when at capacity. |
+| `JAVA_HEAP` | No | JVM heap size for the dc-import tool (default: `14g`). Increase for very large datasets. |
+| `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `4`). Requires multiple CSV files to benefit. |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
 | `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks. The UI toggle (Import Options → Enable Data Commons existence checks) overrides this per-run; the toggle defaults to OFF for performance. Server-level default: `true` when running via CLI. |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
@@ -195,18 +200,13 @@ The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load 
 └──────┬──────┘
        ↓
 ┌─────────────┐
-│    Gemini   │  OPTIONAL: AI review of TMCF for:
+│    Gemini   │  OPTIONAL (requires API key): AI review of TMCF for:
 │   Review    │  • Schema typos • Missing dcs: prefixes
 └──────┬──────┘  • Naming convention issues
        ↓
 ┌─────────────┐
 │  dc-import  │  • genmcf → report.json, summary_report.csv
-│   genmcf    │  • lint (if StatVars MCF provided)
-└──────┬──────┘
-       ↓
-┌─────────────┐
-│  import_    │  • Run validation rules against config
-│ validation  │  • Generate validation_output.json
+│   genmcf    │  • Includes schema conformance when StatVars MCF provided
 └──────┬──────┘
        ↓
 ┌─────────────┐
@@ -215,9 +215,14 @@ The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load 
 └──────┬──────┘  • Detect deleted / modified / added rows
        ↓
 ┌─────────────┐
+│  import_    │  • Run validation rules against config
+│ validation  │  • Generate validation_output.json
+└──────┬──────┘
+       ↓
+┌─────────────┐
 │    HTML     │  • Blockers (P0 errors)
 │   Report    │  • Warnings (non-blocking)
-└─────────────┘  • StatVar summary • Lint issues • Dataset changes
+└─────────────┘  • StatVar summary • Schema errors • Dataset changes
 ```
 
 #### What Gets Validated
@@ -230,7 +235,7 @@ The server exposes `GET /healthz` → `{"status": "ok"}` for Cloud Run and load 
 | Min Value | Values below threshold | ✅ Yes |
 | Unit Consistency | Same StatVar, same unit | ✅ Yes |
 | Scaling Factor | Consistent scaling per StatVar | ✅ Yes |
-| Lint Errors | Import tool warnings/errors | ⚠️ Warning by default |
+| Schema Errors | Structural errors from import tool (genmcf report) | ⚠️ Warning by default |
 | Data Fluctuation | Extreme changes detected | ⚠️ Warning |
 | Dataset Changes | Deleted / modified / added observations vs accepted baseline (requires a baseline to exist) | ✅ Yes (⚠️ Warning for custom datasets) |
 ### ⚙️ Configuration
@@ -245,13 +250,12 @@ Edit `validation_configs/new_import_config.json` to define validation rules:
     {
       "rule_id": "check_min_value",
       "description": "Check values are >= minimum",
-      "validator": "MinValueValidator",
+      "validator": "MIN_VALUE_CHECK",
       "scope": {
-        "data_source": "stats",
-        "stat_var_groups": ["Count_*"]
+        "data_source": "stats"
       },
       "params": {
-        "min_value": 0
+        "minimum": 0
       }
     }
   ]
@@ -327,22 +331,22 @@ Set `LOG_LEVEL=DEBUG` for verbose output.
 
 ### ❓ FAQ
 
-**Q: Do I need a Gemini API key?**  
+**Q: Do I need a Gemini API key?**
 A: Only for AI-powered schema review. The validator works without it (skips the Gemini step).
 
-**Q: What Java version do I need?**  
+**Q: What Java version do I need?**
 A: Java 11+ (17 recommended). Docker image includes Java 17.
 
-**Q: Can I run this in CI/CD?**  
+**Q: Can I run this in CI/CD?**
 A: Absolutely! Use the CLI (`./run_e2e_test.sh`) in your pipelines. Exit codes indicate pass/fail.
 
-**Q: How do I add new validation rules?**  
+**Q: How do I add new validation rules?**
 A: Edit `validation_configs/new_import_config.json` and implement the validator in `scripts/`.
 
-**Q: What's the difference between BLOCKER and WARNING?**  
+**Q: What's the difference between BLOCKER and WARNING?**
 A: Blockers (errors) stop the pipeline with exit code 1. Warnings are informational only.
 
-**Q: Can I customize the HTML report?**  
+**Q: Can I customize the HTML report?**
 A: The report is generated by `scripts/generate_html_report.py` (no static HTML template file).
 
 ### 📚 Additional Resources
