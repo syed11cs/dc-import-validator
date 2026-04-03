@@ -722,7 +722,11 @@ def _resolve_artifact(dataset: str, run_id: str | None, filename: str) -> bytes 
     """
     if not run_id or not _run_id_safe(run_id):
         return None
-    raw = gcs_reports.get_report_from_gcs(run_id, dataset, filename)
+    try:
+        raw = gcs_reports.get_report_from_gcs(run_id, dataset, filename)
+    except GCSAccessError as exc:
+        logger.warning("_resolve_artifact gcs_unavailable dataset=%s filename=%s: %s", dataset, filename, exc)
+        return None
     if raw is not None:
         return raw
     if is_gcs_configured():
