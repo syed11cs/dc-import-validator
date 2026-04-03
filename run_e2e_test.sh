@@ -49,8 +49,7 @@ export DATA_REPO
 # Import tool behavior: passed to Java process (env). Defaults support deterministic/local runs.
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
-JAVA_HEAP="${JAVA_HEAP:-14g}"
-JAVA_THREADS="${JAVA_THREADS:-4}"
+JAVA_THREADS="${JAVA_THREADS:-2}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -572,7 +571,7 @@ mkdir -p "$GENMCF_OUTPUT"
 GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
-java -Xms$JAVA_HEAP -Xmx$JAVA_HEAP -XX:+UseG1GC \
+java -XX:+UseG1GC \
   -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --num-threads="$JAVA_THREADS" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {

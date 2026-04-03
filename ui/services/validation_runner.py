@@ -30,8 +30,10 @@ def _run_timeout_sec() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Concurrency guard: each validation run spawns a JVM (~500 MB heap) + Python
-# subprocess chain. Without a limit, concurrent runs exhaust memory on Cloud Run.
+# Concurrency guard: each validation run spawns a JVM + Python subprocess chain.
+# JVM heap is sized automatically by Java 17 container-aware ergonomics (~25% of
+# container RAM, ~4 GB on 16 Gi). Without a run limit, concurrent runs can exhaust
+# container memory. Recommended: MAX_CONCURRENT_RUNS=2 on a 16 Gi instance.
 # Configurable via MAX_CONCURRENT_RUNS (default: 3, minimum: 1).
 # ---------------------------------------------------------------------------
 

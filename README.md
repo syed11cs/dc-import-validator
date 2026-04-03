@@ -165,8 +165,7 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
 | `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM; tune to available memory. Returns HTTP 429 when at capacity. |
-| `JAVA_HEAP` | No | JVM heap size for the dc-import tool (default: `14g`). Increase for very large datasets. |
-| `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `4`). Requires multiple CSV files to benefit. |
+| `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `2`). Requires multiple CSV files to benefit; higher values increase peak JVM memory proportionally. |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
 | `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks. The UI toggle (Import Options → Enable Data Commons existence checks) overrides this per-run; the toggle defaults to OFF for performance. Server-level default: `true` when running via CLI. |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
