@@ -39,7 +39,7 @@
 #   ./run_e2e_test.sh child_birth --rules=check_min_value,check_unit_consistency
 #
 
-set -e
+set -eo pipefail
 
 # --- Paths (relative to script location) ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -571,19 +571,23 @@ mkdir -p "$GENMCF_OUTPUT"
 GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_MCF")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
+GENMCF_LOG="$GENMCF_OUTPUT/genmcf.log"
+log_info "genmcf log file: $GENMCF_LOG"
+set +e
 java -XX:+UseG1GC \
-  -XX:MaxRAMPercentage=75.0 \
-  -XX:+ExitOnOutOfMemoryError \
-  -XX:+UseStringDeduplication \
-  -XX:G1HeapRegionSize=16m \
   -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --num-threads="$JAVA_THREADS" \
-  --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" || {
-  log_error "dc-import genmcf failed"
+  --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" \
+  2>&1 | tee "$GENMCF_LOG"
+JAVA_EXIT=${PIPESTATUS[0]}
+set -e
+if [[ $JAVA_EXIT -ne 0 ]]; then
+  log_error "dc-import genmcf failed (exit code ${JAVA_EXIT})"
+  log_error "See genmcf log: $GENMCF_LOG"
   emit_failure "DATA_PROCESSING_FAILED" 2 "Data processing failed"
   ensure_failure_report "Data Processing" "Data processing failed"
   exit 1
-}
+fi
 
 if [[ ! -f "$STATS_SUMMARY" ]]; then
   log_error "summary_report.csv not produced at $STATS_SUMMARY"
