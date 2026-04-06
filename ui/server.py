@@ -58,7 +58,7 @@ from ui import gcs_uploads as _gcs_uploads
 import gcs_baselines as _gcs_baselines
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
-MAX_UPLOAD_MB = 10 * 1024  # 10 GB per file
+MAX_UPLOAD_MB = 50 * 1024  # 50 GB per file
 SCRIPT_DIR = APP_ROOT
 OUTPUT_DIR = APP_ROOT / "output"
 CONFIG_DIR = APP_ROOT / "validation_configs"

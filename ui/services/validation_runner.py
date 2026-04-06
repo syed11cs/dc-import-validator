@@ -31,17 +31,22 @@ def _run_timeout_sec() -> int:
 
 # ---------------------------------------------------------------------------
 # Concurrency guard: each validation run spawns a JVM + Python subprocess chain.
-# JVM heap is sized automatically by Java 17 container-aware ergonomics (~25% of
-# container RAM, ~4 GB on 16 Gi). Without a run limit, concurrent runs can exhaust
-# container memory. Recommended: MAX_CONCURRENT_RUNS=2 on a 16 Gi instance.
-# Configurable via MAX_CONCURRENT_RUNS (default: 3, minimum: 1).
+# In Cloud Run with concurrency=1, the streaming HTTP connection keeps the request
+# alive for the full validation duration, so Cloud Run routes new requests to a
+# different container instance. The guard therefore rarely triggers in production.
+# It is still useful for:
+#   - Local development: no Cloud Run concurrency enforcement; multiple browser
+#     tabs could otherwise spawn concurrent JVMs and exhaust machine memory.
+#   - Defense-in-depth: if Cloud Run concurrency is misconfigured (raised above 1),
+#     this is the last application-level barrier before OOM.
+# Default: 1 (matches Cloud Run concurrency=1). Override via MAX_CONCURRENT_RUNS.
 # ---------------------------------------------------------------------------
 
 def _max_concurrent_runs() -> int:
     try:
-        return max(1, int(os.environ.get("MAX_CONCURRENT_RUNS", "3").strip()))
+        return max(1, int(os.environ.get("MAX_CONCURRENT_RUNS", "1").strip()))
     except ValueError:
-        return 3
+        return 1
 
 # Plain integer — safe without a lock: asyncio runs on a single thread, so
 # all increments/decrements happen within the event loop with no data races.
@@ -418,6 +423,7 @@ async def _run_validation_process_impl(
                 done_yielded = False
                 try:
                     async for chunk in _stream_run_output(proc):
+                        needs_post_yield_upload = False
                         try:
                             obj = json.loads(chunk) if chunk.strip() else {}
                             if obj.get("t") == "done":
@@ -454,19 +460,23 @@ async def _run_validation_process_impl(
                                 obj["run_id"] = request_id
                                 if extra_done_fields:
                                     obj.update(extra_done_fields)
-                                # Upload to GCS whenever a report was produced (success or failure) so any instance can serve it
-                                if output_dir and dataset:
-                                    await asyncio.to_thread(
-                                        _upload_reports_sync, output_dir, request_id, dataset
-                                    )
-                                    if canonical_output_dir and output_dir != canonical_output_dir:
-                                        await asyncio.to_thread(
-                                            _copy_run_to_canonical, output_dir, canonical_output_dir
-                                        )
                                 chunk = json.dumps(obj) + "\n"
+                                # GCS upload happens after yielding done so the client receives
+                                # the final result immediately, before the upload delay.
+                                needs_post_yield_upload = bool(output_dir and dataset)
                         except (json.JSONDecodeError, TypeError):
                             pass
                         yield chunk
+                        # Upload to GCS after yielding done so the client already has the result.
+                        # Runs only once (needs_post_yield_upload is only set on the done event).
+                        if needs_post_yield_upload:
+                            await asyncio.to_thread(
+                                _upload_reports_sync, output_dir, request_id, dataset
+                            )
+                            if canonical_output_dir and output_dir != canonical_output_dir:
+                                await asyncio.to_thread(
+                                    _copy_run_to_canonical, output_dir, canonical_output_dir
+                                )
                     # If we timed out and the subprocess never sent "done", emit a synthetic done so UI gets structured failure
                     if run_timed_out and not done_yielded:
                         duration_sec = round(time.monotonic() - run_start_time, 2)
@@ -485,6 +495,8 @@ async def _run_validation_process_impl(
                             "failure_step": None,
                             "failure_message": "Validation run timed out.",
                         }
+                        yield json.dumps(synthetic) + "\n"
+                        # Upload after yielding so the client already has the timeout result.
                         if output_dir and dataset:
                             await asyncio.to_thread(
                                 _upload_reports_sync, output_dir, request_id, dataset
@@ -493,7 +505,6 @@ async def _run_validation_process_impl(
                                 await asyncio.to_thread(
                                     _copy_run_to_canonical, output_dir, canonical_output_dir
                                 )
-                        yield json.dumps(synthetic) + "\n"
                 except asyncio.CancelledError:
                     try:
                         proc.kill()
@@ -531,7 +542,11 @@ async def _run_validation_process_impl(
                         config_path.unlink(missing_ok=True)
                     # Remove per-run and extra dirs after streaming ends (subprocess has exited).
                     # Runs on all exit paths: normal completion, timeout, and user cancellation.
-                    _cleanup_run_dirs(output_dir, canonical_output_dir, extra_cleanup_dirs, request_id)
+                    # Wrapped in to_thread so shutil.rmtree does not block the event loop while
+                    # Starlette is flushing the final HTTP chunk to the client.
+                    await asyncio.to_thread(
+                        _cleanup_run_dirs, output_dir, canonical_output_dir, extra_cleanup_dirs, request_id
+                    )
 
             return StreamingResponse(
                 gen(),
