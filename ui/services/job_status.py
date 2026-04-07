@@ -112,10 +112,7 @@ def _apply_batch_fallback(status: dict, batch_state: str) -> dict:
         if not updated.get("failure_code"):
             updated["failure_code"] = "BATCH_JOB_LOST"
         if not updated.get("failure_message"):
-            updated["failure_message"] = (
-                f"The Batch VM stopped reporting progress (Batch state: {batch_state}). "
-                "The VM may have been preempted or terminated unexpectedly."
-            )
+            updated["failure_message"] = "Validation stopped unexpectedly. Please retry."
     # If Batch still reports QUEUED/RUNNING/SCHEDULED we leave the GCS status
     # as-is — the VM is alive but just slow to write status updates.
     return updated
@@ -167,7 +164,10 @@ def get_job_status(
             logger.warning("run_id=%s: Batch API pre-start probe failed: %s", run_id, exc)
             return None
         if batch_state in ("QUEUED", "SCHEDULED", "RUNNING"):
-            logger.debug("run_id=%s: no status.json yet but Batch state=%s — returning synthetic 'starting'", run_id, batch_state)
+            logger.debug(
+                "run_id=%s: no status.json yet but Batch state=%s — returning synthetic 'starting'",
+                run_id, batch_state,
+            )
             return {
                 "run_id": run_id,
                 "batch_job_name": job_name,
@@ -181,7 +181,42 @@ def get_job_status(
                 "failure_code": None,
                 "failure_message": None,
             }
-        # Job is terminal or unknown — no status to return.
+        elif batch_state in _BATCH_SUCCEEDED_STATES:
+            # Job completed before writing status.json (unusual but possible).
+            logger.info("run_id=%s: no status.json but Batch state=SUCCEEDED — returning synthetic 'succeeded'", run_id)
+            return {
+                "run_id": run_id,
+                "batch_job_name": job_name,
+                "dataset": "",
+                "vm_type": "",
+                "step": "4",
+                "step_label": "Completed",
+                "status": "succeeded",
+                "started_at": "",
+                "updated_at": "",
+                "failure_code": None,
+                "failure_message": None,
+            }
+        elif batch_state in _BATCH_FAILED_STATES:
+            # Container failed before entrypoint.sh could write status.json.
+            logger.info(
+                "run_id=%s: no status.json and Batch state=%s — returning synthetic 'failed'",
+                run_id, batch_state,
+            )
+            return {
+                "run_id": run_id,
+                "batch_job_name": job_name,
+                "dataset": "",
+                "vm_type": "",
+                "step": "0",
+                "step_label": "Startup",
+                "status": "failed",
+                "started_at": "",
+                "updated_at": "",
+                "failure_code": "STARTUP_FAILED",
+                "failure_message": "Validation failed before starting.",
+            }
+        # Unrecognised state — return None so the caller 404s and the UI retries.
         logger.info("run_id=%s: no status.json and Batch state=%s — returning None", run_id, batch_state)
         return None
 

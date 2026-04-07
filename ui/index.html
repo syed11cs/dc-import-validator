@@ -412,35 +412,11 @@
       color: var(--text-muted);
       margin-top: 8px;
     }
-    .log-filter-bar {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .log-search-input {
-      flex: 1;
-      min-width: 120px;
-      padding: 4px 8px;
-      font-size: 0.75rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-      font-family: inherit;
-    }
-    .log-search-input::placeholder { color: var(--text-muted); }
-    .log-search-input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 1px var(--border-focus); }
-    .log-search-count { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
-    .log-search-count.empty { visibility: hidden; }
-    .output-box .log-search-hit { background: rgba(99, 102, 241, 0.35); color: inherit; border-radius: 2px; padding: 0 1px; }
     #llm-model-row { width: 100%; }
     #llm-model-select { display: block; width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: inherit; font-size: 0.8rem; }
     #llm-model-select optgroup { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; padding-top: 6px; margin-top: 4px; border-top: 1px solid var(--border); }
     #llm-model-select optgroup:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
     #llm-model-select option { font-size: 0.8rem; font-weight: normal; color: var(--text); }
-    .follow-log-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-muted); cursor: pointer; }
-    .follow-log-wrap input { accent-color: var(--accent); cursor: pointer; }
     .btn-icon { display: inline-flex; align-items: center; margin-right: 4px; vertical-align: middle; }
     .btn-icon svg { display: block; }
     .progress-steps-row {
@@ -1618,11 +1594,7 @@
             <button class="tab" data-tab="report">Report</button>
           </div>
           <div class="output-actions">
-            <div id="log-actions" class="tab-actions">
-              <button id="copy-log-btn" class="btn btn-sm" disabled title="Copy log to clipboard">Copy</button>
-              <button id="expand-log-btn" class="btn btn-sm" title="Expand log">Expand</button>
-              <button id="clear-log-btn" class="btn btn-sm" disabled title="Clear log output">Clear</button>
-            </div>
+            <div id="log-actions" class="tab-actions"></div>
             <div id="report-actions" class="tab-actions" style="display: none;">
               <span id="report-timestamp" class="report-timestamp"></span>
               <span id="report-run-id-wrap" class="report-run-id-wrap" style="display: none;"><span class="report-run-id-label">Run ID:</span><span id="report-run-id" class="report-run-id-badge"></span></span>
@@ -1633,11 +1605,6 @@
           </div>
         </div>
         <div id="log-panel" class="panel active">
-          <div id="log-filter-bar" class="log-filter-bar" style="display: none;">
-            <label class="follow-log-wrap"><input type="checkbox" id="follow-log-checkbox" checked> Follow log</label>
-            <input type="text" id="log-search" class="log-search-input" placeholder="Search in log…" aria-label="Search in log" autocomplete="off" />
-            <span id="log-search-count" class="log-search-count empty" aria-live="polite"></span>
-          </div>
           <div id="output" class="output-box empty"><p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul></div>
           <div id="log-completed-at" class="log-completed-at" style="display: none;"></div>
         </div>
@@ -2025,9 +1992,6 @@
       if (_nameInputReset) { _nameInputReset.value = ''; _updateDatasetNameHint(); }
       // Clear log, status, and report when switching datasets
       setOutputContent(LOG_PLACEHOLDER_HTML, true);
-      const outputEl = document.getElementById('output');
-      outputEl.classList.remove('expanded');
-      document.getElementById('expand-log-btn').textContent = 'Expand';
       setReportActionsVisible(false, false);
       lastReportMtime = null;
       document.getElementById('report-timestamp').textContent = '';
@@ -2915,6 +2879,33 @@
     /** Current step index for label (0–4). Used to show "Step label · timer" during run; no numeric percent. */
     let currentProgressStepIndex = 0;
 
+    // ── Status line state (log panel activity line + elapsed timer) ───────────
+    let _activeStepStartMs = null; // ms timestamp when the current step started
+    let _activeStepLabel   = '';   // display label for the current step
+
+    function _fmtDur(totalSec) {
+      if (totalSec < 60) return totalSec + 's';
+      const m = Math.floor(totalSec / 60);
+      const s = totalSec % 60;
+      return m + 'm' + (s > 0 ? ' ' + s + 's' : '');
+    }
+
+    function _setActiveStep(label) {
+      if (_activeStepLabel === label) return;
+      _activeStepStartMs = Date.now();
+      _activeStepLabel   = label;
+      _refreshStatusLine();
+    }
+
+    function _refreshStatusLine() {
+      if (!_activeStepLabel) return;
+      const elapsed = _activeStepStartMs ? Math.floor((Date.now() - _activeStepStartMs) / 1000) : 0;
+      const text = _activeStepLabel + (_activeStepStartMs ? ' (' + _fmtDur(elapsed) + ')' : '');
+      const output = document.getElementById('output');
+      if (output) { output.textContent = text; output.classList.remove('empty'); }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     function formatElapsed(seconds) {
       const m = Math.floor(seconds / 60);
       const s = Math.floor(seconds % 60);
@@ -2945,6 +2936,7 @@
           resultsSection.classList.remove('execution-complete', 'execution-failed', 'execution-cancelled');
           resultsSection.classList.add('execution-running');
         }
+        if (_activeStepStartMs) _refreshStatusLine();
         const stepIndex = currentProgressStepIndex;
         for (let i = 0; i <= 4; i++) {
           const pill = document.getElementById('progress-pill-' + i);
@@ -3020,6 +3012,7 @@
         elapsedTimerId = null;
       }
       progressRunStartTime = null;
+      _activeStepStartMs = null;
       const container = document.getElementById('progress-container');
       const pctEl = document.getElementById('progress-pct');
       const fillEl = document.getElementById('progress-fill');
@@ -3103,6 +3096,8 @@
       pendingStepTimer = null;
       elapsedTimerId = null;
       progressRunStartTime = null;
+      _activeStepStartMs = null;
+      _activeStepLabel   = '';
       stepLabels = {};
       currentProgressStepIndex = 0;
       fillCurrentPct = 0;
@@ -3214,9 +3209,12 @@
       }
       const { run_id: confirmedRunId } = await submitResp.json();
 
-      setOutputContent('Job submitted — preparing validation environment...\n', false);
+      _setActiveStep('Preparing validation environment\u2026');
 
       let lastStepIdx = -1;
+      // If the job stays in "starting" beyond this deadline we give up.
+      const _STARTING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      const _startingDeadlineMs = Date.now() + _STARTING_TIMEOUT_MS;
 
       while (true) {
         // ── Check abort before sleeping ──────────────────────────────
@@ -3249,27 +3247,34 @@
         const stepNum = parseFloat(status.step ?? '0');
         const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
         if (status.status === 'starting') {
-          // Job is booting — update log panel but do not advance progress pills
-          // so that real step 0 still triggers an update when it arrives.
-          const startLabel = status.step_label || 'Preparing validation environment\u2026';
-          setOutputContent(startLabel + '\n', false);
-        } else if (stepIdx !== lastStepIdx) {
-          lastStepIdx = stepIdx;
-          const label = status.step_label || '';
-          if (label) {
-            stepLabels[stepIdx] = label;
-            const pill = document.getElementById('progress-pill-' + stepIdx);
-            if (pill) pill.textContent = stepIdx + '. ' + label;
+          // Job is booting — show activity label but do not advance pills.
+          _setActiveStep(status.step_label || 'Preparing validation environment\u2026');
+          // Safety timeout: fail if still starting after 5 minutes.
+          if (Date.now() > _startingDeadlineMs) {
+            _activeStepStartMs = null;
+            return {
+              success: false, cancelled: false, run_id: confirmedRunId,
+              output: 'Validation environment did not start within the expected time.',
+              failure_code: 'STARTING_TIMEOUT',
+              failure_step: 0,
+              failure_message: 'Validation environment did not start within the expected time.',
+              failure_details: null,
+              baseline_id: null,
+            };
           }
+        } else if (status.status === 'running' && stepIdx !== lastStepIdx) {
+          lastStepIdx = stepIdx;
+          const label = status.step_label || ('Step ' + stepIdx);
+          stepLabels[stepIdx] = label;
+          const pill = document.getElementById('progress-pill-' + stepIdx);
+          if (pill) pill.textContent = stepIdx + '. ' + label;
           updateProgressStep(stepIdx);
-          setOutputContent(
-            (label ? '[Step ' + status.step + '] ' + label : '[Step ' + status.step + '] Running') + '...\n',
-            false,
-          );
+          _setActiveStep(label);
         }
 
         // ── Terminal states ──────────────────────────────────────────
         if (status.status === 'succeeded') {
+          _activeStepStartMs = null;
           return {
             success: true, cancelled: false, run_id: confirmedRunId,
             output: 'Validation completed.',
@@ -3278,6 +3283,7 @@
           };
         }
         if (status.status === 'failed') {
+          _activeStepStartMs = null;
           const failStep = isNaN(stepNum) ? null : stepIdx;
           const msg = status.failure_message || 'Validation failed — check run logs for details.';
           return {
@@ -3362,7 +3368,7 @@
         btn.title = '';
         btn.classList.add('btn-stop');
         btn.disabled = false;
-        setOutputContent('Running validation...\n', false);
+        _setActiveStep('Preparing\u2026');
         setReportRunningState();
         switchToLogTab({ scrollIntoView: true });
         const runStartTime = Date.now();
@@ -3397,7 +3403,7 @@
           if (gcsUploadsConfigured) {
             // ── Two-phase GCS upload (Cloud Run large-file path) ──────────────────
             // Phase 1: obtain signed PUT URLs from the server.
-            setOutputContent('Preparing secure upload session...\n', false);
+            _setActiveStep('Preparing upload\u2026');
             const allFiles = [
               { name: customTmcfFile.name, size: customTmcfFile.size, role: 'tmcf' },
               ...customCsvFiles.map(f => ({ name: f.name, size: f.size, role: 'csv' })),
@@ -3423,15 +3429,12 @@
               ...(customStatVarsMcfFile ? [[customStatVarsMcfFile.name, customStatVarsMcfFile]] : []),
               ...(customStatVarsSchemaMcfFile ? [[customStatVarsSchemaMcfFile.name, customStatVarsSchemaMcfFile]] : []),
             ]);
-            setOutputContent('Uploading dataset files...\n', false);
+            _setActiveStep('Uploading dataset files\u2026');
             for (let i = 0; i < upload_urls.length; i++) {
               const { filename, url, content_type } = upload_urls[i];
               const file = fileByName.get(filename);
               if (!file) throw new Error(`File not found for upload: ${filename}`);
-              setOutputContent(
-                `Uploading dataset files (${i + 1}/${upload_urls.length}): ${filename}\n`,
-                false,
-              );
+              _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename}`);
               await new Promise((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 xhr.open('PUT', url, true);
@@ -3441,10 +3444,7 @@
                     const pct = Math.round((e.loaded / e.total) * 100);
                     const loaded = (e.loaded / 1048576).toFixed(1);
                     const total = (e.total / 1048576).toFixed(1);
-                    setOutputContent(
-                      `Uploading dataset files (${i + 1}/${upload_urls.length}): ${filename}\n  ${pct}%  (${loaded} MB / ${total} MB)\n`,
-                      false,
-                    );
+                    _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename} \u2014 ${pct}% (${loaded}\u202fMB\u202f/\u202f${total}\u202fMB)`);
                   }
                 };
                 xhr.onload = () => {
@@ -3461,7 +3461,7 @@
 
             // Phase 3: submit batch job and poll GCS status.json for progress.
             const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-            setOutputContent('Submitting validation job...\n', false);
+            _setActiveStep('Submitting validation job\u2026');
             data = await _submitAndPollBatchJob(batchRunId, 'custom', {
               session_id,
               tmcf_filename: customTmcfFile.name,
@@ -3506,27 +3506,21 @@
             data = await consumeStream(r.body, (msg) => {
               if (msg.t === 'step') {
                 const s = msg.step ?? -1;
-                if (msg.label != null && msg.label !== '') {
-                  stepLabels[s] = msg.label;
-                  const pill = document.getElementById('progress-pill-' + s);
-                  if (pill) pill.textContent = s + '. ' + stepLabels[s];
-                }
+                const label = (msg.label != null && msg.label !== '') ? msg.label : ('Step ' + s);
+                stepLabels[s] = label;
+                const pill = document.getElementById('progress-pill-' + s);
+                if (pill) pill.textContent = s + '. ' + label;
                 if (typeof msg.step === 'number') updateProgressStep(msg.step);
-              } else if (msg.t === 'line') {
-                const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
-                let next = msg.v ?? '';
-                if (prev && next && !prev.endsWith('\n') && !next.startsWith('\n')) {
-                  next = '\n' + next;
-                }
-                setOutputContent(prev ? prev + next : next, false);
+                _setActiveStep(label);
               }
+              // Raw log lines are not surfaced — the status line is the sole log panel view.
             });
           }
         } else {
           // Built-in dataset: submit batch job and poll GCS status.json.
           const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
-          setOutputContent('Submitting validation job...\n', false);
+          _setActiveStep('Submitting validation job\u2026');
           data = await _submitAndPollBatchJob(batchRunId, runDataset, {
             session_id: '',
             tmcf_filename: '',
@@ -3542,6 +3536,7 @@
             existence_checks: existenceChecks,
           }, runAbortController.signal);
         }
+        _activeStepStartMs = null;
         setOutputContent(data.output || '(no output)', false);
         if (!data.cancelled) {
           progressHideDeferred = true;
@@ -4993,9 +4988,6 @@
       }
 
       setOutputContent(LOG_PLACEHOLDER_HTML, true);
-      const logSearch = document.getElementById('log-search');
-      if (logSearch) logSearch.value = '';
-
       setReportInsightsPlaceholder();
       renderLLMReportSection({ neutral: true });
 
@@ -5211,10 +5203,6 @@
         }
         // Clear execution log
         setOutputContent(LOG_PLACEHOLDER_HTML, true);
-        const outputEl = document.getElementById('output');
-        if (outputEl) outputEl.classList.remove('expanded');
-        const expandLogBtn = document.getElementById('expand-log-btn');
-        if (expandLogBtn) expandLogBtn.textContent = 'Expand';
         // Clear report actions and status
         setReportActionsVisible(false, false);
         lastReportMtime = null;
@@ -5469,97 +5457,6 @@
       }
     });
 
-    function getLineType(line) {
-      // Prefer log-level prefix so "[INFO] ... WARN ..." stays info, not warn
-      if (/^\[ERROR\]\s/.test(line) || /^E\d{4}\s/.test(line)) return 'error';
-      if (/^\[WARN\]\s/.test(line) || /^W\d{4}\s/.test(line)) return 'warn';
-      if (/^\[INFO\]\s/.test(line) || /^I\d{4}\s/.test(line)) return 'info';
-      // Fallback: word anywhere (e.g. raw tool output without prefix)
-      if (/\bERROR\b/.test(line)) return 'error';
-      if (/\bWARN\b/.test(line)) return 'warn';
-      if (/\bINFO\b/.test(line)) return 'info';
-      return 'plain';
-    }
-
-    function getLogSectionDivider(line) {
-      if (!/\[INFO\]\s+Step\s+[0-3]:/.test(line)) return null;
-      if (/Step\s+0:/.test(line)) return '──────── Gemini Review ────────';
-      if (/Step\s+1:/.test(line)) return '──────── dc-import (lint + genmcf) ────────';
-      if (/Step\s+2:/.test(line)) return '──────── import_validation ────────';
-      if (/Step\s+3:/.test(line)) return '──────── Report Generation ────────';
-      return null;
-    }
-
-    function escapeRegex(str) {
-      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    function highlightSearchInLine(line, search) {
-      if (!search) return escapeHtml(line);
-      try {
-        const regex = new RegExp(escapeRegex(search), 'gi');
-        const parts = [];
-        let lastIndex = 0;
-        let match;
-        while ((match = regex.exec(line)) !== null) {
-          parts.push(escapeHtml(line.slice(lastIndex, match.index)));
-          parts.push('<mark class="log-search-hit">' + escapeHtml(match[0]) + '</mark>');
-          lastIndex = match.index + match[0].length;
-        }
-        parts.push(escapeHtml(line.slice(lastIndex)));
-        return parts.join('');
-      } catch (e) {
-        return escapeHtml(line);
-      }
-    }
-
-    function renderLogOutput(text, filterType = 'all', searchQuery = '') {
-      if (!text || text === 'Run validation to see output...') {
-        return { html: escapeHtml(text || ''), matchCount: 0 };
-      }
-      if (text === 'Running validation...\n' || text.startsWith('Running validation...')) {
-        return { html: `<span class="line-running">Running validation...</span>\n`, matchCount: 0 };
-      }
-      const search = searchQuery.trim();
-      const searchLower = search.toLowerCase();
-      const lines = text.split('\n');
-      const visible = lines.filter(line => {
-        const type = getLineType(line);
-        const matchesFilter = filterType === 'all' || type === filterType;
-        const matchesSearch = !search || line.toLowerCase().includes(searchLower);
-        return matchesFilter && matchesSearch;
-      });
-      const matchCount = visible.length;
-      let body = visible.map(line => {
-        const sectionLabel = getLogSectionDivider(line);
-        if (sectionLabel) {
-          return `<span class="log-section-divider">${escapeHtml(sectionLabel)}</span>`;
-        }
-        const type = getLineType(line);
-        const highlighted = highlightSearchInLine(line, search);
-        if (type === 'error') return `<span class="line-error">${highlighted}</span>`;
-        if (type === 'warn') return `<span class="line-warn">${highlighted}</span>`;
-        if (type === 'info') return `<span class="line-info">${highlighted}</span>`;
-        return highlighted;
-      }).join('\n');
-      if (search && matchCount === 0) {
-        body = '<p class="log-search-empty" style="color:var(--text-muted);font-size:0.85rem;margin:8px 0;">No matching lines.</p>';
-      }
-      return { html: body, matchCount };
-    }
-
-    function updateLogSearchCount(count, hasSearch) {
-      const el = document.getElementById('log-search-count');
-      if (!el) return;
-      if (!hasSearch) {
-        el.textContent = '';
-        el.classList.add('empty');
-        return;
-      }
-      el.classList.remove('empty');
-      el.textContent = count === 0 ? 'No matches' : (count === 1 ? '1 match' : count + ' matches');
-    }
-
     function debounce(fn, ms) {
       let t = null;
       return function (...args) {
@@ -5568,18 +5465,8 @@
       };
     }
 
-    function applyLogFilter() {
-      const searchQuery = (document.getElementById('log-search') && document.getElementById('log-search').value) || '';
+    function setOutputContent(text, isPlaceholder = false) {
       const output = document.getElementById('output');
-      const result = renderLogOutput(lastLogText, 'all', searchQuery);
-      output.innerHTML = result.html;
-      updateLogSearchCount(result.matchCount, searchQuery.trim().length > 0);
-      output.scrollTop = 0;
-    }
-
-    function setOutputContent(text, isPlaceholder = false, scrollIntoView = false) {
-      const output = document.getElementById('output');
-      const filterBar = document.getElementById('log-filter-bar');
       if (isPlaceholder) {
         if (typeof text === 'string' && text.trim().startsWith('<')) {
           output.innerHTML = text;
@@ -5589,65 +5476,13 @@
         output.classList.add('empty');
         lastLogText = '';
         lastRunCompletedAt = null;
-        filterBar.style.display = 'none';
         document.getElementById('log-completed-at').style.display = 'none';
       } else {
-        lastLogText = text;
-        const searchQuery = (document.getElementById('log-search') && document.getElementById('log-search').value) || '';
-        const result = renderLogOutput(text, 'all', searchQuery);
-        output.innerHTML = result.html;
-        updateLogSearchCount(result.matchCount, searchQuery.trim().length > 0);
+        output.textContent = text || '';
         output.classList.remove('empty');
-        const scrollToBottom = () => { output.scrollTop = output.scrollHeight; };
-        const scrollIntoViewOnce = () => {
-          const el = document.getElementById('log-completed-at');
-          (el && el.style.display !== 'none' ? el : output).scrollIntoView({ behavior: 'smooth', block: 'end' });
-        };
-        const followLog = document.getElementById('follow-log-checkbox');
-        if (followLog && followLog.checked) {
-          setTimeout(() => {
-            scrollToBottom();
-            if (scrollIntoView) scrollIntoViewOnce();
-          }, 50);
-        }
-        filterBar.style.display = 'flex';
-      }
-      const hasContent = !isPlaceholder && (lastLogText || (output.innerText && output.innerText.trim().length > 0));
-      document.getElementById('copy-log-btn').disabled = !hasContent;
-      document.getElementById('clear-log-btn').disabled = !hasContent;
-      const expandBtn = document.getElementById('expand-log-btn');
-      expandBtn.disabled = !hasContent;
-      if (!hasContent && document.getElementById('output').classList.contains('expanded')) {
-        document.getElementById('output').classList.remove('expanded');
-        expandBtn.textContent = 'Expand';
+        lastLogText = text;
       }
     }
-
-    document.getElementById('copy-log-btn').addEventListener('click', async () => {
-      const output = document.getElementById('output');
-      const text = output.innerText || output.textContent || '';
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast('Copied!');
-      } catch (e) {
-        showToast('Copy failed');
-      }
-    });
-
-    document.getElementById('expand-log-btn').addEventListener('click', () => {
-      const output = document.getElementById('output');
-      const btn = document.getElementById('expand-log-btn');
-      if (btn.disabled) return;
-      output.classList.toggle('expanded');
-      btn.textContent = output.classList.contains('expanded') ? 'Collapse' : 'Expand';
-    });
-
-    document.getElementById('clear-log-btn').addEventListener('click', () => {
-      document.getElementById('log-search').value = '';
-      setOutputContent(LOG_PLACEHOLDER_HTML, true);
-    });
-
-    document.getElementById('log-search').addEventListener('input', debounce(applyLogFilter, 300));
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && runAbortController) {
@@ -5658,15 +5493,6 @@
         const _runBtn = document.getElementById('run-btn');
         if (currentDataset && !runAbortController && _runBtn && !_runBtn.disabled) {
           runValidation();
-          e.preventDefault();
-        }
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
-        const logPanel = document.getElementById('log-panel');
-        if (logPanel.classList.contains('active')) {
-          document.getElementById('output').classList.toggle('expanded');
-          document.getElementById('expand-log-btn').textContent =
-            document.getElementById('output').classList.contains('expanded') ? 'Collapse' : 'Expand';
           e.preventDefault();
         }
       }
