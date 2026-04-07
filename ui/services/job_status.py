@@ -125,6 +125,7 @@ def get_job_status(
     run_id: str,
     bucket_name: Optional[str] = None,
     *,
+    job_name: Optional[str] = None,
     stale_threshold_seconds: float = _STALE_THRESHOLD_SECONDS,
 ) -> Optional[dict]:
     """Return the status dict for a validation run, or None if not found yet.
@@ -132,6 +133,11 @@ def get_job_status(
     Args:
         run_id:                   The run identifier.
         bucket_name:              GCS bucket. Defaults to GCS_REPORTS_BUCKET env var.
+        job_name:                 Fully-qualified Batch job name. When provided and
+                                  status.json has not been written yet, the Batch API
+                                  is probed to distinguish "still starting" from "not found".
+                                  Active jobs return a synthetic {"status": "starting"} dict;
+                                  None is returned only if the job is unknown.
         stale_threshold_seconds:  Override the staleness threshold (useful in tests).
 
     Returns:
@@ -151,6 +157,32 @@ def get_job_status(
     status = _fetch_status_json(bucket_name, run_id)
     if status is None:
         logger.debug("run_id=%s: status.json not found in GCS yet", run_id)
+        if not job_name:
+            return None
+        # Probe the Batch API to tell "starting" from "never existed".
+        try:
+            from ui.services.batch_runner import get_batch_state
+            batch_state = get_batch_state(job_name)
+        except Exception as exc:
+            logger.warning("run_id=%s: Batch API pre-start probe failed: %s", run_id, exc)
+            return None
+        if batch_state in ("QUEUED", "SCHEDULED", "RUNNING"):
+            logger.debug("run_id=%s: no status.json yet but Batch state=%s — returning synthetic 'starting'", run_id, batch_state)
+            return {
+                "run_id": run_id,
+                "batch_job_name": job_name,
+                "dataset": "",
+                "vm_type": "",
+                "step": "0",
+                "step_label": "Preparing validation environment\u2026",
+                "status": "starting",
+                "started_at": "",
+                "updated_at": "",
+                "failure_code": None,
+                "failure_message": None,
+            }
+        # Job is terminal or unknown — no status to return.
+        logger.info("run_id=%s: no status.json and Batch state=%s — returning None", run_id, batch_state)
         return None
 
     # Fast path: terminal states need no further checks.

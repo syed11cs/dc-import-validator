@@ -1551,10 +1551,12 @@ async def get_batch_job_status(run_id: str):
     heartbeat is older than 5 minutes, the Batch API is probed to detect
     silent VM termination.
 
-    Returns the status dict or 404 if no status has been written yet.
+    Returns the status dict or 404 if no status has been written yet and the
+    Batch job cannot be found.
     """
     try:
-        status = await asyncio.to_thread(_get_job_status, run_id)
+        job_name = await asyncio.to_thread(_batch_runner.compute_job_name, run_id)
+        status = await asyncio.to_thread(_get_job_status, run_id, None, job_name=job_name)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
@@ -1562,7 +1564,7 @@ async def get_batch_job_status(run_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
 
     if status is None:
-        raise HTTPException(status_code=404, detail="Job status not found — the job may still be booting")
+        raise HTTPException(status_code=404, detail="Job status not found")
 
     return status
 

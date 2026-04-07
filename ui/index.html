@@ -3214,7 +3214,7 @@
       }
       const { run_id: confirmedRunId } = await submitResp.json();
 
-      setOutputContent('Job submitted — waiting for Cloud Batch VM to start...\n', false);
+      setOutputContent('Job submitted — preparing validation environment...\n', false);
 
       let lastStepIdx = -1;
 
@@ -3248,7 +3248,12 @@
         // ── Update progress pills and log panel ──────────────────────
         const stepNum = parseFloat(status.step ?? '0');
         const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
-        if (stepIdx !== lastStepIdx) {
+        if (status.status === 'starting') {
+          // Job is booting — update log panel but do not advance progress pills
+          // so that real step 0 still triggers an update when it arrives.
+          const startLabel = status.step_label || 'Preparing validation environment\u2026';
+          setOutputContent(startLabel + '\n', false);
+        } else if (stepIdx !== lastStepIdx) {
           lastStepIdx = stepIdx;
           const label = status.step_label || '';
           if (label) {
@@ -3267,14 +3272,14 @@
         if (status.status === 'succeeded') {
           return {
             success: true, cancelled: false, run_id: confirmedRunId,
-            output: 'Validation completed on Cloud Batch.',
+            output: 'Validation completed.',
             failure_code: null, failure_step: null, failure_message: null, failure_details: null,
             baseline_id: dataset !== 'custom' ? dataset : (opts.baseline_name || null),
           };
         }
         if (status.status === 'failed') {
           const failStep = isNaN(stepNum) ? null : stepIdx;
-          const msg = status.failure_message || 'See Cloud Logging for details.';
+          const msg = status.failure_message || 'Validation failed — check run logs for details.';
           return {
             success: false, cancelled: false, run_id: confirmedRunId,
             output: 'Validation failed: ' + msg,
@@ -3454,9 +3459,9 @@
               });
             }
 
-            // Phase 3: submit to Cloud Batch and poll GCS status.json for progress.
+            // Phase 3: submit batch job and poll GCS status.json for progress.
             const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-            setOutputContent('Submitting validation job to Cloud Batch...\n', false);
+            setOutputContent('Submitting validation job...\n', false);
             data = await _submitAndPollBatchJob(batchRunId, 'custom', {
               session_id,
               tmcf_filename: customTmcfFile.name,
@@ -3518,10 +3523,10 @@
             });
           }
         } else {
-          // Built-in dataset: submit to Cloud Batch and poll GCS status.json.
+          // Built-in dataset: submit batch job and poll GCS status.json.
           const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
-          setOutputContent('Submitting validation job to Cloud Batch...\n', false);
+          setOutputContent('Submitting validation job...\n', false);
           data = await _submitAndPollBatchJob(batchRunId, runDataset, {
             session_id: '',
             tmcf_filename: '',

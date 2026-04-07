@@ -76,16 +76,16 @@ export GCS_REPORTS_BUCKET
 # ─── Fixed paths ──────────────────────────────────────────────────────────────
 
 readonly SCRIPT_DIR="/app/dc-import-validator"
-readonly WORKSPACE="/tmp/workspace/${RUN_ID}"
+WORKSPACE="/tmp/workspace/${RUN_ID}"
 
 # run_e2e_test.sh writes local output here when RUN_ID is set.
-readonly PIPELINE_OUTPUT="${SCRIPT_DIR}/output/${DATASET}/${RUN_ID}"
+PIPELINE_OUTPUT="${SCRIPT_DIR}/output/${DATASET}/${RUN_ID}"
 
 # Temp file to capture the last structured failure event from pipeline stdout.
 readonly FAILURE_EVENT_FILE="${WORKSPACE}/.failure_event.json"
 
 # Record job start time once.
-readonly STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 mkdir -p "${WORKSPACE}"
 

@@ -99,6 +99,18 @@ def _job_name(project: str, region: str, job_id: str) -> str:
     return f"projects/{project}/locations/{region}/jobs/{job_id}"
 
 
+def compute_job_name(run_id: str) -> str:
+    """Return the fully-qualified Batch job name for a given run_id.
+
+    Reads BATCH_PROJECT_ID and BATCH_REGION from the environment.
+    Useful for probing job state before status.json has been written.
+    """
+    project = os.environ["BATCH_PROJECT_ID"]
+    region  = os.environ["BATCH_REGION"]
+    job_id  = _sanitize_job_id(run_id)
+    return _job_name(project, region, job_id)
+
+
 def _batch_client(region: str) -> batch_v1.BatchServiceClient:
     return batch_v1.BatchServiceClient()
 
