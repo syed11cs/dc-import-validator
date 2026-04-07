@@ -56,6 +56,9 @@ from ui import gcs_reports
 from ui.gcs_reports import GCSAccessError, is_gcs_configured
 from ui import gcs_uploads as _gcs_uploads
 import gcs_baselines as _gcs_baselines
+from ui.services import batch_runner as _batch_runner
+from ui.services.batch_runner import InputFiles as _InputFiles
+from ui.services.job_status import get_job_status as _get_job_status
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_MB = 50 * 1024  # 50 GB per file
@@ -1436,6 +1439,222 @@ def get_baseline_versions(dataset: str, baseline_id: str | None = Query(None)):
     except Exception as e:
         logger.warning("baseline-versions error dataset=%s baseline_id=%s: %s", dataset, bid, e)
         return {"versions": []}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cloud Batch job orchestration endpoints
+#
+# These endpoints provide an async job lifecycle for large validation runs
+# that execute on Cloud Batch VMs rather than in Cloud Run directly.
+#
+# Typical flow:
+#   1. POST /api/prepare-upload   → signed GCS upload URLs (existing endpoint)
+#   2. Browser uploads files directly to GCS
+#   3. POST /api/jobs             → submit Batch job; returns { run_id, job_name }
+#   4. GET  /api/jobs/{run_id}/status  → poll until status == "succeeded"/"failed"
+#   5. GET  /api/jobs/{run_id}/report  → fetch HTML report from GCS
+#   6. POST /api/jobs/{run_id}/cancel  → terminate a running job
+# ──────────────────────────────────────────────────────────────────────────────
+
+_BUILTIN_DATASETS = frozenset({"child_birth", "statistics_poland", "finland_census", "uae_population"})
+
+
+class _SubmitJobRequest(BaseModel):
+    """Request body for POST /api/jobs."""
+    run_id: str
+    dataset: str
+    # GCS upload session prefix (e.g. "sessions/abc123") — required for custom dataset.
+    session_id: str = ""
+    # File metadata (required for custom dataset).
+    tmcf_filename: str = ""
+    csv_filenames: list[str] = []
+    stat_vars_mcf_filename: str = ""
+    stat_vars_schema_mcf_filename: str = ""
+    # Total compressed CSV bytes — used for machine tier selection.
+    csv_total_bytes: int = 0
+    # Pipeline options.
+    llm_review: bool = False
+    rules: str = ""
+    skip_rules: str = ""
+    baseline_name: str = ""
+    import_resolution_mode: str = "LOCAL"
+    existence_checks: str = "false"
+
+
+@app.post("/api/jobs")
+async def submit_batch_job(body: _SubmitJobRequest):
+    """Submit a Cloud Batch validation job.
+
+    For custom datasets the files must have been uploaded to GCS already
+    (via POST /api/prepare-upload + direct browser PUT). The session_id
+    from prepare-upload becomes GCS_INPUT_PREFIX for the Batch VM.
+
+    For built-in datasets (child_birth, etc.) session_id may be omitted —
+    the container already has those files baked in.
+
+    Returns { run_id, job_name } on success.
+    """
+    run_id = body.run_id.strip()
+    dataset = body.dataset.strip()
+
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    if not dataset:
+        raise HTTPException(status_code=400, detail="dataset is required")
+    if dataset not in _BUILTIN_DATASETS and dataset != "custom":
+        raise HTTPException(status_code=400, detail=f"Unknown dataset: {dataset!r}")
+    if dataset == "custom":
+        if not body.tmcf_filename:
+            raise HTTPException(status_code=400, detail="tmcf_filename is required for custom dataset")
+        if not body.csv_filenames:
+            raise HTTPException(status_code=400, detail="csv_filenames is required for custom dataset")
+
+    input_files = _InputFiles(
+        gcs_prefix=body.session_id,
+        tmcf_filename=body.tmcf_filename,
+        csv_filenames=body.csv_filenames,
+        stat_vars_mcf_filename=body.stat_vars_mcf_filename or None,
+        stat_vars_schema_mcf_filename=body.stat_vars_schema_mcf_filename or None,
+        csv_total_bytes=body.csv_total_bytes,
+        llm_review=body.llm_review,
+        rules_filter=body.rules,
+        skip_rules_filter=body.skip_rules,
+        baseline_name=body.baseline_name,
+        import_resolution_mode=body.import_resolution_mode,
+        import_existence_checks=body.existence_checks,
+    )
+
+    try:
+        job_name = await asyncio.to_thread(
+            _batch_runner.submit_job, run_id, dataset, input_files
+        )
+    except KeyError as exc:
+        # A required env var (BATCH_PROJECT_ID etc.) is not set.
+        logger.error("submit_batch_job missing env var: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Batch not configured — missing environment variable: {exc}",
+        )
+    except Exception as exc:
+        logger.exception("submit_batch_job failed run_id=%s dataset=%s", run_id, dataset)
+        raise HTTPException(status_code=500, detail=f"Failed to submit Batch job: {exc}")
+
+    logger.info("batch_job_submitted run_id=%s dataset=%s job_name=%s", run_id, dataset, job_name)
+    return {"run_id": run_id, "job_name": job_name}
+
+
+@app.get("/api/jobs/{run_id}/status")
+async def get_batch_job_status(run_id: str):
+    """Return the current status of a Batch validation run.
+
+    Reads status.json from GCS. When the status is "running" and the last
+    heartbeat is older than 5 minutes, the Batch API is probed to detect
+    silent VM termination.
+
+    Returns the status dict or 404 if no status has been written yet.
+    """
+    try:
+        status = await asyncio.to_thread(_get_job_status, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("get_batch_job_status error run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Job status not found — the job may still be booting")
+
+    return status
+
+
+@app.get("/api/jobs/{run_id}/report", response_class=HTMLResponse)
+async def get_batch_job_report(run_id: str):
+    """Return the HTML validation report for a completed Batch run.
+
+    The dataset is resolved from the run's status.json so the caller does not
+    need to track it separately.
+
+    Returns 404 when the report has not been uploaded yet (job still running)
+    or 503 when GCS is not configured.
+    """
+    if not is_gcs_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="GCS reports bucket is not configured (GCS_REPORTS_BUCKET not set)",
+        )
+
+    # Resolve dataset from status.json.
+    try:
+        status = await asyncio.to_thread(_get_job_status, run_id)
+    except Exception as exc:
+        logger.exception("get_batch_job_report: status read error run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    dataset = status.get("dataset", "")
+    if not dataset:
+        raise HTTPException(status_code=500, detail="Dataset not recorded in job status")
+
+    try:
+        content = await asyncio.to_thread(
+            gcs_reports.get_report_from_gcs, run_id, dataset, "validation_report.html"
+        )
+    except GCSAccessError as exc:
+        raise HTTPException(status_code=503, detail=f"GCS not accessible: {exc}")
+    except Exception as exc:
+        logger.exception("get_batch_job_report: GCS read error run_id=%s dataset=%s", run_id, dataset)
+        raise HTTPException(status_code=500, detail=f"Failed to read report: {exc}")
+
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Report not available yet — the job may still be running",
+        )
+
+    return HTMLResponse(content=content.decode("utf-8", errors="replace"))
+
+
+@app.post("/api/jobs/{run_id}/cancel")
+async def cancel_batch_job(run_id: str):
+    """Cancel a running Batch job.
+
+    Reads the job_name from the run's status.json then calls the Batch delete
+    API. Cancellation is best-effort — if the job has already finished, the
+    call is a no-op.
+
+    Returns 404 when no status exists for the run_id.
+    """
+    try:
+        status = await asyncio.to_thread(_get_job_status, run_id)
+    except Exception as exc:
+        logger.exception("cancel_batch_job: status read error run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_name = status.get("batch_job_name", "")
+    if not job_name:
+        raise HTTPException(
+            status_code=409,
+            detail="batch_job_name not recorded in status — cannot cancel",
+        )
+
+    current_status = status.get("status", "")
+    if current_status in ("succeeded", "failed"):
+        logger.info("cancel_batch_job: job already terminal run_id=%s status=%s", run_id, current_status)
+        return {"ok": True, "run_id": run_id, "message": f"Job already {current_status}"}
+
+    try:
+        await asyncio.to_thread(_batch_runner.cancel_job, job_name)
+    except Exception as exc:
+        logger.exception("cancel_batch_job: cancel error run_id=%s job_name=%s", run_id, job_name)
+        raise HTTPException(status_code=500, detail=f"Failed to cancel job: {exc}")
+
+    logger.info("batch_job_cancelled run_id=%s job_name=%s", run_id, job_name)
+    return {"ok": True, "run_id": run_id, "job_name": job_name}
 
 
 @app.get("/favicon.ico")

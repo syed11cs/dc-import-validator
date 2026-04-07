@@ -3170,6 +3170,125 @@
       requestAnimationFrame(step);
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Cloud Batch job submission + status polling
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Submit a validation job to Cloud Batch and poll GCS status.json
+     * every 3 seconds until the job reaches a terminal state.
+     *
+     * Updates the existing progress pills and log panel during polling.
+     * Returns a `data`-compatible object (same shape as the streaming `done` event)
+     * so all existing post-run code works unchanged.
+     *
+     * Throws DOMException('AbortError') when signal fires — triggers the
+     * existing cancel UI path in runValidation's catch block.
+     */
+    async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
+      // Submit
+      const submitResp = await fetch(API + '/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          run_id: runId,
+          dataset,
+          session_id: opts.session_id || '',
+          tmcf_filename: opts.tmcf_filename || '',
+          csv_filenames: opts.csv_filenames || [],
+          stat_vars_mcf_filename: opts.stat_vars_mcf_filename || '',
+          stat_vars_schema_mcf_filename: opts.stat_vars_schema_mcf_filename || '',
+          csv_total_bytes: opts.csv_total_bytes || 0,
+          llm_review: !!opts.llm_review,
+          rules: opts.rules || '',
+          skip_rules: opts.skip_rules || '',
+          baseline_name: opts.baseline_name || '',
+          import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
+          existence_checks: opts.existence_checks || 'false',
+        }),
+        signal,
+      });
+      if (!submitResp.ok) {
+        const err = await submitResp.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to submit job (' + submitResp.status + ')');
+      }
+      const { run_id: confirmedRunId } = await submitResp.json();
+
+      setOutputContent('Job submitted — waiting for Cloud Batch VM to start...\n', false);
+
+      let lastStepIdx = -1;
+
+      while (true) {
+        // ── Check abort before sleeping ──────────────────────────────
+        if (signal && signal.aborted) {
+          fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
+          throw new DOMException('Run cancelled', 'AbortError');
+        }
+
+        // ── Sleep 3 s; wake early on abort ───────────────────────────
+        await new Promise(resolve => {
+          const tid = setTimeout(resolve, 3000);
+          if (signal) signal.addEventListener('abort', () => { clearTimeout(tid); resolve(); }, { once: true });
+        });
+
+        // ── Check abort again after wakeup ───────────────────────────
+        if (signal && signal.aborted) {
+          fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
+          throw new DOMException('Run cancelled', 'AbortError');
+        }
+
+        // ── Fetch GCS status.json (retry silently on transient error) ─
+        let status;
+        try {
+          const statusResp = await fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/status');
+          if (!statusResp.ok) continue;
+          status = await statusResp.json();
+        } catch (_) { continue; }
+
+        // ── Update progress pills and log panel ──────────────────────
+        const stepNum = parseFloat(status.step ?? '0');
+        const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
+        if (stepIdx !== lastStepIdx) {
+          lastStepIdx = stepIdx;
+          const label = status.step_label || '';
+          if (label) {
+            stepLabels[stepIdx] = label;
+            const pill = document.getElementById('progress-pill-' + stepIdx);
+            if (pill) pill.textContent = stepIdx + '. ' + label;
+          }
+          updateProgressStep(stepIdx);
+          setOutputContent(
+            (label ? '[Step ' + status.step + '] ' + label : '[Step ' + status.step + '] Running') + '...\n',
+            false,
+          );
+        }
+
+        // ── Terminal states ──────────────────────────────────────────
+        if (status.status === 'succeeded') {
+          return {
+            success: true, cancelled: false, run_id: confirmedRunId,
+            output: 'Validation completed on Cloud Batch.',
+            failure_code: null, failure_step: null, failure_message: null, failure_details: null,
+            baseline_id: dataset !== 'custom' ? dataset : (opts.baseline_name || null),
+          };
+        }
+        if (status.status === 'failed') {
+          const failStep = isNaN(stepNum) ? null : stepIdx;
+          const msg = status.failure_message || 'See Cloud Logging for details.';
+          return {
+            success: false, cancelled: false, run_id: confirmedRunId,
+            output: 'Validation failed: ' + msg,
+            failure_code: status.failure_code || null,
+            failure_step: failStep,
+            failure_message: msg,
+            failure_details: null,
+            baseline_id: null,
+          };
+        }
+        // Still running — continue polling
+      }
+    }
+
     async function runValidation() {
       if (!currentDataset) return;
       const runDataset = currentDataset;
@@ -3335,25 +3454,28 @@
               });
             }
 
-            // Phase 3: trigger validation using the session_id (no file bytes through Cloud Run).
-            // "Preparing dataset..." is shown during the brief window where Cloud Run downloads
-            // the session files from GCS before the validation pipeline begins streaming output.
-            setOutputContent('Preparing dataset...\n', false);
-            const sessionFormData = new FormData();
-            sessionFormData.append('session_id', session_id);
-            sessionFormData.append('dataset_name', lastRunCustomDatasetName || '');
-            sessionFormData.append('llm_review', '1');
-            sessionFormData.append('llm_model', llmModel);
-            sessionFormData.append('existence_checks', existenceChecks);
-            if (rulesParam) sessionFormData.append('rules', rulesParam);
-            r = await fetch(API + '/api/run/custom/stream', {
-              method: 'POST',
-              body: sessionFormData,
-              signal: runAbortController.signal,
-            });
+            // Phase 3: submit to Cloud Batch and poll GCS status.json for progress.
+            const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            setOutputContent('Submitting validation job to Cloud Batch...\n', false);
+            data = await _submitAndPollBatchJob(batchRunId, 'custom', {
+              session_id,
+              tmcf_filename: customTmcfFile.name,
+              csv_filenames: customCsvFiles.map(f => f.name),
+              stat_vars_mcf_filename: customStatVarsMcfFile ? customStatVarsMcfFile.name : '',
+              stat_vars_schema_mcf_filename: customStatVarsSchemaMcfFile ? customStatVarsSchemaMcfFile.name : '',
+              csv_total_bytes: customCsvFiles.reduce((s, f) => s + f.size, 0),
+              llm_review: true,
+              rules: rulesParam,
+              skip_rules: '',
+              baseline_name: lastRunCustomDatasetName ? 'custom_' + lastRunCustomDatasetName : '',
+              import_resolution_mode: 'LOCAL',
+              existence_checks: existenceChecks,
+            }, runAbortController.signal);
 
           } else {
-            // ── Direct multipart upload (local / small-file path) ─────────────────
+            // ── Direct multipart upload (local / small-file path, no GCS) ─────────
+            // This path is used for local development without GCS configured.
+            // It retains the original streaming behaviour.
             const formData = new FormData();
             formData.append('tmcf', customTmcfFile);
             for (const csvFile of customCsvFiles) {
@@ -3371,39 +3493,50 @@
               body: formData,
               signal: runAbortController.signal,
             });
+            if (!r.ok) {
+              const errJson = await r.json().catch(() => ({}));
+              throw new Error(errJson.detail || `Server error (${r.status})`);
+            }
+            if (!r.body) throw new Error('Streaming not supported');
+            data = await consumeStream(r.body, (msg) => {
+              if (msg.t === 'step') {
+                const s = msg.step ?? -1;
+                if (msg.label != null && msg.label !== '') {
+                  stepLabels[s] = msg.label;
+                  const pill = document.getElementById('progress-pill-' + s);
+                  if (pill) pill.textContent = s + '. ' + stepLabels[s];
+                }
+                if (typeof msg.step === 'number') updateProgressStep(msg.step);
+              } else if (msg.t === 'line') {
+                const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
+                let next = msg.v ?? '';
+                if (prev && next && !prev.endsWith('\n') && !next.startsWith('\n')) {
+                  next = '\n' + next;
+                }
+                setOutputContent(prev ? prev + next : next, false);
+              }
+            });
           }
         } else {
-          let url = `${API}/api/run/${runDataset}?stream=true`;
-          if (rulesParam) url += `&rules=${encodeURIComponent(rulesParam)}`;
-          url += '&llm_review=1';
-          url += `&llm_model=${encodeURIComponent(llmModel)}`;
+          // Built-in dataset: submit to Cloud Batch and poll GCS status.json.
+          const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
-          url += `&existence_checks=${existenceChecks}`;
-          r = await fetch(url, { method: 'POST', signal: runAbortController.signal });
+          setOutputContent('Submitting validation job to Cloud Batch...\n', false);
+          data = await _submitAndPollBatchJob(batchRunId, runDataset, {
+            session_id: '',
+            tmcf_filename: '',
+            csv_filenames: [],
+            stat_vars_mcf_filename: '',
+            stat_vars_schema_mcf_filename: '',
+            csv_total_bytes: 0,
+            llm_review: true,
+            rules: rulesParam,
+            skip_rules: '',
+            baseline_name: '',
+            import_resolution_mode: 'LOCAL',
+            existence_checks: existenceChecks,
+          }, runAbortController.signal);
         }
-        if (!r.ok) {
-          const errJson = await r.json().catch(() => ({}));
-          throw new Error(errJson.detail || `Server error (${r.status})`);
-        }
-        if (!r.body) throw new Error('Streaming not supported');
-        data = await consumeStream(r.body, (msg) => {
-          if (msg.t === 'step') {
-            const s = msg.step ?? -1;
-            if (msg.label != null && msg.label !== '') {
-              stepLabels[s] = msg.label;
-              const pill = document.getElementById('progress-pill-' + s);
-              if (pill) pill.textContent = s + '. ' + stepLabels[s];
-            }
-            if (typeof msg.step === 'number') updateProgressStep(msg.step);
-          } else if (msg.t === 'line') {
-            const prev = output.innerText.replace(/Run validation to see output\.\.\.|^Running validation\.\.\.\n?/, '') || '';
-            let next = msg.v ?? '';
-            if (prev && next && !prev.endsWith('\n') && !next.startsWith('\n')) {
-              next = '\n' + next;
-            }
-            setOutputContent(prev ? prev + next : next, false);
-          }
-        });
         setOutputContent(data.output || '(no output)', false);
         if (!data.cancelled) {
           progressHideDeferred = true;
