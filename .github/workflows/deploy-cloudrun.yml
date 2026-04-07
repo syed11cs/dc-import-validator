@@ -67,4 +67,5 @@ jobs:
             --image "$IMAGE" \
             --region "$REGION" \
             --platform managed \
+            --update-env-vars "BATCH_IMAGE_URI=${IMAGE}" \
             --quiet

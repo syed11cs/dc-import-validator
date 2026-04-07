@@ -7,11 +7,18 @@ compute runs on Batch VMs.
 Environment variables (all required at submit time):
     BATCH_PROJECT_ID          GCP project ID
     BATCH_REGION              Region for Batch jobs (e.g. us-central1)
-    BATCH_IMAGE_URI           Docker image URI (same image as Cloud Run)
     BATCH_SERVICE_ACCOUNT     Service account email for the Batch VM
     GCS_REPORTS_BUCKET        GCS bucket for status.json and reports
 
-Optional environment variables passed through to the Batch job container:
+The container image for Batch jobs is read from BATCH_IMAGE_URI, which the
+CI/CD deploy workflow sets automatically via --update-env-vars on every
+deployment. This keeps Batch jobs in sync with Cloud Run without any manual
+configuration step.
+
+Optional environment variables:
+    BATCH_IMAGE_URI           Container image URI. Set automatically by the
+                              deploy workflow; must be set manually for local
+                              development.
     GEMINI_API_KEY / GOOGLE_API_KEY / DC_API_KEY
     IMPORT_RESOLUTION_MODE / IMPORT_EXISTENCE_CHECKS
     JAVA_THREADS
@@ -169,6 +176,22 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles) -> dict:
     return env
 
 
+def _resolve_image() -> str:
+    """Return the container image URI to use for Batch jobs.
+
+    BATCH_IMAGE_URI is set automatically by the CI/CD deploy workflow on every
+    deployment (via --update-env-vars), so it always matches the image that is
+    running in Cloud Run. For local development, set it manually.
+    """
+    image = os.environ.get("BATCH_IMAGE_URI", "")
+    if not image:
+        raise RuntimeError(
+            "BATCH_IMAGE_URI is not set. In production it is injected automatically "
+            "by the deploy workflow. For local development, set it manually."
+        )
+    return image
+
+
 def submit_job(run_id: str, dataset: str, input_files: InputFiles) -> str:
     """Submit a Cloud Batch job for a validation run.
 
@@ -182,7 +205,7 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles) -> str:
     """
     project = os.environ["BATCH_PROJECT_ID"]
     region  = os.environ["BATCH_REGION"]
-    image   = os.environ["BATCH_IMAGE_URI"]
+    image   = _resolve_image()
     sa      = os.environ["BATCH_SERVICE_ACCOUNT"]
 
     provisioning_model_name = os.environ.get("BATCH_PROVISIONING_MODEL", "SPOT").upper()
