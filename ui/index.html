@@ -1657,8 +1657,6 @@
     let gcsUploadsConfigured = false;
 
     const PRESET_QUICK = ['check_min_value', 'check_num_observations'];
-    let lastLogText = '';
-    let lastRunCompletedAt = null;
     const STORAGE_KEY_PRESETS = 'import_validation_presets';
     const LAST_OUTCOME_KEY = 'import_validation_last_outcome_';
     const LAST_DATASET_KEY = 'import_validation_last_dataset';
@@ -2201,7 +2199,7 @@
         const outcome = document.createElement('div');
         outcome.className = 'summary-card-outcome';
         outcome.style.color = 'var(--text-muted)';
-        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : null;
         const left = document.createElement('span');
         left.textContent = 'Validation cancelled';
         outcome.appendChild(left);
@@ -2221,7 +2219,7 @@
       const warnCount = opts.warnCount ?? 0;
       const pipelineFailedBeforeValidation = opts.pipelineFailedBeforeValidation === true;
       const showDetailsToggle = runCount > 0 || pipelineFailedBeforeValidation;
-      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : lastRunCompletedAt;
+      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : null;
 
       const outcome = document.createElement('div');
       outcome.className = 'summary-card-outcome';
@@ -3215,6 +3213,9 @@
       // If the job stays in "starting" beyond this deadline we give up.
       const _STARTING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
       const _startingDeadlineMs = Date.now() + _STARTING_TIMEOUT_MS;
+      // Consecutive poll failures before we give up (covers 404s, 500s, network errors).
+      const MAX_POLL_ERRORS = 10;
+      let _pollErrorCount = 0;
 
       while (true) {
         // ── Check abort before sleeping ──────────────────────────────
@@ -3235,13 +3236,42 @@
           throw new DOMException('Run cancelled', 'AbortError');
         }
 
-        // ── Fetch GCS status.json (retry silently on transient error) ─
+        // ── Fetch GCS status.json; count consecutive errors ───────────
         let status;
         try {
           const statusResp = await fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/status');
-          if (!statusResp.ok) continue;
+          if (!statusResp.ok) {
+            if (++_pollErrorCount >= MAX_POLL_ERRORS) {
+              _activeStepStartMs = null;
+              return {
+                success: false, cancelled: false, run_id: confirmedRunId,
+                output: 'Lost connection to the validation service.',
+                failure_code: 'POLL_ERROR',
+                failure_step: null,
+                failure_message: 'Lost connection to the validation service.',
+                failure_details: null,
+                baseline_id: null,
+              };
+            }
+            continue;
+          }
           status = await statusResp.json();
-        } catch (_) { continue; }
+          _pollErrorCount = 0; // reset on successful response
+        } catch (_) {
+          if (++_pollErrorCount >= MAX_POLL_ERRORS) {
+            _activeStepStartMs = null;
+            return {
+              success: false, cancelled: false, run_id: confirmedRunId,
+              output: 'Lost connection to the validation service.',
+              failure_code: 'POLL_ERROR',
+              failure_step: null,
+              failure_message: 'Lost connection to the validation service.',
+              failure_details: null,
+              baseline_id: null,
+            };
+          }
+          continue;
+        }
 
         // ── Update progress pills and log panel ──────────────────────
         const stepNum = parseFloat(status.step ?? '0');
@@ -3249,9 +3279,10 @@
         if (status.status === 'starting') {
           // Job is booting — show activity label but do not advance pills.
           _setActiveStep(status.step_label || 'Preparing validation environment\u2026');
-          // Safety timeout: fail if still starting after 5 minutes.
+          // Safety timeout: cancel the job and fail if still starting after 5 minutes.
           if (Date.now() > _startingDeadlineMs) {
             _activeStepStartMs = null;
+            fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
             return {
               success: false, cancelled: false, run_id: confirmedRunId,
               output: 'Validation environment did not start within the expected time.',
@@ -3304,7 +3335,6 @@
       if (!currentDataset) return;
       const runDataset = currentDataset;
       const btn = document.getElementById('run-btn');
-      const output = document.getElementById('output');
       runAbortController = new AbortController();
       progressHideDeferred = false;
       if (cancelFeedbackTimerId) {
@@ -3564,13 +3594,13 @@
           }
         }
         showStatusBanner(data);
-        lastRunCompletedAt = new Date();
+        const runCompletedAt = new Date();
         const completedEl = document.getElementById('log-completed-at');
-        completedEl.textContent = 'Completed at ' + formatRunTimestamp(lastRunCompletedAt);
+        completedEl.textContent = 'Completed at ' + formatRunTimestamp(runCompletedAt);
         completedEl.style.display = 'block';
         await loadLLMReportSection(runDataset);
         if (!data.cancelled) {
-          lastRunDurationSec = runStartTime != null ? (lastRunCompletedAt - runStartTime) / 1000 : null;
+          lastRunDurationSec = runStartTime != null ? (runCompletedAt - runStartTime) / 1000 : null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           const failureInfo = getFailureInfo(data);
           // Use data.failure_step for pipeline classification so step 0 (e.g. row count) always gets summary
@@ -3659,12 +3689,11 @@
               run_id: data.run_id || undefined,
               aiReviewUsed: true,
               geminiSkippedNoKey,
-              completedAt: lastRunCompletedAt,
+              completedAt: runCompletedAt,
             };
           }
         } else if (data.cancelled) {
-          if (!lastRunCompletedAt) lastRunCompletedAt = new Date();
-          setSummaryCard({ cancelled: true, completedAt: lastRunCompletedAt, dataset: runDataset });
+          setSummaryCard({ cancelled: true, completedAt: runCompletedAt, dataset: runDataset });
         }
         const _restoreNotice = document.getElementById('custom-restore-notice');
         if (_restoreNotice) _restoreNotice.style.display = 'none';
@@ -3745,7 +3774,7 @@
             run_id: data.run_id || undefined,
             aiReviewUsed: true,
             geminiSkippedNoKey,
-            completedAt: lastRunCompletedAt,
+            completedAt: runCompletedAt,
           };
           setSummaryCard(summaryDataToShow);
           await Promise.all([reportPromise, validationPromise]);
@@ -3820,7 +3849,7 @@
           }
           setOutputContent('Validation cancelled.', false);
           showStatusBanner({ cancelled: true });
-          var cancelSummaryData = { cancelled: true, dataset: runDataset, completedAt: lastRunCompletedAt || new Date() };
+          var cancelSummaryData = { cancelled: true, dataset: runDataset, completedAt: new Date() };
           const cancelMsg = document.getElementById('progress-cancel-msg');
           if (cancelMsg) cancelMsg.textContent = 'Cancelled';
           progressHideDeferred = true;
@@ -3855,10 +3884,10 @@
           console.error('Validation error:', e);
           showStatusBanner({ success: false, cancelled: false });
         }
-        lastRunCompletedAt = new Date();
+        const catchCompletedAt = new Date();
         const completedEl = document.getElementById('log-completed-at');
         const timeLabel = e.name === 'AbortError' ? 'Cancelled at ' : 'Failed at ';
-        completedEl.textContent = timeLabel + formatRunTimestamp(lastRunCompletedAt);
+        completedEl.textContent = timeLabel + formatRunTimestamp(catchCompletedAt);
         completedEl.style.display = 'block';
       } finally {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
@@ -5474,13 +5503,10 @@
           output.textContent = text || '';
         }
         output.classList.add('empty');
-        lastLogText = '';
-        lastRunCompletedAt = null;
         document.getElementById('log-completed-at').style.display = 'none';
       } else {
         output.textContent = text || '';
         output.classList.remove('empty');
-        lastLogText = text;
       }
     }
 

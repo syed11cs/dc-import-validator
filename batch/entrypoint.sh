@@ -179,7 +179,8 @@ fi
 # already have their source files inside the container at sample_data/; no download needed.
 
 if [[ "$DATASET" == "custom" ]]; then
-    log "Downloading inputs from gs://${GCS_REPORTS_BUCKET}/inputs/${RUN_ID}/"
+    ACTUAL_PREFIX="${GCS_INPUT_PREFIX:-inputs/${RUN_ID}}"
+    log "Downloading inputs from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
 
     WORKSPACE="$WORKSPACE" python3 -c "
 import os, sys
@@ -221,7 +222,7 @@ print(f'[download] Complete: {len(blobs)} file(s) downloaded', flush=True)
         log "ERROR: Input download failed"
         write_status "0" "Starting" "failed" \
             "DOWNLOAD_FAILED" \
-            "Failed to download input files from gs://${GCS_REPORTS_BUCKET}/inputs/${RUN_ID}/"
+            "Failed to download input files from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
         exit 1
     fi
 fi

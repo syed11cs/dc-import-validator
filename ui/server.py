@@ -1510,7 +1510,7 @@ async def submit_batch_job(body: _SubmitJobRequest):
             raise HTTPException(status_code=400, detail="csv_filenames is required for custom dataset")
 
     input_files = _InputFiles(
-        gcs_prefix=body.session_id,
+        gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
         tmcf_filename=body.tmcf_filename,
         csv_filenames=body.csv_filenames,
         stat_vars_mcf_filename=body.stat_vars_mcf_filename or None,
@@ -1622,11 +1622,10 @@ async def get_batch_job_report(run_id: str):
 async def cancel_batch_job(run_id: str):
     """Cancel a running Batch job.
 
-    Reads the job_name from the run's status.json then calls the Batch delete
-    API. Cancellation is best-effort — if the job has already finished, the
-    call is a no-op.
-
-    Returns 404 when no status exists for the run_id.
+    Reads the job_name from the run's status.json when available; falls back to
+    compute_job_name(run_id) so cancellation works during VM provisioning before
+    status.json has been written. Cancellation is best-effort — if the job has
+    already finished, the call is a no-op.
     """
     try:
         status = await asyncio.to_thread(_get_job_status, run_id)
@@ -1635,19 +1634,28 @@ async def cancel_batch_job(run_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
 
     if status is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job_name = status.get("batch_job_name", "")
-    if not job_name:
-        raise HTTPException(
-            status_code=409,
-            detail="batch_job_name not recorded in status — cannot cancel",
-        )
-
-    current_status = status.get("status", "")
-    if current_status in ("succeeded", "failed"):
-        logger.info("cancel_batch_job: job already terminal run_id=%s status=%s", run_id, current_status)
-        return {"ok": True, "run_id": run_id, "message": f"Job already {current_status}"}
+        # status.json not yet written (job still provisioning) — derive job_name
+        # deterministically from env vars so we can still cancel.
+        try:
+            job_name = await asyncio.to_thread(_batch_runner.compute_job_name, run_id)
+            logger.info(
+                "cancel_batch_job: no status.json yet; derived job_name=%s run_id=%s",
+                job_name, run_id,
+            )
+        except Exception as exc:
+            logger.warning("cancel_batch_job: cannot derive job_name run_id=%s: %s", run_id, exc)
+            raise HTTPException(status_code=404, detail="Job not found")
+    else:
+        job_name = status.get("batch_job_name", "")
+        if not job_name:
+            raise HTTPException(
+                status_code=409,
+                detail="batch_job_name not recorded in status — cannot cancel",
+            )
+        current_status = status.get("status", "")
+        if current_status in ("succeeded", "failed"):
+            logger.info("cancel_batch_job: job already terminal run_id=%s status=%s", run_id, current_status)
+            return {"ok": True, "run_id": run_id, "message": f"Job already {current_status}"}
 
     try:
         await asyncio.to_thread(_batch_runner.cancel_job, job_name)
