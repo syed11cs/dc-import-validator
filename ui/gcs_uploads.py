@@ -45,7 +45,7 @@ _MANIFEST_FILE = "_manifest.json"
 _SIGNED_URL_EXPIRY_MINUTES = 60
 
 # Maximum total size (in bytes) across all files in a single upload session.
-MAX_SESSION_SIZE = 50 * 1024 * 1024 * 1024  # 50 GB
+MAX_SESSION_SIZE = 100 * 1024 * 1024 * 1024  # 100 GB
 
 # Valid roles for files in an upload session.
 _VALID_ROLES = frozenset({"tmcf", "csv", "stat_vars_mcf", "stat_vars_schema_mcf"})

@@ -61,7 +61,7 @@ from ui.services.batch_runner import InputFiles as _InputFiles
 from ui.services.job_status import get_job_status as _get_job_status
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
-MAX_UPLOAD_MB = 50 * 1024  # 50 GB per file
+MAX_UPLOAD_BYTES = 100 * 1024**3  # 100 GB per file
 SCRIPT_DIR = APP_ROOT
 OUTPUT_DIR = APP_ROOT / "output"
 CONFIG_DIR = APP_ROOT / "validation_configs"
@@ -379,6 +379,14 @@ async def _delete_gcs_session_bg(session_id: str) -> None:
         logger.warning("gcs_session_delete_failed session_id=%s", session_id)
 
 
+async def _safe_delete_session(session_id: str) -> None:
+    """Outer safety wrapper around _delete_gcs_session_bg for asyncio.create_task."""
+    try:
+        await _delete_gcs_session_bg(session_id)
+    except Exception:
+        logger.warning("background session delete failed session_id=%s", session_id)
+
+
 async def _run_custom_validation_impl(
     request: Request,
     tmcf: UploadFile | None,
@@ -417,8 +425,8 @@ async def _run_custom_validation_impl(
     stat_vars_mcf_path = run_upload_dir / "input_stat_vars.mcf"
     stat_vars_schema_mcf_path = run_upload_dir / "input_stat_vars_schema.mcf"
 
-    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
-    _size_display = f"{MAX_UPLOAD_MB // 1024} GB" if MAX_UPLOAD_MB >= 1024 else f"{MAX_UPLOAD_MB} MB"
+    max_bytes = MAX_UPLOAD_BYTES
+    _size_display = "100 GB"
 
     try:
         if session_id:
@@ -444,7 +452,7 @@ async def _run_custom_validation_impl(
 
             # Kick off background GCS session cleanup (non-blocking, best-effort).
             # The files have been copied to local disk so the session is no longer needed.
-            asyncio.create_task(_delete_gcs_session_bg(session_id))
+            asyncio.create_task(_safe_delete_session(session_id))
 
         else:
             # ── Direct upload path: stream UploadFile objects to disk ────────────────

@@ -39,7 +39,7 @@
 #   ./run_e2e_test.sh child_birth --rules=check_min_value,check_unit_consistency
 #
 
-set -eo pipefail
+set -euo pipefail
 
 # --- Paths (relative to script location) ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
