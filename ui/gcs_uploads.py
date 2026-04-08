@@ -42,7 +42,7 @@ _log = logging.getLogger(__name__)
 
 _SESSION_PREFIX = "sessions"
 _MANIFEST_FILE = "_manifest.json"
-_SIGNED_URL_EXPIRY_MINUTES = 60
+_SIGNED_URL_EXPIRY_MINUTES = 360  # 6 hours — accommodates large uploads (up to 100 GB)
 
 # Maximum total size (in bytes) across all files in a single upload session.
 MAX_SESSION_SIZE = 100 * 1024 * 1024 * 1024  # 100 GB

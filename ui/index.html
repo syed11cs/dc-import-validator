@@ -3459,33 +3459,55 @@
               ...(customStatVarsSchemaMcfFile ? [[customStatVarsSchemaMcfFile.name, customStatVarsSchemaMcfFile]] : []),
             ]);
             _setActiveStep('Uploading dataset files\u2026');
+            // Retry up to 3 attempts per file with exponential backoff (2s, 4s, 8s).
+            // Only network errors and 5xx responses are retried; 4xx (e.g. 403 expired URL) are not.
+            const _MAX_UPLOAD_ATTEMPTS = 3;
             for (let i = 0; i < upload_urls.length; i++) {
               const { filename, url, content_type } = upload_urls[i];
               const file = fileByName.get(filename);
               if (!file) throw new Error(`File not found for upload: ${filename}`);
               _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename}`);
-              await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('PUT', url, true);
-                xhr.setRequestHeader('Content-Type', content_type || 'application/octet-stream');
-                xhr.upload.onprogress = (e) => {
-                  if (e.lengthComputable && e.total > 0) {
-                    const pct = Math.round((e.loaded / e.total) * 100);
-                    const loaded = (e.loaded / 1048576).toFixed(1);
-                    const total = (e.total / 1048576).toFixed(1);
-                    _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename} \u2014 ${pct}% (${loaded}\u202fMB\u202f/\u202f${total}\u202fMB)`);
-                  }
-                };
-                xhr.onload = () => {
-                  if (xhr.status >= 200 && xhr.status < 300) resolve();
-                  else reject(new Error(`GCS upload failed for ${filename}: HTTP ${xhr.status}`));
-                };
-                xhr.onerror = () => reject(new Error(`GCS upload network error for ${filename}`));
-                xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
-                // Honour the run abort controller so Stop run cancels in-flight XHR uploads.
-                runAbortController.signal.addEventListener('abort', () => xhr.abort(), { once: true });
-                xhr.send(file);
-              });
+              for (let attempt = 1; attempt <= _MAX_UPLOAD_ATTEMPTS; attempt++) {
+                let uploadErr = null;
+                await new Promise((resolve, reject) => {
+                  const xhr = new XMLHttpRequest();
+                  xhr.open('PUT', url, true);
+                  xhr.setRequestHeader('Content-Type', content_type || 'application/octet-stream');
+                  xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable && e.total > 0) {
+                      const pct = Math.round((e.loaded / e.total) * 100);
+                      const loaded = (e.loaded / 1048576).toFixed(1);
+                      const total = (e.total / 1048576).toFixed(1);
+                      _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename} \u2014 ${pct}% (${loaded}\u202fMB\u202f/\u202f${total}\u202fMB)`);
+                    }
+                  };
+                  xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) { resolve(); return; }
+                    const err = new Error(`GCS upload failed for ${filename}: HTTP ${xhr.status}`);
+                    err._httpStatus = xhr.status;
+                    reject(err);
+                  };
+                  xhr.onerror = () => reject(new Error(`GCS upload network error for ${filename}`));
+                  xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+                  // Honour the run abort controller so Stop run cancels in-flight XHR uploads.
+                  runAbortController.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+                  xhr.send(file);
+                }).catch(err => { uploadErr = err; });
+                if (!uploadErr) break; // success
+                const isAbort = uploadErr instanceof DOMException && uploadErr.name === 'AbortError';
+                const httpStatus = uploadErr._httpStatus;
+                const isRetryable = !isAbort && (!httpStatus || httpStatus >= 500);
+                if (isAbort || !isRetryable || attempt === _MAX_UPLOAD_ATTEMPTS) throw uploadErr;
+                const backoffMs = 2000 * Math.pow(2, attempt - 1); // 2s, 4s, 8s
+                _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename} \u2014 retrying in ${backoffMs / 1000}s\u2026 (attempt ${attempt + 1}/${_MAX_UPLOAD_ATTEMPTS})`);
+                // Abort-aware sleep: wakes immediately if the user clicks Stop.
+                await new Promise(r => {
+                  const tid = setTimeout(r, backoffMs);
+                  runAbortController.signal.addEventListener('abort', () => { clearTimeout(tid); r(); }, { once: true });
+                });
+                if (runAbortController.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+                _setActiveStep(`Uploading ${i + 1}\u202f/\u202f${upload_urls.length}: ${filename}`);
+              }
             }
 
             // Phase 3: submit batch job and poll GCS status.json for progress.
