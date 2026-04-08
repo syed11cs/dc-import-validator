@@ -287,6 +287,12 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# Resolve PYTHON once: honour env override, then prefer .venv, then system python3.
+# Must be set before any use of $PYTHON so that set -u does not abort the script.
+if [[ -z "${PYTHON:-}" ]]; then
+  [[ -f "$VENV_PYTHON" ]] && PYTHON="$VENV_PYTHON" || PYTHON="python3"
+fi
+
 # =============================================================================
 # Step 0: Dataset-specific paths (child_birth testdata in repo; rule-test variants in sample_data/)
 # =============================================================================
@@ -395,15 +401,6 @@ if [[ -n "${RUN_ID:-}" ]]; then
   log_info "Using per-run output: $GENMCF_OUTPUT"
 fi
 
-# --- Resolve PYTHON for filter script ---
-if [[ -z "$PYTHON" ]]; then
-  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
-    PYTHON="$SCRIPT_DIR/.venv/bin/python"
-  else
-    PYTHON="python3"
-  fi
-fi
-
 # --- Apply --rules or --skip-rules filter (creates temp config) ---
 if [[ -n "$RULES_FILTER" || -n "$SKIP_RULES_FILTER" ]]; then
   if [[ -n "$RULES_FILTER" && -n "$SKIP_RULES_FILTER" ]]; then
@@ -429,13 +426,6 @@ fi
 # =============================================================================
 # Step 0: Pre-Import Checks (preflight + CSV quality + row count)
 # =============================================================================
-if [[ -z "$PYTHON" ]]; then
-  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
-    PYTHON="$SCRIPT_DIR/.venv/bin/python"
-  else
-    PYTHON="python3"
-  fi
-fi
 echo "::STEP::0:Pre-Import Checks"
 log_info "Pre-Import Checks (files + CSV quality + row count)..."
 mkdir -p "$DATASET_OUTPUT"
@@ -654,15 +644,6 @@ log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CON
 # Validation output goes inside dataset folder for consistency
 mkdir -p "$DATASET_OUTPUT"
 VALIDATION_OUTPUT="$DATASET_OUTPUT/validation_output.json"
-
-# Use project venv by default (self-contained), else PYTHON env var, else python3
-if [[ -z "$PYTHON" ]]; then
-  if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
-    PYTHON="$SCRIPT_DIR/.venv/bin/python"
-  else
-    PYTHON="python3"
-  fi
-fi
 
 # Build validation args - stats_summary, lint_report, differ_output may be optional per config
 VALIDATION_ARGS=(
