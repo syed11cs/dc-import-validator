@@ -3178,33 +3178,46 @@
      * existing cancel UI path in runValidation's catch block.
      */
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
-      // Submit
-      const submitResp = await fetch(API + '/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          run_id: runId,
-          dataset,
-          session_id: opts.session_id || '',
-          tmcf_filename: opts.tmcf_filename || '',
-          csv_filenames: opts.csv_filenames || [],
-          stat_vars_mcf_filename: opts.stat_vars_mcf_filename || '',
-          stat_vars_schema_mcf_filename: opts.stat_vars_schema_mcf_filename || '',
-          csv_total_bytes: opts.csv_total_bytes || 0,
-          llm_review: !!opts.llm_review,
-          rules: opts.rules || '',
-          skip_rules: opts.skip_rules || '',
-          baseline_name: opts.baseline_name || '',
-          import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
-          existence_checks: opts.existence_checks || 'false',
-        }),
-        signal,
-      });
-      if (!submitResp.ok) {
-        const err = await submitResp.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to submit job (' + submitResp.status + ')');
+      // Submit. Wrapped in try/catch so an abort that fires mid-submission still
+      // cancels the server job: runId is generated locally and sent to the server
+      // unchanged, so the cancel endpoint can find it via compute_job_name() even
+      // before status.json has been written.
+      let confirmedRunId;
+      try {
+        const submitResp = await fetch(API + '/api/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            run_id: runId,
+            dataset,
+            session_id: opts.session_id || '',
+            tmcf_filename: opts.tmcf_filename || '',
+            csv_filenames: opts.csv_filenames || [],
+            stat_vars_mcf_filename: opts.stat_vars_mcf_filename || '',
+            stat_vars_schema_mcf_filename: opts.stat_vars_schema_mcf_filename || '',
+            csv_total_bytes: opts.csv_total_bytes || 0,
+            llm_review: !!opts.llm_review,
+            rules: opts.rules || '',
+            skip_rules: opts.skip_rules || '',
+            baseline_name: opts.baseline_name || '',
+            import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
+            existence_checks: opts.existence_checks || 'false',
+          }),
+          signal,
+        });
+        if (!submitResp.ok) {
+          const err = await submitResp.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to submit job (' + submitResp.status + ')');
+        }
+        ({ run_id: confirmedRunId } = await submitResp.json());
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          // Best-effort cancel: the job may have been created on the server before
+          // the abort landed. The cancel endpoint handles "not found" gracefully.
+          fetch(API + '/api/jobs/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' }).catch(() => {});
+        }
+        throw e;
       }
-      const { run_id: confirmedRunId } = await submitResp.json();
 
       _setActiveStep('Preparing validation environment\u2026');
 
@@ -3939,6 +3952,10 @@
           btn.title = '';
           btn.classList.remove('btn-stop');
           updateRunButtonState();
+        } else {
+          // Cancel animation still showing for ~1500ms. Disable the button so the
+          // user cannot start a new run before hideProgressAfterCancel() re-enables it.
+          btn.disabled = true;
         }
         if (pendingHomeReset) {
           pendingHomeReset = false;
