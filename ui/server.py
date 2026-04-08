@@ -1341,9 +1341,13 @@ async def accept_baseline(dataset: str, body: dict = Body(default={})):
         except Exception:
             pass  # Non-fatal: if the check fails, allow the update to proceed
 
-    # Locate MCF files: per-run dir first (if run_id set and dir not yet cleaned up),
-    # then the canonical output dir (which always receives MCF copies after each run).
+    # Locate MCF files.  Search order:
+    #   1. Per-run local dir (local runs, or Batch if KEEP_RUN_DIR=1).
+    #   2. Canonical local output dir (local runs after cleanup).
+    #   3. GCS (Batch runs: MCF files are uploaded there; VM is gone by accept time).
     genmcf_dir: Path | None = None
+    _mcf_tmp_dir: str | None = None  # temp dir created for GCS fallback; cleaned up below
+
     if run_id:
         candidate = OUTPUT_DIR / dataset / run_id
         if candidate.is_dir() and list(candidate.glob("*.mcf")):
@@ -1352,7 +1356,23 @@ async def accept_baseline(dataset: str, body: dict = Body(default={})):
         canonical = DATASET_OUTPUT_MAP[dataset]
         if canonical.is_dir() and list(canonical.glob("*.mcf")):
             genmcf_dir = canonical
+    if genmcf_dir is None and run_id and is_gcs_configured():
+        # Batch path: MCF files were uploaded to GCS by upload_reports_to_gcs()
+        # but the Batch VM's local filesystem is gone.  Download to a temp dir.
+        tmp = tempfile.mkdtemp(prefix="baseline_mcf_")
+        _mcf_tmp_dir = tmp
+        try:
+            count = gcs_reports.download_mcf_files_from_gcs(run_id, dataset, Path(tmp))
+        except GCSAccessError as exc:
+            logger.warning("accept_baseline gcs_unavailable run_id=%s: %s", run_id, exc)
+            count = 0
+        if count > 0:
+            logger.info("accept_baseline gcs_mcf_download run_id=%s files=%d", run_id, count)
+            genmcf_dir = Path(tmp)
+
     if genmcf_dir is None:
+        if _mcf_tmp_dir:
+            shutil.rmtree(_mcf_tmp_dir, ignore_errors=True)
         raise HTTPException(
             status_code=404,
             detail=(
@@ -1391,6 +1411,9 @@ async def accept_baseline(dataset: str, body: dict = Body(default={})):
     except Exception as e:
         logger.exception("accept_baseline error dataset=%s baseline_id=%s", dataset, baseline_id)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if _mcf_tmp_dir:
+            shutil.rmtree(_mcf_tmp_dir, ignore_errors=True)
 
     # Extract version from subprocess stdout first (fast path — no storage round-trip).
     # run_differ.py emits {"baseline_version": "vN"} on success.

@@ -131,7 +131,48 @@ def upload_reports_to_gcs(
         blob.upload_from_filename(str(path), content_type=content_type)
         uploaded += 1
 
+    # MCF output (required for baseline creation via /api/accept-baseline).
+    # Batch VMs write MCF files to the per-run output dir but the Cloud Run
+    # instance serving accept-baseline never has local access to them, so they
+    # must be in GCS for the baseline workflow to work.
+    for mcf_path in sorted(output_dir.glob("*.mcf")):
+        blob = bucket.blob(f"{prefix}/{mcf_path.name}")
+        blob.upload_from_filename(str(mcf_path), content_type="text/plain")
+        uploaded += 1
+
     return uploaded > 0
+
+
+def download_mcf_files_from_gcs(run_id: str, dataset: str, dest_dir: Path) -> int:
+    """Download all *.mcf files for a run from GCS into dest_dir.
+
+    Used by /api/accept-baseline when the Batch VM has already shut down and
+    MCF files are no longer on the local filesystem.
+
+    Returns the number of MCF files downloaded (0 when none found or GCS not
+    configured).  Raises GCSAccessError if GCS is configured but inaccessible.
+    """
+    bucket_name = _get_bucket()
+    if not bucket_name or not run_id or not dataset:
+        return 0
+    _, bucket = _get_client_and_bucket()
+    if not bucket:
+        return 0
+
+    prefix = f"reports/{run_id}/{dataset}/"
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for blob in bucket.list_blobs(prefix=prefix):
+        # Strip the prefix to get the bare filename; skip subdirectory entries.
+        name = blob.name[len(prefix):]
+        if not name or "/" in name or not name.endswith(".mcf"):
+            continue
+        blob.download_to_filename(str(dest_dir / name))
+        count += 1
+
+    return count
 
 
 def get_report_from_gcs(run_id: str, dataset: str, filename: str) -> bytes | None:
