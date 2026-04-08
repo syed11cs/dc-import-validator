@@ -68,6 +68,8 @@ CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
 LLM_MODEL="gemini-2.5-flash"
 BASELINE_NAME=""
+# Optional env-var overrides — default to empty so set -u does not abort when unset.
+IMPORT_JAR_PATH="${IMPORT_JAR_PATH:-}"
 
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
