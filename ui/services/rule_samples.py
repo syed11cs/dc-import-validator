@@ -29,16 +29,6 @@ def get_csv_path(output_dir: Path) -> Path | None:
         return None
 
 
-def load_csv_rows(csv_path: Path) -> list[dict] | None:
-    """Load CSV as list of dicts (first row = headers). Returns None on failure."""
-    try:
-        with open(csv_path, encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            return list(reader)
-    except (OSError, csv.Error):
-        return None
-
-
 def _stat_var_matches(csv_val: str, stat_var: str) -> bool:
     """Match CSV variableMeasured/StatVar to validation stat_var (e.g. dcid:Count_X vs Count_X)."""
     if not stat_var or csv_val is None:
@@ -103,12 +93,14 @@ def _load_summary_statvar_units(output_dir: Path) -> list[tuple[str, str]]:
 
 
 def enrich_rule_failure_samples(samples: list[dict], output_dir: Path, results: list) -> None:
-    """Enrich samples with location, date, sourceRow from CSV when possible. Mutates samples in place."""
+    """Enrich samples with location, date, sourceRow from CSV when possible. Mutates samples in place.
+
+    Streams the CSV row-by-row (O(1) memory per row) instead of loading the entire file.
+    A single pass over the file resolves all pending samples; iteration stops as soon as
+    every sample that needs enrichment has been matched or EOF is reached.
+    """
     csv_path = get_csv_path(output_dir)
     if not csv_path:
-        return
-    rows = load_csv_rows(csv_path)
-    if not rows:
         return
     csv_basename = csv_path.name
     stat_var_cols = ["variableMeasured", "StatVar", "stat_var", "Variable"]
@@ -131,30 +123,46 @@ def enrich_rule_failure_samples(samples: list[dict], output_dir: Path, results: 
     if min_value_threshold is None:
         min_value_threshold = 0
 
-    for s in samples:
-        rule = s.get("rule") or ""
-        stat_var = s.get("statVar") or ""
+    # Collect samples that need per-row CSV enrichment, keyed by list index for
+    # direct in-place mutation.  Only two rules use CSV row data; others are skipped.
+    pending: dict[int, dict] = {
+        idx: s
+        for idx, s in enumerate(samples)
+        if (s.get("statVar") or "")
+        and (s.get("rule") or "") in ("check_min_value", "check_scaling_factor_consistency")
+    }
 
-        if rule == "check_min_value" and stat_var:
-            for i, row in enumerate(rows):
+    # Single streaming pass: one row at a time, O(1) memory.
+    # csv_has_rows mirrors the original early-return guard: the unit-consistency
+    # expansion below is skipped when the CSV is absent, empty, or unreadable —
+    # exactly as in the previous list(DictReader) approach.
+    csv_has_rows = False
+    try:
+        with open(csv_path, encoding="utf-8", newline="") as f:
+            for i, row in enumerate(csv.DictReader(f)):
+                csv_has_rows = True
+                if not pending:
+                    break  # all samples resolved — stop reading the file
                 csv_sv = get_val(row, stat_var_cols)
-                if not _stat_var_matches(csv_sv, stat_var):
-                    continue
-                val = _row_val_float(row, value_cols)
-                if val is not None and val < min_value_threshold:
+                for idx in list(pending):
+                    s = pending[idx]
+                    rule = s.get("rule") or ""
+                    stat_var = s.get("statVar") or ""
+                    if not _stat_var_matches(csv_sv, stat_var):
+                        continue
+                    if rule == "check_min_value":
+                        val = _row_val_float(row, value_cols)
+                        if val is None or val >= min_value_threshold:
+                            continue  # value condition not met; keep looking for this sample
                     s["location"] = get_val(row, loc_cols) or None
                     s["date"] = get_val(row, date_cols) or None
                     s["sourceRow"] = f"{csv_basename}:{i + 2}"
-                    break
-        elif rule == "check_scaling_factor_consistency" and stat_var:
-            for i, row in enumerate(rows):
-                csv_sv = get_val(row, stat_var_cols)
-                if not _stat_var_matches(csv_sv, stat_var):
-                    continue
-                s["location"] = get_val(row, loc_cols) or None
-                s["date"] = get_val(row, date_cols) or None
-                s["sourceRow"] = f"{csv_basename}:{i + 2}"
-                break
+                    del pending[idx]
+    except (OSError, csv.Error):
+        return  # mirrors original: load failure → skip enrichment + expansion
+
+    if not csv_has_rows:
+        return  # mirrors original: empty CSV → skip enrichment + expansion
 
     # Expand check_unit_consistency into one sample per StatVar with its unit (when summary_report.csv exists)
     expanded = []
