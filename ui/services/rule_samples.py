@@ -1,8 +1,14 @@
 """Rule failure sample extraction and enrichment from validation_output.json + CSV.
 
-Rules with special enrichment (check_min_value uses validation_params.minimum and
-CSV value columns): if you add/rename rules in config, update enrich_rule_failure_samples
-for consistent sample display.
+Rules with special extraction logic:
+  - check_min_value: uses validation_params.minimum and CSV value columns for enrichment.
+  - check_unit_consistency: expanded per-StatVar from summary_report.csv.
+  - check_structural_lint_error_count: no row-level data.
+
+All other rules — including any SQL_VALIDATOR rule — are handled generically:
+  if details contains failing_rows, one sample is emitted per row with dynamic
+  key-value rendering; otherwise a single summary sample is emitted.
+Adding a new SQL_VALIDATOR rule to new_import_config.json requires no changes here.
 """
 
 import csv
@@ -66,6 +72,22 @@ def _format_unit_display(raw: str) -> str:
     return s
 
 
+def _format_sql_row_value(row: dict) -> str:
+    """Format a SQL failing_row dict as a display string, skipping the StatVar column.
+
+    Single non-StatVar column → 'key: value'.
+    Multiple columns → 'key: value, key: value, ...'.
+    Empty → '—'.
+    """
+    _sv_keys = {"StatVar", "stat_var", "statVar"}
+    parts = []
+    for k, v in row.items():
+        if k in _sv_keys:
+            continue
+        parts.append(f"{k}: {v!s}" if v is not None else f"{k}: —")
+    return ", ".join(parts) if parts else "—"
+
+
 def _load_summary_statvar_units(output_dir: Path) -> list[tuple[str, str]]:
     """Load (StatVar, Units) from summary_report.csv. Returns [] if not found or no Units column."""
     path = output_dir / "summary_report.csv"
@@ -124,12 +146,15 @@ def enrich_rule_failure_samples(samples: list[dict], output_dir: Path, results: 
         min_value_threshold = 0
 
     # Collect samples that need per-row CSV enrichment, keyed by list index for
-    # direct in-place mutation.  Only two rules use CSV row data; others are skipped.
+    # direct in-place mutation.  Any sample with a statVar is eligible; rules that
+    # never produce CSV-matchable rows (unit_consistency, structural_lint) have no
+    # statVar and are naturally excluded by the guard below.
+    _no_csv_rules = {"check_unit_consistency", "check_structural_lint_error_count"}
     pending: dict[int, dict] = {
         idx: s
         for idx, s in enumerate(samples)
         if (s.get("statVar") or "")
-        and (s.get("rule") or "") in ("check_min_value", "check_scaling_factor_consistency")
+        and (s.get("rule") or "") not in _no_csv_rules
     }
 
     # Single streaming pass: one row at a time, O(1) memory.
@@ -235,22 +260,19 @@ def extract_rule_failure_samples(results: list) -> list[dict]:
                 "sourceRow": None,
                 "message": message,
             })
-        elif rule == "check_scaling_factor_consistency":
-            failing_rows = details.get("failing_rows") or []
-            # Use a fixed display message keyed by rule_id; do not depend on DC runner's condition/SQL text.
-            expected = "all StatVars must use the same scaling factor"
-            for row in failing_rows:
-                stat_var = row.get("StatVar") or row.get("stat_var") or ""
-                value = row.get("ScalingFactors") or row.get("scaling_factors")
-                if value is not None and not isinstance(value, str):
-                    value = str(value)
+        elif details.get("failing_rows"):
+            # Generic handler for any rule that returns row-level data (e.g. SQL_VALIDATOR).
+            # One sample per failing row; StatVar extracted if present, remaining columns
+            # rendered as key=value pairs.
+            for row in details["failing_rows"]:
+                stat_var = row.get("StatVar") or row.get("stat_var") or None
                 samples.append({
                     "statVar": stat_var,
                     "location": None,
                     "date": None,
-                    "value": value if value is not None else "—",
+                    "value": _format_sql_row_value(row),
                     "rule": rule,
-                    "expected": expected,
+                    "expected": params.get("condition") or "",
                     "sourceRow": None,
                     "message": message,
                 })

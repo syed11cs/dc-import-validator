@@ -2438,7 +2438,7 @@
           const emptyEl = document.createElement('p');
           emptyEl.className = 'summary-card-details-section';
           emptyEl.style.cssText = 'margin-top:8px;color:var(--text-muted);font-size:0.85rem;';
-          emptyEl.textContent = opts.failure_message ? '' : '✅ All validation rules passed successfully.';
+          emptyEl.textContent = opts.failure_message ? '' : 'No issues found.';
           if (opts.failure_message) {
             const singleList = document.createElement('ul');
             singleList.className = 'warning-details-list';
