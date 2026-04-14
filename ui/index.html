@@ -5622,7 +5622,6 @@
     });
 
     document.getElementById('download-report-json-btn').addEventListener('click', async () => {
-      if (!currentDataset || !lastRunReportId || lastRunDataset !== currentDataset) return;
       const path = `/report/${currentDataset}/${lastRunReportId}/report.json`;
       try {
         const r = await fetch((API || '') + path + '?t=' + Date.now());
