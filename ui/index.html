@@ -690,6 +690,44 @@
     .report-group-heading--failure { color: rgba(244, 63, 94, 0.9); }
     .report-group-heading--warning { color: rgba(245, 158, 11, 0.95); }
     .report-group-heading--advisory { color: var(--advisory); }
+    /* Collapsible section headings (details > summary pattern) */
+    details.report-group > summary.report-group-heading {
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      /* Extend clickable/hover area; compensate bottom so net gap stays 8px */
+      padding: 3px 5px;
+      margin: -3px -5px 5px -5px;
+      border-radius: 4px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    details.report-group > summary.report-group-heading::-webkit-details-marker { display: none; }
+    details.report-group > summary.report-group-heading::marker { content: none; }
+    details.report-group > summary.report-group-heading::after {
+      content: '▸';
+      font-size: 0.75rem;
+      opacity: 0.75;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    details.report-group[open] > summary.report-group-heading::after {
+      transform: rotate(90deg);
+    }
+    details.report-group > summary.report-group-heading:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+    details.report-group > summary.report-group-heading:hover::after { opacity: 0.9; }
+    .report-section-count {
+      font-size: 0.68rem;
+      font-weight: 400;
+      letter-spacing: 0;
+      opacity: 0.8;
+    }
     .report-group-success { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
     .report-group-box {
       padding: 14px 18px;
@@ -1600,6 +1638,7 @@
               <a id="open-report-link" class="btn btn-sm" href="#" target="_blank" rel="noopener">Open Report ↗</a>
               <button id="download-report-btn" class="btn btn-sm" title="Download HTML report">Download Report</button>
               <button id="download-issues-csv-btn" class="btn btn-sm" title="Export validation findings (warnings, advisories, fluctuations) as CSV">Export Findings (CSV)</button>
+              <button id="download-report-json-btn" class="btn btn-sm" style="display:none;" title="Download raw DC import tool output (report.json)">Download report.json</button>
             </div>
           </div>
         </div>
@@ -1609,27 +1648,27 @@
         </div>
         <div id="report-panel" class="panel">
           <div class="review-insights">
-            <div class="report-group">
-              <h4 id="report-heading-validation" class="report-group-heading">Blocking Issues</h4>
+            <details class="report-group">
+              <summary id="report-heading-validation" class="report-group-heading">Blocking Issues</summary>
               <div id="rule-failure-container"></div>
-            </div>
-            <div class="report-group">
-              <h4 id="report-heading-data-import-warnings" class="report-group-heading">Data Import Warnings</h4>
+            </details>
+            <details class="report-group">
+              <summary id="report-heading-data-import-warnings" class="report-group-heading">Data Import Warnings</summary>
               <div id="lint-warnings-container"></div>
-            </div>
-            <div class="report-group" id="differ-group" style="display:none;">
-              <h4 id="report-heading-differ" class="report-group-heading">Dataset Changes</h4>
+            </details>
+            <details class="report-group" id="differ-group" style="display:none;">
+              <summary id="report-heading-differ" class="report-group-heading">Dataset Changes</summary>
               <div id="differ-container"></div>
               <div id="baseline-history-container" style="display:none;" aria-label="Baseline history"></div>
-            </div>
-            <div class="report-group">
-              <h4 id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</h4>
+            </details>
+            <details class="report-group">
+              <summary id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</summary>
               <div id="fluctuation-samples-container"></div>
-            </div>
-            <div class="report-group">
-              <h4 id="report-heading-ai" class="report-group-heading">Schema Review (AI-assisted)</h4>
+            </details>
+            <details class="report-group">
+              <summary id="report-heading-ai" class="report-group-heading">Schema Review (AI-assisted)</summary>
               <div id="llm-report-container"></div>
-            </div>
+            </details>
           </div>
         </div>
       </div>
@@ -3891,17 +3930,12 @@
             hideProgressAfterCancel();
             cancelFeedbackTimerId = null;
           }, 1500);
-          showPreparingReportState();
-          const preparingStart = Date.now();
-          await waitForReportReady(runDataset, null);
-          const elapsed = Date.now() - preparingStart;
-          const minimumDisplayMs = 300;
-          if (elapsed < minimumDisplayMs) {
-            await sleep(minimumDisplayMs - elapsed);
-          }
+          // Cancelled: stay on the Log tab — no report is generated.
+          // Do not await async operations here; they would race with the
+          // 1500ms hideProgressAfterCancel() timer and leave the button
+          // permanently disabled (finally re-sets btn.disabled=true after
+          // the timer has already re-enabled it).
           setSummaryCard(cancelSummaryData);
-          switchToReportTab({ scrollIntoView: true });
-          await loadReport();
           saveLastRunState({
             dataset: runDataset,
             runId: null,
@@ -3973,6 +4007,22 @@
       return '<div class="report-group-box report-group-box--' + variant + '">' + html + '</div>';
     }
 
+    function setReportSectionCount(summaryId, text) {
+      const summary = document.getElementById(summaryId);
+      if (!summary) return;
+      let badge = summary.querySelector('.report-section-count');
+      if (!text) {
+        if (badge) badge.remove();
+        return;
+      }
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'report-section-count';
+        summary.appendChild(badge);
+      }
+      badge.textContent = '\u00b7 ' + text;
+    }
+
     function updateReportHeadingStates() {
       const stateClasses = ['report-group-heading--success', 'report-group-heading--failure', 'report-group-heading--warning', 'report-group-heading--advisory'];
       function setHeadingState(headingId, state) {
@@ -4007,12 +4057,14 @@
       if (data && data.neutral === true) {
         container.style.display = '';
         container.innerHTML = reportBox('muted', '<p class="report-group-success">No validation runs yet. Run validation to generate a report.</p>');
+        setReportSectionCount('report-heading-ai', '');
         updateReportHeadingStates();
         return;
       }
       if (data && data.notRun === true) {
         container.style.display = '';
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Gemini Review was not run</p>');
+        setReportSectionCount('report-heading-ai', 'Skipped');
         updateReportHeadingStates();
         return;
       }
@@ -4022,6 +4074,7 @@
           ? 'Validation was not executed for this run.'
           : 'Run validation to see results.';
         container.innerHTML = reportBox('muted', '<p class="report-group-success">' + placeholderMsg + '</p>');
+        setReportSectionCount('report-heading-ai', '');
         updateReportHeadingStates();
         return;
       }
@@ -4030,10 +4083,13 @@
       const passed = data.passed !== false;
       if (issues.length === 0 || passed && issues.every(i => (i.type || '').match(/^(info|parse_error)$/))) {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No advisory findings</p>');
+        setReportSectionCount('report-heading-ai', 'No findings');
         updateReportHeadingStates();
         return;
       }
       const total = issues.length;
+      const llmCountText = total + ' advisory finding' + (total !== 1 ? 's' : '');
+      const llmBadgeText = total === 1 ? '1 finding' : total + ' findings';
       let html = '';
       if (issues.length > 0) {
         html += '<div class="llm-report-table-wrap"><table class="llm-report-table"><thead><tr><th>File</th><th>Line</th><th>Severity</th><th>Type</th><th>Message</th><th>Suggestion</th></tr></thead><tbody>';
@@ -4042,7 +4098,8 @@
         });
         html += '</tbody></table></div>';
       }
-      container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + total + ' advisory finding' + (total !== 1 ? 's' : '') + '</summary><div id="llm-report-section">' + html + '</div></details>');
+      container.innerHTML = reportBox('advisory', '<details id="llm-report-details" class="report-group-inner-details" open><summary>' + llmCountText + '</summary><div id="llm-report-section">' + html + '</div></details>');
+      setReportSectionCount('report-heading-ai', llmBadgeText);
       updateReportHeadingStates();
       } catch (e) {
         console.error('Failed to render LLM report:', e);
@@ -4054,6 +4111,8 @@
 
     async function loadLLMReportSection(dataset, options) {
       if (!dataset) return;
+      const llmLoadingContainer = document.getElementById('llm-report-container');
+      if (llmLoadingContainer) llmLoadingContainer.innerHTML = reportBox('muted', '<div class="report-loading">Loading\u2026</div>');
       try {
         const runIdParam = (options && options.runId) ? '&run_id=' + encodeURIComponent(options.runId) : '';
         const r = await fetch(API + `/api/llm-report/${dataset}?t=${Date.now()}${runIdParam}`);
@@ -4076,10 +4135,12 @@
       const openLink = document.getElementById('open-report-link');
       const downloadBtn = document.getElementById('download-report-btn');
       const downloadCsvBtn = document.getElementById('download-issues-csv-btn');
+      const downloadReportJsonBtn = document.getElementById('download-report-json-btn');
       const runIdWrap = document.getElementById('report-run-id-wrap');
       if (openLink) openLink.style.display = hasReport ? '' : 'none';
       if (downloadBtn) downloadBtn.style.display = hasReport ? '' : 'none';
       if (downloadCsvBtn) downloadCsvBtn.style.display = hasReport ? '' : 'none';
+      if (downloadReportJsonBtn) downloadReportJsonBtn.style.display = hasReport && lastRunReportId && lastRunDataset === currentDataset ? '' : 'none';
       if (runIdWrap) runIdWrap.style.display = hasReport && lastRunReportId && lastRunDataset === currentDataset ? 'inline-flex' : 'none';
       if (!hasReport) {
         const reportTimestamp = document.getElementById('report-timestamp');
@@ -4125,12 +4186,15 @@
         && lastRunSummary
         && lastRunSummary.pipelineFailedBeforeValidation
         && lastRunSummary.failure_step === 0;
-      if (lastRunDataset === reportDataset && !lastRunHadAiReview) {
-        renderLLMReportSection({ notRun: true });
-      } else if (schemaReviewSkipped) {
+      // Determine Schema Review intent synchronously. Sections that skip the fetch
+      // render immediately; those that do fetch show a loading state now and fire
+      // in the final Promise.all alongside the other data sections (no blocking).
+      const shouldFetchLLM = !((lastRunDataset === reportDataset && !lastRunHadAiReview) || schemaReviewSkipped);
+      if (!shouldFetchLLM) {
         renderLLMReportSection({ notRun: true });
       } else {
-        await loadLLMReportSection(reportDataset, { runId: reportRunId });
+        const llmContainer = document.getElementById('llm-report-container');
+        if (llmContainer) llmContainer.innerHTML = reportBox('muted', '<div class="report-loading">Loading\u2026</div>');
       }
       let reportLoaded = false;
       try {
@@ -4179,9 +4243,9 @@
           setReportInsightsPlaceholder(reportUnavailableMsg);
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (isGeminiBlocking) {
-            /* Leave LLM report as already rendered by loadLLMReportSection; do not overwrite with generic message. */
+            // LLM section not yet fetched — load it now before returning.
+            if (shouldFetchLLM) await loadLLMReportSection(reportDataset, { runId: reportRunId });
           } else if (isPipelineFailed) {
-            /* Schema Review step did not produce output — loadLLMReportSection already rendered the correct state. */
             renderLLMReportSection({ notRun: true });
           } else {
             renderLLMReportSection({ neutral: true });
@@ -4198,9 +4262,8 @@
         } else {
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (isGeminiBlocking) {
-            /* Leave LLM report as-is; do not overwrite. */
+            if (shouldFetchLLM) await loadLLMReportSection(reportDataset, { runId: reportRunId });
           } else if (lastRunSummary && lastRunSummary.pipelineFailedBeforeValidation) {
-            /* Schema Review step did not produce output — loadLLMReportSection already rendered the correct state. */
             renderLLMReportSection({ notRun: true });
           } else {
             renderLLMReportSection({ neutral: true });
@@ -4213,12 +4276,13 @@
         if (runStateForThisDataset) {
           const isGeminiBlocking = lastRunSummary && lastRunSummary.failure_code === FAILURE.GEMINI_BLOCKING;
           if (!isGeminiBlocking) {
-            // Validation/fluctuation/lint steps were skipped; LLM section was already loaded by
-            // loadLLMReportSection above and should not be overwritten here.
+            // Validation/fluctuation/lint steps were skipped.
             setReportInsightsPlaceholder('Skipped due to earlier pipeline failure.');
+            if (shouldFetchLLM) renderLLMReportSection({ notRun: true });
           }
         } else {
           await Promise.all([
+            shouldFetchLLM ? loadLLMReportSection(reportDataset, { runId: reportRunId }) : Promise.resolve(),
             loadDifferSummary(reportDataset, reportRunId),
             loadFluctuationSamples(reportDataset, reportRunId),
             loadRuleFailureSamples(reportDataset, reportRunId),
@@ -4249,6 +4313,13 @@
       const lintWarningsContainer = document.getElementById('lint-warnings-container');
       if (lintWarningsContainer) lintWarningsContainer.innerHTML = reportBox('muted', REPORT_PREPARING_PLACEHOLDER_HTML);
       renderLLMReportSection({ exists: false });
+      const _differGroup = document.getElementById('differ-group');
+      if (_differGroup) _differGroup.style.display = 'none';
+      setReportSectionCount('report-heading-validation', '');
+      setReportSectionCount('report-heading-data-import-warnings', '');
+      setReportSectionCount('report-heading-statistical', '');
+      setReportSectionCount('report-heading-ai', '');
+      setReportSectionCount('report-heading-differ', '');
       updateReportHeadingStates();
     }
 
@@ -4262,6 +4333,13 @@
       const lintWarningsContainer = document.getElementById('lint-warnings-container');
       if (lintWarningsContainer) lintWarningsContainer.innerHTML = reportBox('muted', REPORT_RUNNING_PLACEHOLDER_HTML);
       renderLLMReportSection({ exists: false });
+      const _differGroup = document.getElementById('differ-group');
+      if (_differGroup) _differGroup.style.display = 'none';
+      setReportSectionCount('report-heading-validation', '');
+      setReportSectionCount('report-heading-data-import-warnings', '');
+      setReportSectionCount('report-heading-statistical', '');
+      setReportSectionCount('report-heading-ai', '');
+      setReportSectionCount('report-heading-differ', '');
       updateReportHeadingStates();
     }
 
@@ -4274,6 +4352,15 @@
       if (ruleFailureContainer) ruleFailureContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(textRule) + '</p>');
       const lintWarningsContainer = document.getElementById('lint-warnings-container');
       if (lintWarningsContainer) lintWarningsContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(text) + '</p>');
+      const differContainer = document.getElementById('differ-container');
+      if (differContainer) differContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(text) + '</p>');
+      const differGroup = document.getElementById('differ-group');
+      if (differGroup) differGroup.style.display = 'none';
+      setReportSectionCount('report-heading-validation', '');
+      setReportSectionCount('report-heading-data-import-warnings', '');
+      setReportSectionCount('report-heading-statistical', '');
+      setReportSectionCount('report-heading-ai', '');
+      setReportSectionCount('report-heading-differ', '');
       updateReportHeadingStates();
     }
 
@@ -4464,7 +4551,7 @@
       if (!group || !container) return;
       if (!dataset) { group.style.display = 'none'; container.innerHTML = ''; return; }
       group.style.display = '';
-      container.innerHTML = '<div class="report-loading">Loading…</div>';
+      container.innerHTML = reportBox('muted', '<div class="report-loading">Loading\u2026</div>');
       try {
         const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
         const _bid = lastRunBaselineId || (dataset !== 'custom' ? dataset : null);
@@ -4476,6 +4563,7 @@
             : 'No validation runs yet. Run validation to generate a report.';
           container.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(msg) + '</p>');
           group.style.display = '';
+          setReportSectionCount('report-heading-differ', '');
           updateReportHeadingStates();
           return;
         }
@@ -4514,6 +4602,7 @@
               : '<p class="differ-no-baseline-msg" style="margin-top:6px;">Run validation to compare this dataset against the baseline.</p>';
             container.innerHTML = reportBox('muted', metaLine + noRunMsg);
             group.style.display = '';
+            setReportSectionCount('report-heading-differ', 'No comparison yet');
             updateReportHeadingStates();
             _renderBaselineHistoryFromVersions(baselineVersions);
             return;
@@ -4526,12 +4615,14 @@
               '<div class="differ-accept-row"><button id="accept-baseline-btn" class="accept-baseline-btn" onclick="acceptBaseline()">Create baseline</button></div>'
             );
             group.style.display = '';
+            setReportSectionCount('report-heading-differ', 'No baseline yet');
             updateReportHeadingStates();
             return;
           }
           // No baseline, no run — show neutral placeholder.
           container.innerHTML = reportBox('muted', '<p class="report-group-success">No validation runs yet. Run validation to generate a report.</p>');
           group.style.display = '';
+          setReportSectionCount('report-heading-differ', 'No baseline yet');
           updateReportHeadingStates();
           return;
         }
@@ -4649,11 +4740,17 @@
           '<details class="report-group-inner-details" ' + detailsOpen + '><summary>' + renderSummary + '</summary>' + html + '</details>' +
           acceptBtn);
         group.style.display = '';
+        const differCountText = totalChanges > 0
+          ? (stats.deleted || 0) + ' del · ' + (stats.modified || 0) + ' mod · ' + (stats.added || 0) + ' add'
+          : 'No changes';
+        setReportSectionCount('report-heading-differ', differCountText);
         updateReportHeadingStates();
         // Load version history below the differ card (non-blocking).
         loadBaselineHistory(dataset, lastRunBaselineId || (dataset !== 'custom' ? dataset : null));
       } catch (e) {
-        // Non-fatal: differ section stays hidden
+        container.innerHTML = reportBox('muted', '<p class="report-group-success">Could not load dataset changes.</p>');
+        setReportSectionCount('report-heading-differ', '');
+        updateReportHeadingStates();
       }
     }
 
@@ -4706,6 +4803,7 @@
       if (!container) return;
       if (!dataset) {
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        setReportSectionCount('report-heading-statistical', '');
         updateReportHeadingStates();
         return;
       }
@@ -4717,6 +4815,7 @@
         const samples = data.samples || [];
         if (samples.length === 0) {
           container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p>');
+          setReportSectionCount('report-heading-statistical', 'No fluctuations');
           updateReportHeadingStates();
           return;
         }
@@ -4754,7 +4853,9 @@
               explainBlock +
               '</div>';
         }).join('');
-        container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
+        const fluctCountText = samples.length + ' significant fluctuation' + (samples.length !== 1 ? 's' : '') + ' (>100%)';
+        const fluctBadgeText = samples.length === 1 ? '1 fluctuation' : samples.length + ' fluctuations';
+        container.innerHTML = reportBox('advisory', '<details id="fluctuation-samples-details" class="report-group-inner-details" open><summary>' + fluctCountText + '</summary><div id="fluctuation-samples-content" class="fluctuation-samples-content">' + cards + '</div></details>');
         container.querySelectorAll('.explain-fluctuation-btn').forEach(function(btn) {
           btn.addEventListener('click', function() {
             const self = this;
@@ -4795,9 +4896,11 @@
             });
           });
         });
+        setReportSectionCount('report-heading-statistical', fluctBadgeText);
         updateReportHeadingStates();
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No significant fluctuations (>100%)</p><p style="color: var(--text-muted); margin: 0;">Could not load fluctuation samples.</p>');
+        setReportSectionCount('report-heading-statistical', '');
         updateReportHeadingStates();
       }
     }
@@ -4807,6 +4910,7 @@
       if (!container) return;
       if (!dataset) {
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        setReportSectionCount('report-heading-data-import-warnings', '');
         updateReportHeadingStates();
         return;
       }
@@ -4818,16 +4922,20 @@
         const warnings = data.warnings || [];
         if (!data.exists || warnings.length === 0) {
           container.innerHTML = reportBox('success', '<p class="report-group-success">No data import warnings</p>');
+          setReportSectionCount('report-heading-data-import-warnings', 'No warnings');
           updateReportHeadingStates();
           return;
         }
+        const warnCountText = warnings.length + ' warning' + (warnings.length !== 1 ? 's' : '');
         const rows = warnings.map(function (w) {
           return '<div class="lint-warning-row">' + escapeHtml(w.key) + ' <span class="lint-warning-count">(x' + Number(w.count).toLocaleString() + ')</span></div>';
         }).join('');
-        container.innerHTML = reportBox('advisory', '<details class="report-group-inner-details" open><summary>Show warnings</summary><div class="lint-warnings-content">' + rows + '</div></details>');
+        container.innerHTML = reportBox('advisory', '<details class="report-group-inner-details" open><summary>' + warnCountText + '</summary><div class="lint-warnings-content">' + rows + '</div></details>');
+        setReportSectionCount('report-heading-data-import-warnings', warnCountText);
         updateReportHeadingStates();
       } catch {
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Could not load lint warnings.</p>');
+        setReportSectionCount('report-heading-data-import-warnings', '');
         updateReportHeadingStates();
       }
     }
@@ -4872,6 +4980,7 @@
       if (!container) return;
       if (!dataset) {
         container.innerHTML = reportBox('muted', '<p class="report-group-success">Run validation to see results.</p>');
+        setReportSectionCount('report-heading-validation', '');
         updateReportHeadingStates();
         return;
       }
@@ -4883,6 +4992,7 @@
         const samples = data.samples || [];
         if (samples.length === 0) {
           container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p>');
+          setReportSectionCount('report-heading-validation', 'No issues');
           updateReportHeadingStates();
           return;
         }
@@ -4948,9 +5058,11 @@
           contentHtml += '</div></div>';
         });
         container.innerHTML = reportBox('blocking', '<details id="rule-failure-details" class="report-group-inner-details" open><summary>' + summaryText + '</summary><div id="rule-failure-content">' + contentHtml + '</div></details>');
+        setReportSectionCount('report-heading-validation', ruleCount === 1 ? '1 issue' : ruleCount + ' issues');
         updateReportHeadingStates();
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p><p style="color: var(--text-muted); margin: 0;">Could not load rule failure samples.</p>');
+        setReportSectionCount('report-heading-validation', '');
         updateReportHeadingStates();
       }
     }
@@ -5502,6 +5614,23 @@
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = downloadName;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        showToast('Download failed');
+      }
+    });
+
+    document.getElementById('download-report-json-btn').addEventListener('click', async () => {
+      if (!currentDataset || !lastRunReportId || lastRunDataset !== currentDataset) return;
+      const path = `/report/${currentDataset}/${lastRunReportId}/report.json`;
+      try {
+        const r = await fetch((API || '') + path + '?t=' + Date.now());
+        if (!r.ok) throw new Error('Not found');
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `report_${currentDataset}_${lastRunReportId}.json`;
         a.click();
         URL.revokeObjectURL(a.href);
       } catch (e) {

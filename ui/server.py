@@ -1255,6 +1255,46 @@ def serve_warnings_csv(dataset: str):
     )
 
 
+@app.get("/report/{dataset}/{run_id}/report.json")
+def serve_report_json_by_run_id(dataset: str, run_id: str):
+    """Serve report.json (DC import tool lint output) as a downloadable artifact."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    if not _run_id_safe(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    content = _resolve_artifact(dataset, run_id, "report.json")
+    if content is None:
+        raise HTTPException(status_code=404, detail="report.json not found for this run.")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Content-Disposition": f'attachment; filename="report_{dataset}_{run_id}.json"',
+        },
+    )
+
+
+@app.get("/report/{dataset}/{run_id}/validation_output.json")
+def serve_validation_output_by_run_id(dataset: str, run_id: str):
+    """Serve validation_output.json (per-rule results) as a downloadable artifact."""
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    if not _run_id_safe(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    content = _resolve_artifact(dataset, run_id, "validation_output.json")
+    if content is None:
+        raise HTTPException(status_code=404, detail="validation_output.json not found for this run.")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Content-Disposition": f'attachment; filename="validation_output_{dataset}_{run_id}.json"',
+        },
+    )
+
+
 @app.get("/summary-report/{dataset}/{run_id}", response_class=HTMLResponse)
 def serve_summary_report_by_run_id(dataset: str, run_id: str):
     """Serve summary_report.html from GCS when configured (any instance); otherwise local per-run."""
