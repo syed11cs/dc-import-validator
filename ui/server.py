@@ -1850,6 +1850,10 @@ async def submit_batch_job(body: _SubmitJobRequest):
         _merged_tmp = _create_merged_config(dataset_key, rule_ids, body.custom_rules)
         _merged_tmp_path = _merged_tmp  # may be None
         if _merged_tmp:
+            logger.info(
+                "submit_batch_job: uploading merged config to GCS run_id=%s custom_rule_count=%d",
+                run_id, len(body.custom_rules),
+            )
             try:
                 merged_config_gcs_path = await asyncio.to_thread(
                     gcs_reports.upload_merged_config_to_gcs, run_id, _merged_tmp
@@ -1860,6 +1864,19 @@ async def submit_batch_job(body: _SubmitJobRequest):
             finally:
                 if _merged_tmp_path and _merged_tmp_path.exists():
                     _merged_tmp_path.unlink()
+
+            # Fail fast if GCS is not configured — Batch VMs cannot download the config
+            # without a GCS path, so custom rules would be silently skipped.
+            if not merged_config_gcs_path:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "GCS_REPORTS_BUCKET is required to use custom SQL rules or rule filters "
+                        "with Batch jobs — the merged config must be uploaded to GCS before job "
+                        "submission so the Batch VM can download it."
+                    ),
+                )
+            logger.info("submit_batch_job: merged config uploaded run_id=%s path=%s", run_id, merged_config_gcs_path)
 
     input_files = _InputFiles(
         gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",

@@ -63,17 +63,24 @@ def upload_merged_config_to_gcs(run_id: str, config_path: "Path") -> str:
     Returns the GCS URI (gs://bucket/configs/{run_id}/validation_config.json) on
     success, or an empty string if GCS is not configured.
     Raises GCSAccessError if GCS_REPORTS_BUCKET is set but the bucket is inaccessible.
+    Raises RuntimeError if the upload cannot be verified after writing.
     """
+    import logging
+    _log = logging.getLogger(__name__)
+
     bucket_name = _get_bucket()
-    if not bucket_name or not run_id:
+    if not bucket_name:
         return ""
+    if not run_id:
+        raise ValueError("upload_merged_config_to_gcs: run_id must not be empty")
     _, bucket = _get_client_and_bucket()
-    if not bucket:
-        return ""
     blob_path = f"configs/{run_id}/validation_config.json"
+    gcs_uri = f"gs://{bucket_name}/{blob_path}"
+    _log.info("upload_merged_config_to_gcs: uploading %s to %s", config_path, gcs_uri)
     blob = bucket.blob(blob_path)
     blob.upload_from_filename(str(config_path), content_type="application/json")
-    return f"gs://{bucket_name}/{blob_path}"
+    _log.info("upload_merged_config_to_gcs: upload complete — %s", gcs_uri)
+    return gcs_uri
 
 
 def upload_reports_to_gcs(
