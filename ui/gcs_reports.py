@@ -57,6 +57,25 @@ def _get_client_and_bucket():
         ) from e
 
 
+def upload_merged_config_to_gcs(run_id: str, config_path: "Path") -> str:
+    """Upload a merged validation config JSON to GCS so a Batch VM can download it.
+
+    Returns the GCS URI (gs://bucket/configs/{run_id}/validation_config.json) on
+    success, or an empty string if GCS is not configured.
+    Raises GCSAccessError if GCS_REPORTS_BUCKET is set but the bucket is inaccessible.
+    """
+    bucket_name = _get_bucket()
+    if not bucket_name or not run_id:
+        return ""
+    _, bucket = _get_client_and_bucket()
+    if not bucket:
+        return ""
+    blob_path = f"configs/{run_id}/validation_config.json"
+    blob = bucket.blob(blob_path)
+    blob.upload_from_filename(str(config_path), content_type="application/json")
+    return f"gs://{bucket_name}/{blob_path}"
+
+
 def upload_reports_to_gcs(
     output_dir: Path,
     run_id: str,

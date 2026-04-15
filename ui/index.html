@@ -251,6 +251,45 @@
     .rules-category-chevron::before { content: '▾'; }
     .rules-category[open] .rules-category-chevron::before { content: '▴'; }
     .rules-category-items { padding: 8px 0 0 0; }
+    /* Custom SQL rules */
+    #custom-sql-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+    #custom-sql-section-label { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+    .custom-rule-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-elevated); margin-bottom: 4px; }
+    .custom-rule-item:has(.rule-checkbox:checked) { background: rgba(99,102,241,0.08); border-color: rgba(99,102,241,0.25); }
+    .custom-rule-item:has(.rule-checkbox:not(:checked)) { opacity: 0.72; }
+    .custom-rule-body { flex: 1; min-width: 0; }
+    .custom-rule-id { font-family: monospace; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 2px; }
+    .custom-rule-query { font-family: monospace; font-size: 0.72rem; color: var(--text); word-break: break-all; white-space: pre-wrap; }
+    .custom-rule-badge { font-size: 0.65rem; color: var(--accent); background: rgba(99,102,241,0.12); padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; align-self: flex-start; margin-top: 2px; }
+    .custom-rule-delete { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 1rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
+    .custom-rule-delete:hover { opacity: 1; color: var(--fail); }
+    .custom-rule-edit { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 0.8rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
+    .custom-rule-edit:hover { opacity: 1; color: var(--accent); }
+    .custom-rule-edit-form { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    .custom-rule-edit-form textarea, .custom-rule-edit-form input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.75rem; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 6px; resize: vertical; }
+    .custom-rule-edit-form textarea { min-height: 56px; }
+    .custom-rule-edit-actions { display: flex; gap: 6px; }
+    .custom-rule-edit-save { font-size: 0.75rem; padding: 3px 10px; }
+    .custom-rule-edit-cancel { font-size: 0.75rem; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius); cursor: pointer; }
+    .custom-rule-edit-cancel:hover { color: var(--text); }
+    .custom-rule-editing { background: rgba(99,102,241,0.04); }
+    #nl-sql-section { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); }
+    #nl-sql-prompt { width: 100%; box-sizing: border-box; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; min-height: 48px; }
+    #nl-sql-prompt:focus { outline: none; border-color: var(--accent); }
+    #nl-sql-generate-btn { margin-top: 6px; }
+    #nl-sql-error { font-size: 0.75rem; color: var(--fail); display: none; margin-top: 4px; }
+    #nl-sql-preview { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+    #nl-sql-preview label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 2px; }
+    #nl-sql-preview textarea, #nl-sql-preview input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
+    #nl-sql-preview textarea:focus, #nl-sql-preview input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    #nl-sql-preview-actions { display: flex; gap: 6px; }
+    #add-sql-rule-toggle { cursor: pointer; font-size: 0.78rem; color: var(--accent); user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; }
+    #add-sql-rule-toggle::-webkit-details-marker { display: none; }
+    #add-sql-rule-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+    #add-sql-rule-form label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
+    #add-sql-rule-form textarea, #add-sql-rule-form input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
+    #add-sql-rule-form textarea:focus, #add-sql-rule-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    #custom-sql-error { font-size: 0.75rem; color: var(--fail); display: none; }
     .rules-category .rule-item { margin-left: 0; }
     .rule-id { font-weight: 500; }
     .rule-desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
@@ -1597,6 +1636,49 @@
         <div id="rules" class="rules-list">
           <div class="rule-item" style="color: var(--text-muted);">Select a dataset to view rules</div>
         </div>
+        <div id="custom-sql-section">
+          <div id="custom-sql-section-label">Custom SQL Rules</div>
+          <div id="custom-rules-list"></div>
+          <div id="nl-sql-section">
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;">Generate from description</div>
+            <textarea id="nl-sql-prompt" rows="2" placeholder="Describe a rule (e.g. 'no negative population values')"></textarea>
+            <button type="button" id="nl-sql-generate-btn" class="btn btn-sm" style="width:auto;">Generate SQL</button>
+            <div id="nl-sql-error"></div>
+            <div id="nl-sql-preview" style="display:none;">
+              <div>
+                <label for="nl-sql-query">SQL Query</label>
+                <textarea id="nl-sql-query" rows="3"></textarea>
+              </div>
+              <div>
+                <label for="nl-sql-condition">Condition</label>
+                <input type="text" id="nl-sql-condition">
+              </div>
+              <div id="nl-sql-preview-actions">
+                <button type="button" id="nl-sql-add-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
+                <button type="button" id="nl-sql-cancel-btn" class="btn btn-sm btn-secondary" style="width:auto;">Cancel</button>
+              </div>
+            </div>
+          </div>
+          <details id="add-sql-rule-details">
+            <summary id="add-sql-rule-toggle">+ Add SQL Rule</summary>
+            <div id="add-sql-rule-form">
+              <div>
+                <label for="custom-sql-rule-id">Rule ID <span style="font-weight:400;">(optional — auto-generated if empty)</span></label>
+                <input type="text" id="custom-sql-rule-id" placeholder="e.g. check_no_duplicates">
+              </div>
+              <div>
+                <label for="custom-sql-query">SQL Query <span style="color:var(--fail);">*</span></label>
+                <textarea id="custom-sql-query" rows="3" placeholder="SELECT COUNT(*) AS row_count FROM stats WHERE value &lt; 0"></textarea>
+              </div>
+              <div>
+                <label for="custom-sql-condition">Condition <span style="color:var(--fail);">*</span></label>
+                <input type="text" id="custom-sql-condition" placeholder="e.g. row_count = 0">
+              </div>
+              <div id="custom-sql-error"></div>
+              <button type="button" id="add-custom-sql-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
+            </div>
+          </details>
+        </div>
       </div>
       <div id="results-section" class="section">
         <h2><span class="execution-label">Execution</span> <span id="execution-header-status"></span></h2>
@@ -1664,6 +1746,10 @@
             <details class="report-group">
               <summary id="report-heading-statistical" class="report-group-heading">Statistical Fluctuations</summary>
               <div id="fluctuation-samples-container"></div>
+            </details>
+            <details class="report-group" id="config-errors-group" style="display:none;">
+              <summary id="report-heading-config-errors" class="report-group-heading">Configuration Errors</summary>
+              <div id="config-errors-container"></div>
             </details>
             <details class="report-group">
               <summary id="report-heading-ai" class="report-group-heading">Schema Review (AI-assisted)</summary>
@@ -1751,6 +1837,8 @@
     let lastRunStatus = null;
     /** Datasets that completed a run in this page session; used to suppress the restore notice for fresh results. */
     const _sessionRunDatasets = new Set();
+    /** Per-run custom SQL rules defined by the user in this session. Not persisted. */
+    let customRulesList = [];
 
     const LOG_PLACEHOLDER_HTML = '<p class="log-placeholder-intro">Run validation to generate:</p><ul class="log-placeholder-list"><li>Gemini review insights</li><li>DC import diagnostics</li><li>Rule-based validation</li><li>HTML report</li></ul>';
 
@@ -2084,6 +2172,104 @@
         '<span class="rule-result-icon" data-rule-id="' + escapeHtml(rule.rule_id) + '"></span>' +
         '</div>';
     }
+
+    function renderCustomRules() {
+      const container = document.getElementById('custom-rules-list');
+      if (!container) return;
+      const label = document.getElementById('custom-sql-section-label');
+      if (label) {
+        label.textContent = customRulesList.length > 0
+          ? 'Custom SQL Rules (' + customRulesList.length + ')'
+          : 'Custom SQL Rules';
+      }
+      if (customRulesList.length === 0) {
+        container.innerHTML = '';
+        return;
+      }
+      // Checked state is stored in r.enabled — no DOM reading needed.
+      container.innerHTML = customRulesList.map(r => {
+        const isChecked = r.enabled !== false; // default true if field absent (legacy)
+        const preview = r.query.length > 90 ? r.query.slice(0, 90) + '\u2026' : r.query;
+        return '<div class="custom-rule-item">' +
+          '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (isChecked ? ' checked' : '') + '>' +
+          '<div class="custom-rule-body">' +
+            '<div class="custom-rule-id">' + escapeHtml(r.rule_id) + '</div>' +
+            '<div class="custom-rule-query">' + escapeHtml(preview) + '</div>' +
+          '</div>' +
+          '<span class="custom-rule-badge">SQL</span>' +
+          '<button type="button" class="custom-rule-edit" data-rule-id="' + escapeHtml(r.rule_id) + '" title="Edit rule" aria-label="Edit rule">Edit</button>' +
+          '<button type="button" class="custom-rule-delete" data-rule-id="' + escapeHtml(r.rule_id) + '" title="Remove rule" aria-label="Remove rule">\u00d7</button>' +
+        '</div>';
+      }).join('');
+      container.querySelectorAll('.rule-checkbox[data-rule-id]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const r = customRulesList.find(x => x.rule_id === cb.dataset.ruleId);
+          if (r) r.enabled = cb.checked;
+        });
+      });
+      container.querySelectorAll('.custom-rule-delete').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = customRulesList.findIndex(x => x.rule_id === btn.dataset.ruleId);
+          if (idx !== -1) {
+            customRulesList.splice(idx, 1);
+            renderCustomRules();
+          }
+        });
+      });
+      container.querySelectorAll('.custom-rule-edit').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ruleId = btn.dataset.ruleId;
+          const r = customRulesList.find(x => x.rule_id === ruleId);
+          if (!r) return;
+          const item = btn.closest('.custom-rule-item');
+          // Replace item content with inline edit form; rule ID is read-only.
+          // Enabled state comes from r.enabled — not from DOM.
+          item.classList.add('custom-rule-editing');
+          item.innerHTML =
+            '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (r.enabled !== false ? ' checked' : '') + '>' +
+            '<div class="custom-rule-edit-form">' +
+              '<div style="font-size:0.72rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</div>' +
+              '<textarea class="edit-query" rows="3" placeholder="SQL query">' + escapeHtml(r.query) + '</textarea>' +
+              '<input type="text" class="edit-condition" placeholder="Condition (e.g. value >= 0)" value="' + escapeHtml(r.condition) + '">' +
+              '<div class="custom-rule-edit-error" style="color:var(--fail);font-size:0.75rem;display:none;"></div>' +
+              '<div class="custom-rule-edit-actions">' +
+                '<button type="button" class="btn btn-sm custom-rule-edit-save" data-rule-id="' + escapeHtml(r.rule_id) + '">Save</button>' +
+                '<button type="button" class="custom-rule-edit-cancel">Cancel</button>' +
+              '</div>' +
+            '</div>';
+          // Keep enabled in sync if the checkbox is toggled while in edit mode.
+          item.querySelector('.rule-checkbox').addEventListener('change', function() {
+            const live = customRulesList.find(x => x.rule_id === ruleId);
+            if (live) live.enabled = this.checked;
+          });
+          item.querySelector('.custom-rule-edit-save').addEventListener('click', () => {
+            const query = item.querySelector('.edit-query').value.trim();
+            const condition = item.querySelector('.edit-condition').value.trim();
+            const errEl = item.querySelector('.custom-rule-edit-error');
+            if (!query) { if (errEl) { errEl.textContent = 'Query is required.'; errEl.style.display = ''; } return; }
+            if (!condition) { if (errEl) { errEl.textContent = 'Condition is required.'; errEl.style.display = ''; } return; }
+            const live = customRulesList.find(x => x.rule_id === ruleId);
+            if (live) { live.query = query; live.condition = condition; }
+            renderCustomRules();
+          });
+          item.querySelector('.custom-rule-edit-cancel').addEventListener('click', () => {
+            renderCustomRules();
+          });
+        });
+      });
+    }
+
+    function getSelectedCustomRules() {
+      return customRulesList
+        .filter(r => r.enabled !== false)
+        .map(r => ({
+          rule_id: r.rule_id,
+          validator: 'SQL_VALIDATOR',
+          scope: { data_source: 'stats' },
+          params: { query: r.query, condition: r.condition },
+        }));
+    }
+
     async function loadRules(dataset, options) {
       const rulesEl = document.getElementById('rules');
       const presetTrigger = document.getElementById('preset-trigger');
@@ -2638,6 +2824,14 @@
       if (deselectAll) deselectAll.disabled = disabled;
       if (savePreset) savePreset.disabled = disabled;
       if (clearPresets) clearPresets.disabled = disabled;
+      const addSqlBtn = document.getElementById('add-custom-sql-btn');
+      if (addSqlBtn) addSqlBtn.disabled = disabled;
+      document.querySelectorAll('.custom-rule-delete').forEach(btn => { btn.disabled = disabled; });
+      document.querySelectorAll('.custom-rule-edit').forEach(btn => { btn.disabled = disabled; });
+      const nlGenerateBtn = document.getElementById('nl-sql-generate-btn');
+      if (nlGenerateBtn) nlGenerateBtn.disabled = disabled;
+      const nlAddBtn = document.getElementById('nl-sql-add-btn');
+      if (nlAddBtn) nlAddBtn.disabled = disabled;
     }
 
     function getSelectedRuleIds() {
@@ -3241,6 +3435,7 @@
             baseline_name: opts.baseline_name || '',
             import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
             existence_checks: opts.existence_checks || 'false',
+            custom_rules: opts.custom_rules || [],
           }),
           signal,
         });
@@ -3456,8 +3651,9 @@
 
         (async () => {
       try {
-        const selectedRules = getSelectedRuleIds();
+        const selectedRules = getSelectedRuleIds(); // includes checked custom rule IDs
         const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
+        const selectedCustomRules = getSelectedCustomRules();
         let r, data;
         const llmModel = document.getElementById('llm-model-select').value;
         if (runDataset === 'custom') {
@@ -3578,6 +3774,7 @@
               baseline_name: lastRunCustomDatasetName ? 'custom_' + lastRunCustomDatasetName : '',
               import_resolution_mode: 'LOCAL',
               existence_checks: existenceChecks,
+              custom_rules: selectedCustomRules,
             }, runAbortController.signal);
 
           } else {
@@ -3596,6 +3793,7 @@
             formData.append('llm_review', '1');
             formData.append('llm_model', llmModel);
             formData.append('existence_checks', existenceChecks);
+            if (selectedCustomRules.length > 0) formData.append('custom_rules_json', JSON.stringify(selectedCustomRules));
             r = await fetch(API + '/api/run/custom/stream', {
               method: 'POST',
               body: formData,
@@ -3637,6 +3835,7 @@
             baseline_name: '',
             import_resolution_mode: 'LOCAL',
             existence_checks: existenceChecks,
+            custom_rules: selectedCustomRules,
           }, runAbortController.signal);
         }
         _activeStepStartMs = null;
@@ -4287,6 +4486,7 @@
             loadFluctuationSamples(reportDataset, reportRunId),
             loadRuleFailureSamples(reportDataset, reportRunId),
             loadLintWarnings(reportDataset, reportRunId),
+            loadConfigErrors(reportDataset, reportRunId),
           ]);
         }
       }
@@ -4356,11 +4556,16 @@
       if (differContainer) differContainer.innerHTML = reportBox('muted', '<p class="report-group-success">' + escapeHtml(text) + '</p>');
       const differGroup = document.getElementById('differ-group');
       if (differGroup) differGroup.style.display = 'none';
+      const configErrorsGroup = document.getElementById('config-errors-group');
+      if (configErrorsGroup) configErrorsGroup.style.display = 'none';
+      const configErrorsContainer = document.getElementById('config-errors-container');
+      if (configErrorsContainer) configErrorsContainer.innerHTML = '';
       setReportSectionCount('report-heading-validation', '');
       setReportSectionCount('report-heading-data-import-warnings', '');
       setReportSectionCount('report-heading-statistical', '');
       setReportSectionCount('report-heading-ai', '');
       setReportSectionCount('report-heading-differ', '');
+      setReportSectionCount('report-heading-config-errors', '');
       updateReportHeadingStates();
     }
 
@@ -4522,6 +4727,149 @@
         if (btn) { btn.textContent = '✖ Failed — ' + e.message; btn.disabled = false; }
       }
     }
+
+    // ── Custom SQL rule form ────────────────────────────────────────────────────
+    document.getElementById('add-custom-sql-btn').addEventListener('click', () => {
+      const ruleIdInput = document.getElementById('custom-sql-rule-id');
+      const queryInput = document.getElementById('custom-sql-query');
+      const conditionInput = document.getElementById('custom-sql-condition');
+      const errorEl = document.getElementById('custom-sql-error');
+
+      const query = (queryInput.value || '').trim();
+      const condition = (conditionInput.value || '').trim();
+      let ruleId = (ruleIdInput.value || '').trim();
+
+      errorEl.style.display = 'none';
+      if (!query) {
+        errorEl.textContent = 'SQL Query is required.';
+        errorEl.style.display = 'block';
+        queryInput.focus();
+        return;
+      }
+      if (!condition) {
+        errorEl.textContent = 'Condition is required.';
+        errorEl.style.display = 'block';
+        conditionInput.focus();
+        return;
+      }
+      if (!ruleId) {
+        ruleId = 'custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+      }
+
+      customRulesList.push({ rule_id: ruleId, query, condition, enabled: true });
+      renderCustomRules();
+
+      ruleIdInput.value = '';
+      queryInput.value = '';
+      conditionInput.value = '';
+      document.getElementById('add-sql-rule-details').removeAttribute('open');
+    });
+
+    // ── NL → SQL generation ─────────────────────────────────────────────────────
+    (function () {
+      const generateBtn = document.getElementById('nl-sql-generate-btn');
+      const promptEl    = document.getElementById('nl-sql-prompt');
+      const errorEl     = document.getElementById('nl-sql-error');
+      const previewEl   = document.getElementById('nl-sql-preview');
+      const queryEl     = document.getElementById('nl-sql-query');
+      const conditionEl = document.getElementById('nl-sql-condition');
+      const addBtn      = document.getElementById('nl-sql-add-btn');
+      const cancelBtn   = document.getElementById('nl-sql-cancel-btn');
+
+      function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.style.display = msg ? 'block' : 'none';
+      }
+
+      function showPreview(query, condition) {
+        queryEl.value = query;
+        conditionEl.value = condition;
+        previewEl.style.display = 'flex';
+      }
+
+      function hidePreview() {
+        previewEl.style.display = 'none';
+        queryEl.value = '';
+        conditionEl.value = '';
+      }
+
+      // Read column headers from the first uploaded CSV file (first 2 KB only).
+      async function readCsvColumns() {
+        if (!customCsvFiles || !customCsvFiles.length) return null;
+        try {
+          const slice = customCsvFiles[0].slice(0, 2048);
+          const text = await slice.text();
+          const firstLine = text.split('\n')[0] || '';
+          const cols = firstLine.split(',').map(c => c.trim().replace(/^"|"$/g, '')).filter(Boolean);
+          return cols.length ? cols : null;
+        } catch {
+          return null;
+        }
+      }
+
+      generateBtn.addEventListener('click', async () => {
+        const prompt = (promptEl.value || '').trim();
+        if (!prompt) { showError('Please describe the rule first.'); return; }
+        showError('');
+        hidePreview();
+        generateBtn.disabled = true;
+        promptEl.disabled = true;
+        generateBtn.textContent = 'Generating…';
+        try {
+          const csvColumns = await readCsvColumns();
+          const res = await fetch(API + '/api/generate-sql-rule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt,
+              dataset: currentDataset || null,
+              csv_columns: csvColumns,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            if (res.status === 503) {
+              showError('SQL generation requires a Gemini API key (GEMINI_API_KEY not set).');
+            } else if (res.status === 502) {
+              showError('LLM request failed. Please try again.');
+            } else {
+              showError(data.detail || 'Generation failed. Try rephrasing your description.');
+            }
+            return;
+          }
+          showPreview(data.query, data.condition);
+          // Stash rule_id from server for use in Add Rule.
+          generateBtn.dataset.pendingRuleId = data.rule_id;
+        } catch (e) {
+          showError('Request failed. Check your connection and try again.');
+        } finally {
+          generateBtn.disabled = false;
+          promptEl.disabled = false;
+          generateBtn.textContent = 'Generate SQL';
+        }
+      });
+
+      addBtn.addEventListener('click', () => {
+        const query     = (queryEl.value || '').trim();
+        const condition = (conditionEl.value || '').trim();
+        if (!query)     { showError('Query is required.'); return; }
+        if (!condition) { showError('Condition is required.'); return; }
+        const ruleId = generateBtn.dataset.pendingRuleId ||
+          ('custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
+        delete generateBtn.dataset.pendingRuleId;
+        customRulesList.push({ rule_id: ruleId, query, condition, enabled: true });
+        renderCustomRules();
+        promptEl.value = '';
+        hidePreview();
+        showError('');
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        hidePreview();
+        showError('');
+        delete generateBtn.dataset.pendingRuleId;
+      });
+    })();
 
     // Close modal on overlay click (outside the dialog box)
     document.addEventListener('DOMContentLoaded', () => {
@@ -5063,6 +5411,54 @@
       } catch {
         container.innerHTML = reportBox('success', '<p class="report-group-success">No blocking rule failures</p><p style="color: var(--text-muted); margin: 0;">Could not load rule failure samples.</p>');
         setReportSectionCount('report-heading-validation', '');
+        updateReportHeadingStates();
+      }
+    }
+
+    async function loadConfigErrors(dataset, runId) {
+      const group = document.getElementById('config-errors-group');
+      const container = document.getElementById('config-errors-container');
+      if (!group || !container) return;
+      if (!dataset) {
+        group.style.display = 'none';
+        container.innerHTML = '';
+        setReportSectionCount('report-heading-config-errors', '');
+        updateReportHeadingStates();
+        return;
+      }
+      try {
+        const runIdParam = runId ? `&run_id=${encodeURIComponent(runId)}` : '';
+        const r = await fetch(API + `/api/config-errors/${dataset}?t=${Date.now()}${runIdParam}`);
+        const data = await r.json();
+        const errors = data.errors || [];
+        if (errors.length === 0) {
+          group.style.display = 'none';
+          container.innerHTML = '';
+          setReportSectionCount('report-heading-config-errors', '');
+          updateReportHeadingStates();
+          return;
+        }
+        group.style.display = '';
+        const countLabel = errors.length === 1 ? '1 error' : errors.length + ' errors';
+        setReportSectionCount('report-heading-config-errors', countLabel);
+        let rows = '';
+        errors.forEach(function(e) {
+          rows += '<div class="rule-failure-group">' +
+            '<div class="rule-failure-group-title">' + escapeHtml(e.rule_id || '(unknown rule)') + '</div>' +
+            '<div style="font-size:0.85rem;color:var(--text-muted);padding:4px 0 2px;">' + escapeHtml(e.message || 'Unknown configuration error') + '</div>' +
+            '</div>';
+        });
+        const summaryText = errors.length === 1 ? '1 configuration error' : errors.length + ' configuration errors';
+        container.innerHTML = reportBox('blocking',
+          '<details id="config-error-details" class="report-group-inner-details" open>' +
+          '<summary>' + summaryText + '</summary>' +
+          '<div id="config-error-content">' + rows + '</div>' +
+          '</details>');
+        updateReportHeadingStates();
+      } catch {
+        group.style.display = 'none';
+        container.innerHTML = '';
+        setReportSectionCount('report-heading-config-errors', '');
         updateReportHeadingStates();
       }
     }

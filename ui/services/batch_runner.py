@@ -73,6 +73,9 @@ class InputFiles:
     baseline_name: str = ""
     import_resolution_mode: str = "LOCAL"
     import_existence_checks: str = "false"
+    # GCS URI of a pre-merged validation config (gs://bucket/configs/{run_id}/...).
+    # Set when custom SQL rules are present; the Batch VM downloads and passes --config=.
+    merged_config_gcs_path: str = ""
 
 
 def _select_tier(csv_total_bytes: int):
@@ -156,6 +159,8 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles) -> dict:
         env["RULES_FILTER"] = input_files.rules_filter
     if input_files.skip_rules_filter:
         env["SKIP_RULES_FILTER"] = input_files.skip_rules_filter
+    if input_files.merged_config_gcs_path:
+        env["MERGED_CONFIG_GCS_PATH"] = input_files.merged_config_gcs_path
 
     # Java concurrency
     java_threads = os.environ.get("JAVA_THREADS", "")

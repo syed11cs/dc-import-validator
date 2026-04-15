@@ -232,8 +232,12 @@ def main() -> int:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(combined, f, indent=2, default=str)
 
-    # PASSED and WARNING are non-blocking; only FAILED causes exit 1.
-    all_passed = all(r.get("status") in ("PASSED", "WARNING") for r in combined)
+    # PASSED and WARNING are non-blocking; FAILED and CONFIG_ERROR cause exit 1.
+    # CONFIG_ERROR is returned by SQL_VALIDATOR when the query is malformed (syntax
+    # error, invalid column reference, etc.).  It is treated as a hard failure so
+    # bad custom SQL rules are never silently ignored.
+    _PASSING_STATUSES = frozenset({"PASSED", "WARNING"})
+    all_passed = all(r.get("status") in _PASSING_STATUSES for r in combined)
     dc_run_ok = not dc_rules or len(dc_results) >= len(dc_rules)
     if not dc_run_ok:
         return 1  # DC runner failed or produced partial output

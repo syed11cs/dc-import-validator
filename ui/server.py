@@ -12,6 +12,7 @@ import html
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -82,9 +83,49 @@ DATASET_CONFIG_MAP = {
     "custom": "new_import_config.json",
 }
 
-def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
-    """Create temp config with only the selected rules. Returns path or None if use default."""
-    if not rule_ids:
+def _validate_custom_rules(custom_rules: list) -> str | None:
+    """Validate custom rules list. Returns error message if invalid, else None.
+
+    Performs structural validation (query/condition present) plus a lightweight
+    DuckDB EXPLAIN to catch obvious SQL syntax errors before the job is submitted.
+    Column-reference errors that depend on actual data are not caught here.
+    """
+    for i, rule in enumerate(custom_rules):
+        if not isinstance(rule, dict):
+            return f"custom_rules[{i}] must be an object"
+        params = rule.get("params") or {}
+        if not isinstance(params.get("query"), str) or not params["query"].strip():
+            return f"custom_rules[{i}].params.query is required and must be a non-empty string"
+        if not isinstance(params.get("condition"), str) or not params["condition"].strip():
+            return f"custom_rules[{i}].params.condition is required and must be a non-empty string"
+        # Pre-check SQL syntax via DuckDB EXPLAIN (best-effort; catches syntax errors early).
+        # The observations table does not exist at validation time, so inject a dummy CTE
+        # so DuckDB can resolve the table reference.  Use _inner (not _data) to avoid a
+        # name collision with the outer _data CTE added by the EXPLAIN wrapper below.
+        try:
+            import duckdb
+            q = params["query"].strip().rstrip(";")
+            c = params["condition"].strip()
+            _dummy_obs = (
+                "SELECT CAST(NULL AS TEXT) AS StatVar, CAST(NULL AS DOUBLE) AS Value,"
+                " CAST(NULL AS TEXT) AS observationAbout, CAST(NULL AS TEXT) AS observationDate,"
+                " CAST(NULL AS TEXT) AS unit LIMIT 0"
+            )
+            _wrapped = f"WITH observations AS ({_dummy_obs}), _inner AS ({q}) SELECT * FROM _inner"
+            duckdb.execute(f"EXPLAIN WITH _data AS ({_wrapped}) SELECT * FROM _data WHERE NOT ({c}) LIMIT 1")
+        except Exception as exc:
+            rule_id = (rule.get("rule_id") or f"rule {i}")
+            return f"SQL syntax error in {rule_id}: {exc}"
+    return None
+
+
+def _create_merged_config(dataset: str, rule_ids: list[str], custom_rules: list[dict]) -> Path | None:
+    """Create temp config with filtered built-in rules plus appended custom rules.
+
+    Returns path to a temp JSON file, or None when no modifications are needed
+    (i.e. all built-in rules selected and no custom rules — use the default config).
+    """
+    if not rule_ids and not custom_rules:
         return None
     config_name = DATASET_CONFIG_MAP.get(dataset)
     if not config_name:
@@ -94,14 +135,25 @@ def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
         return None
     with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
-    rules = config.get("rules", [])
-    selected = {r["rule_id"] for r in rules if r.get("rule_id") in rule_ids}
-    if len(selected) == len(rules):
-        return None  # All rules selected, use default
-    filtered = [r for r in rules if r.get("rule_id") in rule_ids]
-    if not filtered:
+    base_rules = config.get("rules", [])
+
+    if rule_ids:
+        rule_id_set = set(rule_ids)
+        filtered_base = [r for r in base_rules if r.get("rule_id") in rule_id_set]
+        selected_custom = list(custom_rules)  # custom rules are never filtered by built-in rule IDs
+    else:
+        filtered_base = list(base_rules)
+        selected_custom = list(custom_rules)
+
+    # Shortcut: all built-in rules kept and no custom rules — use the default config unchanged.
+    if not custom_rules and len(filtered_base) == len(base_rules):
         return None
-    config["rules"] = filtered
+
+    all_rules = filtered_base + selected_custom
+    if not all_rules:
+        return None
+
+    config["rules"] = all_rules
     fd, path = tempfile.mkstemp(suffix=".json", prefix="validation_config_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -113,6 +165,11 @@ def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
         except OSError:
             pass
         raise
+
+
+def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
+    """Backwards-compat wrapper: create temp config with only the selected built-in rules."""
+    return _create_merged_config(dataset, rule_ids, [])
 
 
 def _llm_review_enabled(llm_review: str | None) -> bool:
@@ -400,6 +457,7 @@ async def _run_custom_validation_impl(
     dataset_name: str | None = None,
     existence_checks: str | None = None,
     session_id: str | None = None,
+    custom_rules: list[dict] | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream.
 
@@ -522,7 +580,7 @@ async def _run_custom_validation_impl(
     logger.info("custom run dataset_name=%r baseline_name=%s request_id=%s", dataset_name, baseline_name, request_id)
 
     rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
-    config_path = _create_filtered_config("custom", rule_ids)
+    config_path = _create_merged_config("custom", rule_ids, list(custom_rules or []))
 
     extra_env = _existence_checks_env(existence_checks)
     logger.info(
@@ -593,6 +651,7 @@ async def run_custom_validation_stream(
     llm_model: str | None = Form(None),
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
+    custom_rules_json: str | None = Form(None),
 ):
     """Run validation with streaming output.
 
@@ -601,9 +660,22 @@ async def run_custom_validation_stream(
     - GCS session:   include session_id (from /api/prepare-upload) without file fields;
                      the server downloads the files from GCS before running validation.
     """
+    custom_rules: list[dict] = []
+    if custom_rules_json:
+        try:
+            parsed = json.loads(custom_rules_json)
+            if not isinstance(parsed, list):
+                raise HTTPException(status_code=400, detail="custom_rules_json must be a JSON array")
+            err = _validate_custom_rules(parsed)
+            if err:
+                raise HTTPException(status_code=400, detail=err)
+            custom_rules = parsed
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="custom_rules_json is not valid JSON")
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
         dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
+        custom_rules=custom_rules,
     )
 
 
@@ -620,6 +692,7 @@ async def run_custom_validation(
     llm_model: str | None = Form(None),
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
+    custom_rules_json: str | None = Form(None),
 ):
     """Run validation (non-streaming).
 
@@ -627,9 +700,22 @@ async def run_custom_validation(
     - Direct upload: include tmcf and csv as multipart file fields (default).
     - GCS session:   include session_id (from /api/prepare-upload) without file fields.
     """
+    custom_rules: list[dict] = []
+    if custom_rules_json:
+        try:
+            parsed = json.loads(custom_rules_json)
+            if not isinstance(parsed, list):
+                raise HTTPException(status_code=400, detail="custom_rules_json must be a JSON array")
+            err = _validate_custom_rules(parsed)
+            if err:
+                raise HTTPException(status_code=400, detail=err)
+            custom_rules = parsed
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="custom_rules_json is not valid JSON")
     return await _run_custom_validation_impl(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
         dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
+        custom_rules=custom_rules,
     )
 
 
@@ -947,6 +1033,9 @@ def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
 # or scripted calls could exhaust the API key quota.
 _FLUCTUATION_INTERP_SEMAPHORE = threading.Semaphore(5)
 
+# Limit concurrent NL → SQL generation calls (each makes a Gemini API request).
+_GENERATE_SQL_RULE_SEMAPHORE = asyncio.Semaphore(3)
+
 
 class FluctuationInterpretationRequest(BaseModel):
     """Request body for optional AI interpretation of a fluctuation sample (advisory only)."""
@@ -1042,6 +1131,188 @@ def get_rule_failure_samples(dataset: str, run_id: str | None = Query(None)):
         enrich_rule_failure_samples(samples, DATASET_OUTPUT_MAP[dataset], results)
 
     return {"exists": True, "samples": samples}
+
+
+@app.get("/api/config-errors/{dataset}")
+def get_config_errors(dataset: str, run_id: str | None = Query(None)):
+    """Return CONFIG_ERROR entries from validation_output.json for the given run.
+
+    CONFIG_ERROR is emitted by SQL_VALIDATOR when the query is malformed (syntax
+    error, invalid column reference, etc.).  These are surfaced separately in the UI
+    so users see a clear error message instead of a silent pass.
+    """
+    if dataset not in DATASET_OUTPUT_MAP:
+        raise HTTPException(status_code=404, detail="Unknown dataset")
+    raw = _resolve_artifact(dataset, run_id, "validation_output.json")
+    if raw is None:
+        return {"exists": False, "errors": []}
+    try:
+        results = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {"exists": True, "errors": []}
+    if not isinstance(results, list):
+        results = []
+    errors = [
+        {
+            "rule_id": r.get("validation_name") or "",
+            "message": r.get("message") or "",
+        }
+        for r in results
+        if r.get("status") == "CONFIG_ERROR"
+    ]
+    return {"exists": True, "errors": errors}
+
+
+class _GenerateSqlRuleRequest(BaseModel):
+    prompt: str
+    dataset: str | None = None
+    tmcf_schema: str | None = None
+    csv_columns: list[str] | None = None
+
+
+@app.post("/api/generate-sql-rule")
+async def generate_sql_rule(body: _GenerateSqlRuleRequest):
+    """Generate a SQL validation rule (query + condition) from a natural language description.
+
+    Requires GEMINI_API_KEY or GOOGLE_API_KEY.  Calls Gemini, parses the JSON response,
+    runs the existing DuckDB EXPLAIN pre-check, and returns {query, condition, rule_id}.
+    """
+    api_key = _get_gemini_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM not configured — set GEMINI_API_KEY or GOOGLE_API_KEY",
+        )
+    prompt_text = (body.prompt or "").strip()
+    if not prompt_text:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if len(prompt_text) > 2000:
+        raise HTTPException(status_code=400, detail="prompt too long (max 2000 characters)")
+
+    try:
+        from google import genai
+    except ImportError:
+        raise HTTPException(status_code=503, detail="google-genai package not installed")
+
+    columns_hint = ""
+    if body.csv_columns:
+        safe_cols = ", ".join(body.csv_columns[:50])  # cap to avoid prompt bloat
+        columns_hint = f"\nActual columns in dataset: {safe_cols}"
+
+    system_prompt = (
+        "You are a data validation rule generator for DC import datasets.\n\n"
+        "## Execution model\n"
+        "The pipeline runs exactly:\n"
+        "  WITH _data AS ({query}) SELECT * FROM _data WHERE NOT ({condition})\n"
+        "Any row returned by that expression is a FAILURE.\n\n"
+        "## Your task\n"
+        "Write a rule where:\n"
+        "- `query` selects the rows that SHOULD NOT EXIST (i.e. the failing rows).\n"
+        "  A passing dataset produces zero rows from this query.\n"
+        "- `condition` is always the literal string `TRUE`.\n"
+        "  Because the query already filters to failing rows, no further condition is needed.\n\n"
+        "## SQL constraints (strictly enforced)\n"
+        "- Only SELECT statements. No INSERT, UPDATE, DELETE, DROP, CREATE, or any DDL/DML.\n"
+        "- Only the table `observations` is available. No subqueries referencing other tables.\n"
+        "- No semicolons anywhere.\n"
+        "- Valid DuckDB SQL only.\n"
+        "- Do NOT use COUNT(), SUM(), AVG(), MIN(), MAX(), or GROUP BY.\n"
+        "  The query must return individual failing rows, not aggregates.\n"
+        "- Always end the query with LIMIT 1000.\n\n"
+        "## Schema\n"
+        "Table `observations` standard columns:\n"
+        "  StatVar TEXT, Value REAL, observationAbout TEXT, observationDate TEXT, unit TEXT\n"
+        "Use only these columns unless the user message specifies additional ones.\n\n"
+        "## DuckDB SQL notes\n"
+        "- For regex matching use REGEXP_MATCHES(col, 'pattern') or col ~ 'pattern'.\n"
+        "- Do NOT use REGEXP_FULL_MATCH, REGEXP_LIKE, RLIKE, or any other dialect-specific regex function.\n\n"
+        "## Output format\n"
+        "Output ONLY a JSON object with exactly two string keys.\n"
+        "No markdown fences. No explanation. No extra keys. No trailing text.\n"
+        "Example 1: {\"query\": \"SELECT * FROM observations WHERE Value < 0 LIMIT 1000\", \"condition\": \"TRUE\"}\n"
+        "Example 2: {\"query\": \"SELECT * FROM observations WHERE NOT REGEXP_MATCHES(observationDate, '^[0-9]{4}$') LIMIT 1000\", \"condition\": \"TRUE\"}"
+    )
+    user_prompt = f"Rule description: {prompt_text}{columns_hint}"
+    full_prompt = system_prompt + "\n\n" + user_prompt
+
+    try:
+        async with _GENERATE_SQL_RULE_SEMAPHORE:
+            client = genai.Client(api_key=api_key)
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents=full_prompt,
+            )
+        text = (getattr(response, "text", None) or "").strip()
+        if not text and getattr(response, "candidates", None):
+            for c in response.candidates:
+                if getattr(c, "content", None) and getattr(c.content, "parts", None):
+                    for p in c.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text.strip()
+                            break
+                if text:
+                    break
+    except Exception as exc:
+        logger.warning("generate_sql_rule llm_error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}")
+
+    # Strip markdown code fences if the model added them despite instructions.
+    if text.startswith("```"):
+        lines = [ln for ln in text.splitlines() if not ln.startswith("```")]
+        text = "\n".join(lines).strip()
+
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("generate_sql_rule invalid_json response=%s", text[:300])
+        raise HTTPException(
+            status_code=400,
+            detail=f"LLM returned invalid JSON. Response: {text[:200]}",
+        )
+
+    query = (result.get("query") or "").strip().rstrip(";")
+    condition = (result.get("condition") or "").strip()
+    if not query or not condition:
+        raise HTTPException(
+            status_code=400,
+            detail="LLM response is missing 'query' or 'condition'",
+        )
+
+    # Reject aggregate queries — they return summary counts, not failing rows.
+    query_upper = query.upper()
+    _FORBIDDEN = ("COUNT(", "SUM(", "AVG(", "MIN(", "MAX(", "GROUP BY")
+    for token in _FORBIDDEN:
+        if token in query_upper:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Generated query uses '{token.strip()}' which is not allowed. "
+                    "Rules must return individual failing rows, not aggregates. "
+                    "Try rephrasing your description."
+                ),
+            )
+
+    # Enforce LIMIT — append if absent so runaway queries can't scan unbounded rows.
+    if "LIMIT" not in query_upper:
+        query = query + " LIMIT 1000"
+
+    # Reuse existing DuckDB EXPLAIN pre-check to catch obvious syntax errors.
+    # _validate_custom_rules injects a dummy observations CTE internally so the
+    # table reference resolves even though no dataset is loaded at this point.
+    sql_err = _validate_custom_rules([{
+        "rule_id": "tmp",
+        "params": {"query": query, "condition": condition},
+    }])
+    if sql_err:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Generated SQL is invalid — try rephrasing your description. Detail: {sql_err}",
+        )
+
+    rule_id = "custom_sql_" + secrets.token_hex(4)
+    logger.info("generate_sql_rule rule_id=%s prompt_len=%d", rule_id, len(prompt_text))
+    return {"query": query, "condition": condition, "rule_id": rule_id}
 
 
 @app.get("/api/review-summary/{dataset}")
@@ -1531,6 +1802,8 @@ class _SubmitJobRequest(BaseModel):
     baseline_name: str = ""
     import_resolution_mode: str = "LOCAL"
     existence_checks: str = "false"
+    # Per-run custom SQL rules (not persisted; merged into the config for this run only).
+    custom_rules: list[dict] = []
 
 
 @app.post("/api/jobs")
@@ -1561,6 +1834,33 @@ async def submit_batch_job(body: _SubmitJobRequest):
         if not body.csv_filenames:
             raise HTTPException(status_code=400, detail="csv_filenames is required for custom dataset")
 
+    if body.custom_rules:
+        err = _validate_custom_rules(body.custom_rules)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
+    # For the Batch path, create the merged validation config on the server and upload
+    # it to GCS so the Batch VM can download it via MERGED_CONFIG_GCS_PATH.
+    # This covers both rule filtering (body.rules) and custom SQL rules (body.custom_rules).
+    # The Batch VM never merges — it only downloads and passes --config= to the pipeline.
+    merged_config_gcs_path = ""
+    if body.custom_rules or body.rules:
+        dataset_key = dataset if dataset in DATASET_CONFIG_MAP else "custom"
+        rule_ids = [x.strip() for x in body.rules.split(",") if x.strip()] if body.rules else []
+        _merged_tmp = _create_merged_config(dataset_key, rule_ids, body.custom_rules)
+        _merged_tmp_path = _merged_tmp  # may be None
+        if _merged_tmp:
+            try:
+                merged_config_gcs_path = await asyncio.to_thread(
+                    gcs_reports.upload_merged_config_to_gcs, run_id, _merged_tmp
+                )
+            except Exception as exc:
+                logger.error("upload_merged_config_to_gcs failed run_id=%s: %s", run_id, exc)
+                raise HTTPException(status_code=500, detail=f"Failed to upload merged config to GCS: {exc}")
+            finally:
+                if _merged_tmp_path and _merged_tmp_path.exists():
+                    _merged_tmp_path.unlink()
+
     input_files = _InputFiles(
         gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
         tmcf_filename=body.tmcf_filename,
@@ -1574,6 +1874,7 @@ async def submit_batch_job(body: _SubmitJobRequest):
         baseline_name=body.baseline_name,
         import_resolution_mode=body.import_resolution_mode,
         import_existence_checks=body.existence_checks,
+        merged_config_gcs_path=merged_config_gcs_path,
     )
 
     try:
@@ -1591,7 +1892,11 @@ async def submit_batch_job(body: _SubmitJobRequest):
         logger.exception("submit_batch_job failed run_id=%s dataset=%s", run_id, dataset)
         raise HTTPException(status_code=500, detail=f"Failed to submit Batch job: {exc}")
 
-    logger.info("batch_job_submitted run_id=%s dataset=%s job_name=%s", run_id, dataset, job_name)
+    custom_rule_ids = [r.get("rule_id") for r in body.custom_rules] if body.custom_rules else []
+    logger.info(
+        "batch_job_submitted run_id=%s dataset=%s job_name=%s custom_rules=%s",
+        run_id, dataset, job_name, custom_rule_ids,
+    )
     return {"run_id": run_id, "job_name": job_name}
 
 

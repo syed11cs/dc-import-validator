@@ -57,6 +57,7 @@ STAT_VARS_SCHEMA_MCF_FILENAME="${STAT_VARS_SCHEMA_MCF_FILENAME:-}"
 LLM_REVIEW="${LLM_REVIEW:-false}"
 RULES_FILTER="${RULES_FILTER:-}"
 SKIP_RULES_FILTER="${SKIP_RULES_FILTER:-}"
+MERGED_CONFIG_GCS_PATH="${MERGED_CONFIG_GCS_PATH:-}"
 BASELINE_NAME="${BASELINE_NAME:-}"
 BATCH_JOB_NAME="${BATCH_JOB_NAME:-}"
 VM_TYPE="${VM_TYPE:-}"
@@ -262,9 +263,45 @@ else
     E2E_ARGS+=("--no-llm-review")
 fi
 
-# Rule filters are mutually exclusive; batch_runner enforces this before submission.
-[[ -n "$RULES_FILTER" ]] && E2E_ARGS+=("--rules=${RULES_FILTER}")
-[[ -n "$SKIP_RULES_FILTER" ]] && E2E_ARGS+=("--skip-rules=${SKIP_RULES_FILTER}")
+# When a merged config is present it already encodes the full rule selection
+# (filtered built-in rules + all custom SQL rules). Passing --rules= on top would
+# re-filter the merged config by built-in IDs, silently dropping custom rules.
+# Rule filter args are only needed when no merged config is in use.
+if [[ -z "$MERGED_CONFIG_GCS_PATH" ]]; then
+    [[ -n "$RULES_FILTER" ]] && E2E_ARGS+=("--rules=${RULES_FILTER}")
+    [[ -n "$SKIP_RULES_FILTER" ]] && E2E_ARGS+=("--skip-rules=${SKIP_RULES_FILTER}")
+fi
+
+# When the UI submitted custom SQL rules or a rule filter, the server pre-merged
+# them into a config JSON and uploaded it to GCS. Download it here and pass
+# --config= so the pipeline uses the merged rule set without touching the baked-in
+# config file. Merging is done entirely on the server; this block only downloads.
+if [[ -n "$MERGED_CONFIG_GCS_PATH" ]]; then
+    _MERGED_CONFIG="/tmp/validation_config_${RUN_ID}.json"
+    if ! gsutil cp "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG"; then
+        log "ERROR: Failed to download merged config from GCS: ${MERGED_CONFIG_GCS_PATH}"
+        log "ERROR: Cannot proceed — custom rules would be silently skipped. Aborting."
+        write_status "0" "Starting" "failed" \
+            "CONFIG_DOWNLOAD_FAILED" \
+            "Failed to download merged validation config from GCS: ${MERGED_CONFIG_GCS_PATH}"
+        exit 1
+    fi
+    E2E_ARGS+=("--config=${_MERGED_CONFIG}")
+    log "Downloaded merged config from GCS: ${MERGED_CONFIG_GCS_PATH}"
+    # Log which custom SQL rules are present in the merged config for debugging.
+    _custom_rule_ids="$(MERGED_CONFIG="$_MERGED_CONFIG" python3 <<'PYEOF' 2>/dev/null || echo '(parse error)'
+import json, os
+try:
+    with open(os.environ['MERGED_CONFIG']) as f:
+        rules = json.load(f).get('rules', [])
+    ids = [r['rule_id'] for r in rules if r.get('validator') == 'SQL_VALIDATOR']
+    print(', '.join(ids) if ids else '(none)')
+except Exception as e:
+    print('(could not parse: ' + str(e) + ')')
+PYEOF
+)"
+    log "Custom SQL rules in config: ${_custom_rule_ids}"
+fi
 
 log "Running: ${SCRIPT_DIR}/run_e2e_test.sh ${E2E_ARGS[*]}"
 
@@ -359,6 +396,45 @@ try:
 except Exception:
     pass
 " "${PIPELINE_OUTPUT}/pipeline_failure.json" 2>/dev/null || true)"
+    fi
+
+    # Priority 3: CONFIG_ERROR or FAILED rules in validation_output.json.
+    # Surfaces the actual SQL execution error instead of the generic exit-code message.
+    if [[ -z "$FAILURE_CODE" && -f "${PIPELINE_OUTPUT}/validation_output.json" ]]; then
+        FAILURE_CODE="$(python3 -c "
+import json, sys
+try:
+    results = json.load(open(sys.argv[1]))
+    for r in results:
+        if r.get('status') == 'CONFIG_ERROR':
+            print('CONFIG_ERROR')
+            sys.exit(0)
+    for r in results:
+        if r.get('status') == 'FAILED':
+            print('VALIDATION_FAILED')
+            sys.exit(0)
+except Exception:
+    pass
+" "${PIPELINE_OUTPUT}/validation_output.json" 2>/dev/null || true)"
+        FAILURE_MESSAGE="$(python3 -c "
+import json, sys
+try:
+    results = json.load(open(sys.argv[1]))
+    for r in results:
+        if r.get('status') in ('CONFIG_ERROR', 'FAILED'):
+            rid = r.get('validation_name', '')
+            msg = r.get('message', '')
+            label = 'SQL config error' if r.get('status') == 'CONFIG_ERROR' else 'Rule failed'
+            parts = [label]
+            if rid:
+                parts.append(rid)
+            if msg:
+                parts.append(msg)
+            print(': '.join(parts))
+            sys.exit(0)
+except Exception:
+    pass
+" "${PIPELINE_OUTPUT}/validation_output.json" 2>/dev/null || true)"
     fi
 
     # Fallback: generic failure with exit code.
