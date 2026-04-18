@@ -743,7 +743,10 @@ if [[ -f "$VALIDATION_OUTPUT" && -f "$WARN_ONLY_RULES" ]]; then
   log_info "Applying warn_only overrides..."
   if $PYTHON "$SCRIPT_DIR/scripts/apply_warn_only.py" "$VALIDATION_OUTPUT" \
     --warn_only_rules="$WARN_ONLY_RULES" --dataset="$DATASET" --check_blockers; then
-    VALIDATION_RESULT=0
+    # apply_warn_only found no blocking failures, but the runner's own exit code
+    # is authoritative: a crashed or partial runner (RUNNER_EXIT=1) is always a
+    # failure even when the partial output file contains only PASSED entries.
+    VALIDATION_RESULT=$RUNNER_EXIT
   else
     VALIDATION_RESULT=1
   fi

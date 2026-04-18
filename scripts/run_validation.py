@@ -202,10 +202,32 @@ def main() -> int:
                 differ_output=args.differ_output,
                 python=python,
             )
-            if len(dc_results) < len(dc_rules):
-                # Runner failed or wrote partial output; treat as failure
+            # Always check by rule_id, not just by count. A length-only check can
+            # miss cases where the runner emits the right number of results but with
+            # duplicate validation_names, leaving some rules with no result.
+            returned_ids = {r.get("validation_name") for r in dc_results}
+            missing_rules = [rule for rule in dc_rules if rule.get("rule_id", "") not in returned_ids]
+            if missing_rules:
+                # DC runner crashed or wrote partial output. Inject a synthetic FAILED
+                # result for every rule whose result is missing so that:
+                #   1. validation_output.json is self-describing (no silent gaps).
+                #   2. apply_warn_only.py sees FAILED entries and exits 1.
+                #   3. The final HTML report shows which rules did not execute.
+                for rule in missing_rules:
+                    dc_results.append({
+                        "validation_name": rule.get("rule_id", ""),
+                        "status": "FAILED",
+                        "message": (
+                            "Rule did not execute — DC runner exited before producing "
+                            "a result. Check runner stderr for details (e.g. import "
+                            "errors or crashes)."
+                        ),
+                        "details": {},
+                        "validation_params": rule.get("params", {}),
+                    })
                 print(
-                    "Warning: DC runner produced fewer results than rules; some checks may have failed to run.",
+                    f"DC runner produced fewer results than expected; "
+                    f"{len(missing_rules)} rule(s) marked FAILED.",
                     file=sys.stderr,
                 )
         finally:
@@ -236,11 +258,10 @@ def main() -> int:
     # CONFIG_ERROR is returned by SQL_VALIDATOR when the query is malformed (syntax
     # error, invalid column reference, etc.).  It is treated as a hard failure so
     # bad custom SQL rules are never silently ignored.
+    # Partial DC runner output is handled above by injecting synthetic FAILED entries,
+    # so combined always reflects the true state of every rule.
     _PASSING_STATUSES = frozenset({"PASSED", "WARNING"})
     all_passed = all(r.get("status") in _PASSING_STATUSES for r in combined)
-    dc_run_ok = not dc_rules or len(dc_results) >= len(dc_rules)
-    if not dc_run_ok:
-        return 1  # DC runner failed or produced partial output
     return 0 if all_passed else 1
 
 
