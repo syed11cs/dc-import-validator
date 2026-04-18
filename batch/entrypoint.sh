@@ -189,44 +189,9 @@ if [[ "$DATASET" == "custom" ]]; then
     ACTUAL_PREFIX="${GCS_INPUT_PREFIX:-inputs/${RUN_ID}}"
     log "Downloading inputs from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
 
-    WORKSPACE="$WORKSPACE" python3 -c "
-import os, sys
-from pathlib import Path
-from google.cloud import storage
-
-client  = storage.Client()
-bucket  = client.bucket(os.environ['GCS_REPORTS_BUCKET'])
-# GCS_INPUT_PREFIX lets the caller (batch_runner) specify where input files
-# live without constraining the upload path.  Falls back to the convention
-# used by direct uploads: inputs/<run_id>/.
-prefix  = os.environ.get('GCS_INPUT_PREFIX') or ('inputs/' + os.environ['RUN_ID'])
-prefix  = prefix.rstrip('/') + '/'
-dest    = Path(os.environ['WORKSPACE'])
-dest.mkdir(parents=True, exist_ok=True)
-
-blobs = [b for b in bucket.list_blobs(prefix=prefix) if not b.name.endswith('/')]
-if not blobs:
-    print(
-        'ERROR: No input files found at gs://' +
-        os.environ['GCS_REPORTS_BUCKET'] + '/' + prefix,
-        flush=True,
-    )
-    sys.exit(1)
-
-for blob in blobs:
-    filename = blob.name.split('/')[-1]
-    if not filename:
-        continue
-    local_path = dest / filename
-    blob.download_to_filename(str(local_path))
-    size_mb = (blob.size or 0) / (1024 * 1024)
-    print(f'[download] {blob.name} -> {local_path} ({size_mb:.1f} MB)', flush=True)
-
-print(f'[download] Complete: {len(blobs)} file(s) downloaded', flush=True)
-" 2>&1
-
-    if [[ $? -ne 0 ]]; then
-        log "ERROR: Input download failed"
+    if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+            "gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/" "${WORKSPACE}/"; then
+        log "ERROR: Input download failed from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
         write_status "0" "Starting" "failed" \
             "DOWNLOAD_FAILED" \
             "Failed to download input files from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
@@ -284,11 +249,9 @@ fi
 # config file. Merging is done entirely on the server; this block only downloads.
 if [[ -n "$MERGED_CONFIG_GCS_PATH" ]]; then
     _MERGED_CONFIG="/tmp/validation_config_${RUN_ID}.json"
-    _GCS_ERR_FILE="${WORKSPACE}/.gcs_err.txt"
-    if ! gcloud storage cp "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG" 2>"$_GCS_ERR_FILE"; then
-        _GCS_ERR="$(head -3 "$_GCS_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+    if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+            "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG"; then
         log "ERROR: Failed to download merged config from GCS: ${MERGED_CONFIG_GCS_PATH}"
-        [[ -n "$_GCS_ERR" ]] && log "ERROR: gcloud storage: ${_GCS_ERR}"
         log "ERROR: Cannot proceed — custom rules would be silently skipped. Aborting."
         write_status "0" "Starting" "failed" \
             "CONFIG_DOWNLOAD_FAILED" \
