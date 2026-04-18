@@ -432,16 +432,16 @@ async def _delete_gcs_session_bg(session_id: str) -> None:
     try:
         deleted = await asyncio.to_thread(_gcs_uploads.delete_session, session_id)
         logger.info("gcs_session_deleted session_id=%s blobs=%d", session_id, deleted)
-    except Exception:
-        logger.warning("gcs_session_delete_failed session_id=%s", session_id)
+    except Exception as exc:
+        logger.warning("gcs_session_delete_failed session_id=%s: %s", session_id, exc)
 
 
 async def _safe_delete_session(session_id: str) -> None:
     """Outer safety wrapper around _delete_gcs_session_bg for asyncio.create_task."""
     try:
         await _delete_gcs_session_bg(session_id)
-    except Exception:
-        logger.warning("background session delete failed session_id=%s", session_id)
+    except Exception as exc:
+        logger.warning("background session delete failed session_id=%s: %s", session_id, exc)
 
 
 async def _run_custom_validation_impl(

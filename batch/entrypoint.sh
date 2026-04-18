@@ -98,6 +98,12 @@ log() {
 
 log "Starting: RUN_ID=${RUN_ID} DATASET=${DATASET} VM_TYPE=${VM_TYPE:-unset}"
 
+# Log the active service account so GCS auth failures can be traced to the right identity.
+_SA_EMAIL="$(curl -sf -H 'Metadata-Flavor: Google' \
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email' \
+    2>/dev/null || echo 'unknown (metadata unavailable)')"
+log "Auth: active_service_account=${_SA_EMAIL}"
+
 # ─── write_status ─────────────────────────────────────────────────────────────
 #
 # Writes jobs/<RUN_ID>/status.json to GCS.
@@ -278,8 +284,11 @@ fi
 # config file. Merging is done entirely on the server; this block only downloads.
 if [[ -n "$MERGED_CONFIG_GCS_PATH" ]]; then
     _MERGED_CONFIG="/tmp/validation_config_${RUN_ID}.json"
-    if ! gsutil cp "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG"; then
+    _GCS_ERR_FILE="${WORKSPACE}/.gcs_err.txt"
+    if ! gcloud storage cp "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG" 2>"$_GCS_ERR_FILE"; then
+        _GCS_ERR="$(head -3 "$_GCS_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
         log "ERROR: Failed to download merged config from GCS: ${MERGED_CONFIG_GCS_PATH}"
+        [[ -n "$_GCS_ERR" ]] && log "ERROR: gcloud storage: ${_GCS_ERR}"
         log "ERROR: Cannot proceed — custom rules would be silently skipped. Aborting."
         write_status "0" "Starting" "failed" \
             "CONFIG_DOWNLOAD_FAILED" \
