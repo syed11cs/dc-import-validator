@@ -93,6 +93,9 @@ def _validate_custom_rules(custom_rules: list) -> str | None:
     for i, rule in enumerate(custom_rules):
         if not isinstance(rule, dict):
             return f"custom_rules[{i}] must be an object"
+        rule_id = rule.get("rule_id")
+        if not isinstance(rule_id, str) or not rule_id.strip():
+            return f"custom_rules[{i}].rule_id is required and must be a non-empty string"
         params = rule.get("params") or {}
         if not isinstance(params.get("query"), str) or not params["query"].strip():
             return f"custom_rules[{i}].params.query is required and must be a non-empty string"
@@ -119,6 +122,28 @@ def _validate_custom_rules(custom_rules: list) -> str | None:
     return None
 
 
+def _normalize_custom_rule(rule: dict) -> dict:
+    """Return a copy of a custom rule with all fields required by validate_config_template.py.
+
+    The template validator requires: rule_id, description, validator, scope, params.
+    Custom rules submitted from the UI include rule_id/validator/scope/params but omit
+    description, so we add a default here rather than requiring every caller to supply it.
+    Only the five required fields (plus optional 'enabled') are allowed by the validator,
+    so this function explicitly builds the output dict to avoid passing unknown keys through.
+    """
+    rule_id = rule["rule_id"]  # guaranteed non-empty by _validate_custom_rules
+    normalized: dict = {
+        "rule_id": rule_id,
+        "description": rule.get("description") or f"Custom SQL rule: {rule_id}",
+        "validator": rule.get("validator") or "SQL_VALIDATOR",
+        "scope": rule.get("scope") or {"data_source": "stats"},
+        "params": rule.get("params") or {},
+    }
+    if "enabled" in rule:
+        normalized["enabled"] = rule["enabled"]
+    return normalized
+
+
 def _create_merged_config(dataset: str, rule_ids: list[str], custom_rules: list[dict]) -> Path | None:
     """Create temp config with filtered built-in rules plus appended custom rules.
 
@@ -140,10 +165,10 @@ def _create_merged_config(dataset: str, rule_ids: list[str], custom_rules: list[
     if rule_ids:
         rule_id_set = set(rule_ids)
         filtered_base = [r for r in base_rules if r.get("rule_id") in rule_id_set]
-        selected_custom = list(custom_rules)  # custom rules are never filtered by built-in rule IDs
+        selected_custom = [_normalize_custom_rule(r) for r in custom_rules]
     else:
         filtered_base = list(base_rules)
-        selected_custom = list(custom_rules)
+        selected_custom = [_normalize_custom_rule(r) for r in custom_rules]
 
     # Shortcut: all built-in rules kept and no custom rules — use the default config unchanged.
     if not custom_rules and len(filtered_base) == len(base_rules):
