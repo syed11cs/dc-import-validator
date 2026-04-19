@@ -13,3 +13,11 @@ google-cloud-storage
 
 # Required by tools/import_differ/import_differ.py (top-level import; needed even for local runner mode)
 google-api-python-client
+
+# Required by util/{counters,file_util,config_map}.py and tools/statvar_importer/{mcf_file_util,data_sampler,mcf_diff}.py
+# which are transitively imported at module load time by validator.py via validator_goldens.py
+# (upstream commit c278165c added these unconditional top-level imports to validator.py).
+psutil
+gspread
+chardet
+retry

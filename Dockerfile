@@ -13,9 +13,13 @@ WORKDIR /app
 ARG DATA_REPO_URL=https://github.com/datacommonsorg/data.git
 
 # Sparse clone: tools/import_validation (runner) + tools/import_differ (differ step)
+# Also includes util/ and tools/statvar_importer/ because validator.py (as of upstream commit
+# c278165c) unconditionally imports util/counters.py and tools/import_validation/validator_goldens.py,
+# which in turn imports tools/statvar_importer/{mcf_diff,data_sampler,mcf_file_util}.py and util/file_util.py
+# at module load time. These imports happen even when the GOLDENS_CHECK validator is not used.
 RUN git clone --depth 1 --filter=blob:none --sparse "${DATA_REPO_URL}" datacommonsorg/data \
     && cd datacommonsorg/data \
-    && git sparse-checkout set tools/import_validation tools/import_differ \
+    && git sparse-checkout set tools/import_validation tools/import_differ util tools/statvar_importer \
     && rm -rf .git
 
 # ------------------------------------------------------------------------------
