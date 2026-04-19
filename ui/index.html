@@ -277,7 +277,7 @@
     #sql-rule-desc-row { display: flex; gap: 6px; align-items: flex-start; }
     #sql-rule-desc { flex: 1; box-sizing: border-box; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; min-height: 48px; }
     #sql-rule-desc:focus { outline: none; border-color: var(--accent); }
-    #sql-generate-btn { flex-shrink: 0; align-self: flex-end; }
+    #sql-generate-btn { flex-shrink: 0; align-self: flex-end; width: auto; }
     #sql-rule-error { font-size: 0.75rem; color: var(--fail); display: none; }
     #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
     #sql-rule-editor textarea, #sql-rule-editor input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
@@ -1633,16 +1633,18 @@
           <div id="custom-rules-list"></div>
           <div id="sql-rule-editor">
             <div id="sql-rule-desc-row">
-              <textarea id="sql-rule-desc" rows="2" placeholder="Describe a rule (optional — e.g. 'no negative population values')"></textarea>
+              <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'no negative values')"></textarea>
               <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate SQL</button>
             </div>
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">Generate fills the fields below. Click 'Add Rule' to save.</div>
             <div id="sql-rule-error"></div>
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">You can review and edit the generated SQL if needed</div>
             <div>
-              <label for="sql-rule-query">SQL Query <span style="color:var(--fail);">*</span></label>
+              <label for="sql-rule-query" style="color:var(--text-muted);">SQL Query <span style="color:var(--fail);">*</span></label>
               <textarea id="sql-rule-query" rows="3" placeholder="SELECT StatVar, MinValue FROM stats"></textarea>
             </div>
             <div>
-              <label for="sql-rule-condition">Condition <span style="color:var(--fail);">*</span></label>
+              <label for="sql-rule-condition" style="color:var(--text-muted);">Condition <span style="color:var(--fail);">*</span></label>
               <input type="text" id="sql-rule-condition" placeholder="e.g. MinValue >= 0">
             </div>
             <div>
@@ -4748,7 +4750,7 @@
 
       generateBtn.addEventListener('click', async () => {
         const prompt = (descEl.value || '').trim();
-        if (!prompt) { showError('Enter a description to generate SQL.'); return; }
+        if (!prompt) { showError('Please describe the rule to generate SQL.'); return; }
         showError('');
         generateBtn.disabled = true;
         descEl.disabled = true;
