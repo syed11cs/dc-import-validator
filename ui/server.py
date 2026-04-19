@@ -1578,7 +1578,8 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         )
 
     # Post-generation semantic/direction validator.
-    post_err = _post_validate_sql_rule(body.description, query, condition)
+    desc = getattr(body, "description", None) or getattr(body, "prompt", None) or ""
+    post_err = _post_validate_sql_rule(desc, query, condition)
     if post_err:
         raise HTTPException(status_code=400, detail=post_err)
 
