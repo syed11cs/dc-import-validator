@@ -273,23 +273,15 @@
     .custom-rule-edit-cancel { font-size: 0.75rem; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius); cursor: pointer; }
     .custom-rule-edit-cancel:hover { color: var(--text); }
     .custom-rule-editing { background: rgba(99,102,241,0.04); }
-    #nl-sql-section { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); }
-    #nl-sql-prompt { width: 100%; box-sizing: border-box; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; min-height: 48px; }
-    #nl-sql-prompt:focus { outline: none; border-color: var(--accent); }
-    #nl-sql-generate-btn { margin-top: 6px; }
-    #nl-sql-error { font-size: 0.75rem; color: var(--fail); display: none; margin-top: 4px; }
-    #nl-sql-preview { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-    #nl-sql-preview label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 2px; }
-    #nl-sql-preview textarea, #nl-sql-preview input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
-    #nl-sql-preview textarea:focus, #nl-sql-preview input[type="text"]:focus { outline: none; border-color: var(--accent); }
-    #nl-sql-preview-actions { display: flex; gap: 6px; }
-    #add-sql-rule-toggle { cursor: pointer; font-size: 0.78rem; color: var(--accent); user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; }
-    #add-sql-rule-toggle::-webkit-details-marker { display: none; }
-    #add-sql-rule-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-    #add-sql-rule-form label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
-    #add-sql-rule-form textarea, #add-sql-rule-form input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
-    #add-sql-rule-form textarea:focus, #add-sql-rule-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
-    #custom-sql-error { font-size: 0.75rem; color: var(--fail); display: none; }
+    #sql-rule-editor { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); display: flex; flex-direction: column; gap: 8px; }
+    #sql-rule-desc-row { display: flex; gap: 6px; align-items: flex-start; }
+    #sql-rule-desc { flex: 1; box-sizing: border-box; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; min-height: 48px; }
+    #sql-rule-desc:focus { outline: none; border-color: var(--accent); }
+    #sql-generate-btn { flex-shrink: 0; align-self: flex-end; }
+    #sql-rule-error { font-size: 0.75rem; color: var(--fail); display: none; }
+    #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
+    #sql-rule-editor textarea, #sql-rule-editor input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
+    #sql-rule-editor textarea:focus, #sql-rule-editor input[type="text"]:focus { outline: none; border-color: var(--accent); }
     .rules-category .rule-item { margin-left: 0; }
     .rule-id { font-weight: 500; }
     .rule-desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
@@ -1639,45 +1631,26 @@
         <div id="custom-sql-section">
           <div id="custom-sql-section-label">Custom SQL Rules</div>
           <div id="custom-rules-list"></div>
-          <div id="nl-sql-section">
-            <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;">Generate from description</div>
-            <textarea id="nl-sql-prompt" rows="2" placeholder="Describe a rule (e.g. 'no negative population values')"></textarea>
-            <button type="button" id="nl-sql-generate-btn" class="btn btn-sm" style="width:auto;">Generate SQL</button>
-            <div id="nl-sql-error"></div>
-            <div id="nl-sql-preview" style="display:none;">
-              <div>
-                <label for="nl-sql-query">SQL Query</label>
-                <textarea id="nl-sql-query" rows="3"></textarea>
-              </div>
-              <div>
-                <label for="nl-sql-condition">Condition</label>
-                <input type="text" id="nl-sql-condition">
-              </div>
-              <div id="nl-sql-preview-actions">
-                <button type="button" id="nl-sql-add-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
-                <button type="button" id="nl-sql-cancel-btn" class="btn btn-sm btn-secondary" style="width:auto;">Cancel</button>
-              </div>
+          <div id="sql-rule-editor">
+            <div id="sql-rule-desc-row">
+              <textarea id="sql-rule-desc" rows="2" placeholder="Describe a rule (optional — e.g. 'no negative population values')"></textarea>
+              <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate SQL</button>
             </div>
+            <div id="sql-rule-error"></div>
+            <div>
+              <label for="sql-rule-query">SQL Query <span style="color:var(--fail);">*</span></label>
+              <textarea id="sql-rule-query" rows="3" placeholder="SELECT StatVar, MinValue FROM stats"></textarea>
+            </div>
+            <div>
+              <label for="sql-rule-condition">Condition <span style="color:var(--fail);">*</span></label>
+              <input type="text" id="sql-rule-condition" placeholder="e.g. MinValue >= 0">
+            </div>
+            <div>
+              <label for="sql-rule-id">Rule ID <span style="font-weight:400;">(optional — auto-generated if empty)</span></label>
+              <input type="text" id="sql-rule-id" placeholder="e.g. check_min_value">
+            </div>
+            <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
           </div>
-          <details id="add-sql-rule-details">
-            <summary id="add-sql-rule-toggle">+ Add SQL Rule</summary>
-            <div id="add-sql-rule-form">
-              <div>
-                <label for="custom-sql-rule-id">Rule ID <span style="font-weight:400;">(optional — auto-generated if empty)</span></label>
-                <input type="text" id="custom-sql-rule-id" placeholder="e.g. check_no_duplicates">
-              </div>
-              <div>
-                <label for="custom-sql-query">SQL Query <span style="color:var(--fail);">*</span></label>
-                <textarea id="custom-sql-query" rows="3" placeholder="SELECT StatVar, MinValue FROM stats"></textarea>
-              </div>
-              <div>
-                <label for="custom-sql-condition">Condition <span style="color:var(--fail);">*</span></label>
-                <input type="text" id="custom-sql-condition" placeholder="e.g. MinValue >= 0">
-              </div>
-              <div id="custom-sql-error"></div>
-              <button type="button" id="add-custom-sql-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
-            </div>
-          </details>
         </div>
       </div>
       <div id="results-section" class="section">
@@ -2839,14 +2812,12 @@
       if (deselectAll) deselectAll.disabled = disabled;
       if (savePreset) savePreset.disabled = disabled;
       if (clearPresets) clearPresets.disabled = disabled;
-      const addSqlBtn = document.getElementById('add-custom-sql-btn');
+      const addSqlBtn = document.getElementById('sql-rule-add-btn');
       if (addSqlBtn) addSqlBtn.disabled = disabled;
       document.querySelectorAll('.custom-rule-delete').forEach(btn => { btn.disabled = disabled; });
       document.querySelectorAll('.custom-rule-edit').forEach(btn => { btn.disabled = disabled; });
-      const nlGenerateBtn = document.getElementById('nl-sql-generate-btn');
-      if (nlGenerateBtn) nlGenerateBtn.disabled = disabled;
-      const nlAddBtn = document.getElementById('nl-sql-add-btn');
-      if (nlAddBtn) nlAddBtn.disabled = disabled;
+      const sqlGenerateBtn = document.getElementById('sql-generate-btn');
+      if (sqlGenerateBtn) sqlGenerateBtn.disabled = disabled;
     }
 
     function getSelectedRuleIds() {
@@ -4746,69 +4717,19 @@
       }
     }
 
-    // ── Custom SQL rule form ────────────────────────────────────────────────────
-    document.getElementById('add-custom-sql-btn').addEventListener('click', () => {
-      const ruleIdInput = document.getElementById('custom-sql-rule-id');
-      const queryInput = document.getElementById('custom-sql-query');
-      const conditionInput = document.getElementById('custom-sql-condition');
-      const errorEl = document.getElementById('custom-sql-error');
-
-      const query = (queryInput.value || '').trim();
-      const condition = (conditionInput.value || '').trim();
-      let ruleId = (ruleIdInput.value || '').trim();
-
-      errorEl.style.display = 'none';
-      if (!query) {
-        errorEl.textContent = 'SQL Query is required.';
-        errorEl.style.display = 'block';
-        queryInput.focus();
-        return;
-      }
-      if (!condition) {
-        errorEl.textContent = 'Condition is required.';
-        errorEl.style.display = 'block';
-        conditionInput.focus();
-        return;
-      }
-      if (!ruleId) {
-        ruleId = 'custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-      }
-
-      customRulesList.push({ rule_id: ruleId, query, condition, enabled: true });
-      renderCustomRules();
-
-      ruleIdInput.value = '';
-      queryInput.value = '';
-      conditionInput.value = '';
-      document.getElementById('add-sql-rule-details').removeAttribute('open');
-    });
-
-    // ── NL → SQL generation ─────────────────────────────────────────────────────
+    // ── Unified Custom SQL Rule editor ──────────────────────────────────────────
     (function () {
-      const generateBtn = document.getElementById('nl-sql-generate-btn');
-      const promptEl    = document.getElementById('nl-sql-prompt');
-      const errorEl     = document.getElementById('nl-sql-error');
-      const previewEl   = document.getElementById('nl-sql-preview');
-      const queryEl     = document.getElementById('nl-sql-query');
-      const conditionEl = document.getElementById('nl-sql-condition');
-      const addBtn      = document.getElementById('nl-sql-add-btn');
-      const cancelBtn   = document.getElementById('nl-sql-cancel-btn');
+      const generateBtn = document.getElementById('sql-generate-btn');
+      const descEl      = document.getElementById('sql-rule-desc');
+      const errorEl     = document.getElementById('sql-rule-error');
+      const queryEl     = document.getElementById('sql-rule-query');
+      const conditionEl = document.getElementById('sql-rule-condition');
+      const ruleIdEl    = document.getElementById('sql-rule-id');
+      const addBtn      = document.getElementById('sql-rule-add-btn');
 
       function showError(msg) {
         errorEl.textContent = msg;
         errorEl.style.display = msg ? 'block' : 'none';
-      }
-
-      function showPreview(query, condition) {
-        queryEl.value = query;
-        conditionEl.value = condition;
-        previewEl.style.display = 'flex';
-      }
-
-      function hidePreview() {
-        previewEl.style.display = 'none';
-        queryEl.value = '';
-        conditionEl.value = '';
       }
 
       // Read column headers from the first uploaded CSV file (first 2 KB only).
@@ -4826,12 +4747,11 @@
       }
 
       generateBtn.addEventListener('click', async () => {
-        const prompt = (promptEl.value || '').trim();
-        if (!prompt) { showError('Please describe the rule first.'); return; }
+        const prompt = (descEl.value || '').trim();
+        if (!prompt) { showError('Enter a description to generate SQL.'); return; }
         showError('');
-        hidePreview();
         generateBtn.disabled = true;
-        promptEl.disabled = true;
+        descEl.disabled = true;
         generateBtn.textContent = 'Generating…';
         try {
           const csvColumns = await readCsvColumns();
@@ -4855,14 +4775,17 @@
             }
             return;
           }
-          showPreview(data.query, data.condition);
-          // Stash rule_id from server for use in Add Rule.
+          // Fill the always-visible fields; user can edit freely before adding.
+          queryEl.value = data.query;
+          conditionEl.value = data.condition;
+          // Stash rule_id from server; overridden if user changes the Rule ID field.
           generateBtn.dataset.pendingRuleId = data.rule_id;
+          queryEl.focus();
         } catch (e) {
           showError('Request failed. Check your connection and try again.');
         } finally {
           generateBtn.disabled = false;
-          promptEl.disabled = false;
+          descEl.disabled = false;
           generateBtn.textContent = 'Generate SQL';
         }
       });
@@ -4870,22 +4793,20 @@
       addBtn.addEventListener('click', () => {
         const query     = (queryEl.value || '').trim();
         const condition = (conditionEl.value || '').trim();
-        if (!query)     { showError('Query is required.'); return; }
-        if (!condition) { showError('Condition is required.'); return; }
-        const ruleId = generateBtn.dataset.pendingRuleId ||
+        showError('');
+        if (!query)     { showError('SQL Query is required.'); queryEl.focus(); return; }
+        if (!condition) { showError('Condition is required.'); conditionEl.focus(); return; }
+        const manualId = (ruleIdEl.value || '').trim();
+        const ruleId = manualId ||
+          generateBtn.dataset.pendingRuleId ||
           ('custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
         delete generateBtn.dataset.pendingRuleId;
         customRulesList.push({ rule_id: ruleId, query, condition, enabled: true });
         renderCustomRules();
-        promptEl.value = '';
-        hidePreview();
-        showError('');
-      });
-
-      cancelBtn.addEventListener('click', () => {
-        hidePreview();
-        showError('');
-        delete generateBtn.dataset.pendingRuleId;
+        descEl.value = '';
+        queryEl.value = '';
+        conditionEl.value = '';
+        ruleIdEl.value = '';
       });
     })();
 
