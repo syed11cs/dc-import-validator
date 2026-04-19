@@ -1268,6 +1268,36 @@ def _condition_columns(condition: str) -> set[str]:
     }
 
 
+def _explain_sql_condition(condition: str) -> str | None:
+    """Return a short plain-English explanation for conditions that are counter-intuitive.
+
+    Focuses on MinValue / MaxValue semantics, which are the most common source of
+    confusion: users expect to check "the value" but the table exposes the min/max
+    of the distribution.  Returns None when no targeted explanation applies.
+    """
+    c = condition.strip()
+
+    if re.search(r"\bMinValue\s*>\s*0\b", c, re.IGNORECASE):
+        return "MinValue > 0 means the smallest observed value is positive, so every value in the dataset is positive."
+    if re.search(r"\bMinValue\s*>=\s*0\b", c, re.IGNORECASE):
+        return "MinValue >= 0 means the smallest observed value is non-negative, so no negative values exist."
+    if re.search(r"\bMaxValue\s*<\s*0\b", c, re.IGNORECASE):
+        return "MaxValue < 0 means the largest observed value is negative, so every value in the dataset is negative."
+    if re.search(r"\bMaxValue\s*<=\s*0\b", c, re.IGNORECASE):
+        return "MaxValue <= 0 means the largest observed value is non-positive, so no positive values exist."
+    if re.search(r"\bMinValue\s*<=\s*MaxValue\b", c, re.IGNORECASE):
+        return "MinValue <= MaxValue confirms the summary statistics are internally consistent."
+
+    m = re.search(r"\bMaxValue\s*<=\s*(\d+(?:\.\d+)?)\b", c, re.IGNORECASE)
+    if m:
+        return f"MaxValue <= {m.group(1)}: the largest value in the dataset does not exceed {m.group(1)}."
+    m = re.search(r"\bMinValue\s*>=\s*(\d+(?:\.\d+)?)\b", c, re.IGNORECASE)
+    if m:
+        return f"MinValue >= {m.group(1)}: every value in the dataset is at least {m.group(1)}."
+
+    return None
+
+
 def _post_validate_sql_rule(description: str, query: str, condition: str) -> str | None:
     """Deterministic post-generation checks on LLM-produced SQL rule.
 
@@ -1596,8 +1626,9 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         )
 
     rule_id = "custom_sql_" + secrets.token_hex(4)
+    explanation = _explain_sql_condition(condition)
     logger.info("generate_sql_rule rule_id=%s prompt_len=%d", rule_id, len(prompt_text))
-    return {"query": query, "condition": condition, "rule_id": rule_id}
+    return {"query": query, "condition": condition, "rule_id": rule_id, "explanation": explanation}
 
 
 @app.get("/api/review-summary/{dataset}")

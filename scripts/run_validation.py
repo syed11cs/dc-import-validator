@@ -35,6 +35,33 @@ def _load_config(path: str) -> dict:
         return json.load(f)
 
 
+import re as _re
+_SQL_ROWS_FAILED_RE = _re.compile(r"^(\d+) rows failed the SQL validation\.$")
+
+
+def _rewrite_sql_validator_messages(results: list[dict]) -> None:
+    """Replace the DC framework's "N rows failed the SQL validation." message with
+    StatVar-centric wording.
+
+    The stats table has one row per StatVar (aggregated over all CSV rows), so
+    "rows" in the DC framework message refers to StatVars, not raw CSV rows.
+    Detection is by message pattern — the exact string is only ever emitted by
+    SQL_VALIDATOR, so no rule_id allowlist is needed.
+    Operates in-place.
+    """
+    for r in results:
+        msg = r.get("message") or ""
+        m = _SQL_ROWS_FAILED_RE.match(msg)
+        if not m:
+            continue
+        n = int(m.group(1))
+        label = "StatVar" if n == 1 else "StatVars"
+        r["message"] = f"Rule failed for {n} {label}."
+        r.setdefault("details", {})["sql_context"] = (
+            "Rules are evaluated per StatVar (aggregated across all CSV rows)"
+        )
+
+
 def _split_rules(config: dict) -> tuple[list, list]:
     """Split rules into DC rules and custom rules (only enabled)."""
     rules = config.get("rules", [])
@@ -248,6 +275,7 @@ def main() -> int:
         csv_path=(args.csv[0] if args.csv else None),
     )
     combined = dc_results + custom_results
+    _rewrite_sql_validator_messages(combined)
 
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

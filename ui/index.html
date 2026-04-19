@@ -287,6 +287,8 @@
     .custom-rule-condition { font-size: 0.73rem; color: var(--text); margin-top: 4px; }
     .custom-rule-condition-label { color: var(--text-muted); font-size: 0.7rem; margin-right: 3px; }
     #sql-rule-success { font-size: 0.75rem; color: var(--success); display: none; }
+    #sql-rule-explanation { font-size: 0.73rem; color: var(--text-muted); background: rgba(99,102,241,0.07); border-left: 2px solid rgba(99,102,241,0.35); padding: 5px 8px; border-radius: 0 3px 3px 0; display: none; }
+    .custom-rule-desc { font-size: 0.75rem; color: var(--text); margin-bottom: 2px; }
     .rules-category .rule-item { margin-left: 0; }
     .rule-id { font-weight: 500; }
     .rule-desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
@@ -1010,6 +1012,7 @@
     .summary-card-warnings-details[open] summary::after { content: ' ▴'; }
     .summary-card .rule-item-id { font-weight: 700; font-family: ui-monospace, monospace; font-size: 0.8rem; display: block; margin-bottom: 2px; }
     .summary-card .rule-item-msg { font-size: 0.85rem; color: var(--text-muted); margin-left: 0; }
+    .summary-card .rule-item-sql-ctx { font-size: 0.78rem; color: var(--text-muted); font-style: italic; margin-top: 2px; }
     .ai-review-section {
       margin-top: 14px;
       padding: 16px 18px;
@@ -1643,6 +1646,7 @@
             </div>
             <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">Generate fills the fields below. Click 'Add Rule' to save.</div>
             <div id="sql-rule-error"></div>
+            <div id="sql-rule-explanation"></div>
             <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">You can review and edit the generated SQL if needed</div>
             <div>
               <label for="sql-rule-query" style="color:var(--text-muted);">SQL Query <span style="color:var(--fail);">*</span></label>
@@ -2175,7 +2179,8 @@
           '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (isChecked ? ' checked' : '') + '>' +
           '<div class="custom-rule-body">' +
             '<div class="custom-rule-id">' + escapeHtml(r.rule_id) + '</div>' +
-            '<div class="custom-rule-condition"><span class="custom-rule-condition-label">Condition:</span>' + escapeHtml(r.condition) + '</div>' +
+            (r.description ? '<div class="custom-rule-desc">' + escapeHtml(r.description) + '</div>' : '') +
+            '<div class="custom-rule-condition"><span class="custom-rule-condition-label">Condition: </span>' + escapeHtml(r.condition) + '</div>' +
             '<code class="custom-rule-query">' + escapeHtml(preview) + '</code>' +
           '</div>' +
           '<span class="custom-rule-badge">SQL</span>' +
@@ -2527,7 +2532,10 @@
           .replace(/(^| )(\d+)( lint errors?)/gi, '$1<strong>$2</strong>$3');
         const color = isFailed ? ' style="color:var(--fail);"' : '';
         const msgPart = msg ? '<div class="rule-item-msg">' + msg + '</div>' : '';
-        return '<li class="rule-detail-item"' + color + '><span class="rule-item-id">[' + rule + ']</span>' + msgPart + '</li>';
+        const sqlCtx = r.details && r.details.sql_context
+          ? '<div class="rule-item-sql-ctx">' + escapeHtml(r.details.sql_context) + '</div>'
+          : '';
+        return '<li class="rule-detail-item"' + color + '><span class="rule-item-id">[' + rule + ']</span>' + msgPart + sqlCtx + '</li>';
       }
       if (showDetailsToggle) {
         const failedRules = opts.failedRules || [];
@@ -4737,8 +4745,9 @@
       const queryEl     = document.getElementById('sql-rule-query');
       const conditionEl = document.getElementById('sql-rule-condition');
       const ruleIdEl    = document.getElementById('sql-rule-id');
-      const addBtn      = document.getElementById('sql-rule-add-btn');
-      const successEl   = document.getElementById('sql-rule-success');
+      const addBtn        = document.getElementById('sql-rule-add-btn');
+      const successEl     = document.getElementById('sql-rule-success');
+      const explanationEl = document.getElementById('sql-rule-explanation');
 
       function showError(msg) {
         errorEl.textContent = msg;
@@ -4798,6 +4807,13 @@
           // Fill the always-visible fields; user can edit freely before adding.
           queryEl.value = data.query;
           conditionEl.value = data.condition;
+          // Show explanation for counter-intuitive conditions (MinValue/MaxValue semantics).
+          if (data.explanation) {
+            explanationEl.textContent = data.explanation;
+            explanationEl.style.display = 'block';
+          } else {
+            explanationEl.style.display = 'none';
+          }
           // Stash rule_id from server; overridden if user changes the Rule ID field.
           generateBtn.dataset.pendingRuleId = data.rule_id;
           syncAddBtn();
@@ -4822,12 +4838,14 @@
           generateBtn.dataset.pendingRuleId ||
           ('custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
         delete generateBtn.dataset.pendingRuleId;
-        customRulesList.push({ rule_id: ruleId, query, condition, enabled: true });
+        const description = descEl.value.trim();
+        customRulesList.push({ rule_id: ruleId, query, condition, description: description || undefined, enabled: true });
         renderCustomRules();
         descEl.value = '';
         queryEl.value = '';
         conditionEl.value = '';
         ruleIdEl.value = '';
+        explanationEl.style.display = 'none';
         syncAddBtn();
         // Brief success confirmation.
         successEl.style.display = 'block';
