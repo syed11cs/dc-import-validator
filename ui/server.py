@@ -1266,15 +1266,21 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "- Only SELECT statements. No INSERT, UPDATE, DELETE, DROP, CREATE, or any DDL/DML.\n"
         "- No semicolons anywhere.\n"
         "- Valid DuckDB SQL only.\n\n"
+        "## Aggregate rules (IMPORTANT)\n"
+        "- Prefer simple row-level rules (no GROUP BY / aggregates) when the description allows it.\n"
+        "- If you use aggregate functions (COUNT, SUM, AVG, MIN, MAX), you MUST give them an alias.\n"
+        "  The condition can only reference column names that appear in your SELECT list.\n"
+        "  WRONG: {\"query\": \"SELECT COUNT(*) FROM stats\", \"condition\": \"COUNT(*) = 0\"}\n"
+        "  RIGHT: {\"query\": \"SELECT COUNT(*) AS n FROM stats\", \"condition\": \"n = 0\"}\n\n"
         "## DuckDB SQL notes\n"
         "- For regex matching use REGEXP_MATCHES(col, 'pattern') or col ~ 'pattern'.\n"
         "- Do NOT use REGEXP_FULL_MATCH, REGEXP_LIKE, RLIKE, or any other dialect-specific regex function.\n\n"
         "## Output format\n"
         "Output ONLY a JSON object with exactly two string keys: \"query\" and \"condition\".\n"
         "No markdown fences. No explanation. No extra keys. No trailing text.\n"
-        "Example 1: {\"query\": \"SELECT StatVar, MinValue FROM stats\", \"condition\": \"MinValue >= 0\"}\n"
-        "Example 2: {\"query\": \"SELECT StatVar, MaxValue FROM stats WHERE Units = 'Percent'\", \"condition\": \"MaxValue <= 100\"}\n"
-        "Example 3: {\"query\": \"SELECT StatVar, COUNT(*) AS n FROM stats GROUP BY StatVar\", \"condition\": \"n = 1\"}"
+        "Example 1 (row-level): {\"query\": \"SELECT StatVar, MinValue FROM stats\", \"condition\": \"MinValue >= 0\"}\n"
+        "Example 2 (row-level filtered): {\"query\": \"SELECT StatVar, MaxValue FROM stats WHERE Units = 'Percent'\", \"condition\": \"MaxValue <= 100\"}\n"
+        "Example 3 (aggregate with alias): {\"query\": \"SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0\", \"condition\": \"n = 0\"}"
     )
     user_prompt = f"Rule description: {prompt_text}{columns_hint}"
     full_prompt = system_prompt + "\n\n" + user_prompt
@@ -1321,6 +1327,22 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         raise HTTPException(
             status_code=400,
             detail="LLM response is missing 'query' or 'condition'",
+        )
+
+    # Guard: catch bare aggregate calls in the condition (e.g. "COUNT(*) = 0").
+    # The condition is evaluated in a WHERE clause, so aggregate functions there
+    # are invalid — columns must be named in the SELECT list of the query instead.
+    import re as _re
+    if _re.search(r'\b(COUNT|SUM|AVG|MIN|MAX)\s*\(', condition, _re.IGNORECASE):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Generated condition uses an aggregate function directly "
+                "(e.g. COUNT(*) = 0). Aggregates must be aliased in the query "
+                "and referenced by alias in the condition "
+                "(e.g. query: 'SELECT COUNT(*) AS n FROM stats', condition: 'n = 0'). "
+                "Try rephrasing your description."
+            ),
         )
 
     # Reuse existing DuckDB EXPLAIN pre-check (validates syntax + column names
