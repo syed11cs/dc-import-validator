@@ -2386,10 +2386,11 @@
         let runCount = 0, failCount = 0, warnCount = 0;
         json.results.forEach(v => {
           runCount++;
-          if (v.status === 'FAILED') failCount++;
+          if (v.status === 'FAILED' || v.status === 'CONFIG_ERROR') failCount++;
           else if (v.status === 'WARNING') warnCount++;
         });
-        const failedRules = json.results.filter(x => x.status === 'FAILED');
+        // CONFIG_ERROR (malformed SQL rule) is treated as blocking, same as FAILED.
+        const failedRules = json.results.filter(x => x.status === 'FAILED' || x.status === 'CONFIG_ERROR');
         const warningRules = json.results.filter(x => x.status === 'WARNING');
         // Fetch structural lint error counters for inline summary when that rule fails
         let lintErrors = [];
@@ -2453,20 +2454,31 @@
       statusDot.className = 'summary-card-status-dot';
       const outcomeText = document.createElement('span');
       if (opts.success) {
-        card.classList.add(opts.hasWarnings ? 'outcome-warnings' : 'outcome-pass');
-        statusDot.classList.add('summary-card-status-dot--pass');
-        outcomeText.style.color = 'var(--success)';
-        outcomeText.textContent = 'Validation PASSED';
+        if (opts.hasWarnings) {
+          card.classList.add('outcome-warnings');
+          statusDot.classList.add('summary-card-status-dot--warn');
+          outcomeText.style.color = 'var(--warn)';
+          outcomeText.textContent = 'Validation completed with warnings';
+        } else {
+          card.classList.add('outcome-pass');
+          statusDot.classList.add('summary-card-status-dot--pass');
+          outcomeText.style.color = 'var(--success)';
+          outcomeText.textContent = 'Validation PASSED';
+        }
       } else {
         card.classList.add('outcome-fail');
         statusDot.classList.add('summary-card-status-dot--fail');
         outcomeText.style.color = 'var(--fail)';
+        const _failedRulesForLabel = opts.failedRules || [];
+        const _hasConfigErrors = _failedRulesForLabel.some(r => r.status === 'CONFIG_ERROR');
+        const _hasRuleFailures = _failedRulesForLabel.some(r => r.status === 'FAILED');
         let failLabel = 'Validation FAILED';
         const code = opts.failure_code;
         const msg = opts.failure_message || opts.pipeline_failure_reason || opts.run_failure_reason;
         if (pipelineFailedBeforeValidation && code === FAILURE.GEMINI_BLOCKING) failLabel = 'Pipeline stopped at Gemini Review';
         else if (pipelineFailedBeforeValidation && (code === FAILURE.ROW_COUNT_EXCEEDED || code === FAILURE.CSV_QUALITY_FAILED || code === FAILURE.PREFLIGHT_FAILED)) failLabel = 'Pre-Import Check Failed';
         else if (pipelineFailedBeforeValidation && (code === FAILURE.DATA_PROCESSING_FAILED || code === FAILURE.LINT_FAILED)) failLabel = 'Pipeline failed';
+        else if (!pipelineFailedBeforeValidation && _hasConfigErrors && !_hasRuleFailures) failLabel = 'SQL/config error in validation rule';
         else if (msg) failLabel = msg;
         outcomeText.textContent = failLabel;
       }
@@ -2548,7 +2560,10 @@
 
         const hasBlocking = failedRules.length > 0 || (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) || (opts.pipelineFailedBeforeValidation && opts.failure_message);
         const blockingListItems = [];
-        if (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation) {
+        // Only show the generic "Run failed" item when there are no specific rule failures
+        // to show — otherwise the same failure is duplicated (once as a generic message
+        // and once as the rule entry in failedRules).
+        if (opts.run_failure_reason && !opts.pipelineFailedBeforeValidation && failedRules.length === 0) {
           blockingListItems.push('<li style="color:var(--fail);">Run failed: ' + escapeHtml(opts.run_failure_reason) + '</li>');
         }
         const isGeminiBlocking = pipelineFailedBeforeValidation && opts.failure_code === FAILURE.GEMINI_BLOCKING;
@@ -3975,7 +3990,7 @@
           _sessionRunDatasets.add(runDataset);
           lastRunReportId = data.run_id || null;
           lastRunBaselineId = data.baseline_id || (runDataset !== 'custom' ? runDataset : null);
-          const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
+          let hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           const pipelineFailedBeforeValidation = false;
           const failureInfo = getFailureInfo(data);
           const geminiSkippedNoKey = ((data.output || '').includes('LLM review skipped') || (data.output || '').includes('no API key'));
@@ -3992,6 +4007,9 @@
           const reportPromise = loadReport();
           const validationPromise = applyValidationResults(runDataset, { runId: lastRunReportId });
           const counts = await fetchValidationCounts(runDataset, lastRunReportId);
+          // Derive hasWarnings from actual counts so native WARNING results (not just
+          // converted ones) are reflected in the summary card outcome class.
+          hasWarnings = hasWarnings || counts.warnCount > 0;
           let aiAdvisoryCount = 0;
           if (lastRunReportId) {
             try {
