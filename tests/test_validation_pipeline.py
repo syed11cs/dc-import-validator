@@ -22,7 +22,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts.validate_config_template import _validate_config
-from ui.server import _create_merged_config, _normalize_custom_rule, _validate_custom_rules
+from ui.server import (
+    _create_merged_config,
+    _normalize_custom_rule,
+    _post_validate_sql_rule,
+    _validate_custom_rules,
+)
 
 # Minimal valid custom rule as sent by the browser (description deliberately absent).
 # Uses the real runtime table (stats) and Option A style (query + condition).
@@ -295,6 +300,150 @@ class TestPartialResultsInjection(unittest.TestCase):
         self.assertEqual(statuses["check_unit_consistency"], "FAILED")
         self.assertIn("did not execute", next(
             r["message"] for r in results if r["validation_name"] == "check_unit_consistency"
+        ))
+
+
+# ─── _post_validate_sql_rule ─────────────────────────────────────────────────
+
+class TestPostValidateSqlRule(unittest.TestCase):
+    """Deterministic post-generation validator: trivial rules, semantic errors, direction."""
+
+    # ── trivial rules ─────────────────────────────────────────────────────────
+
+    def test_duplicate_statvar_rejected(self):
+        err = _post_validate_sql_rule(
+            "no duplicate StatVars",
+            "SELECT StatVar, COUNT(*) AS n FROM stats GROUP BY StatVar",
+            "n = 1",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("trivially true", err.lower())
+
+    def test_duplicate_statvar_case_insensitive(self):
+        err = _post_validate_sql_rule(
+            "Ensure No Duplicate StatVars exist",
+            "SELECT StatVar FROM stats",
+            "StatVar IS NOT NULL",
+        )
+        self.assertIsNotNone(err)
+
+    def test_non_trivial_rule_passes_trivial_check(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "MinValue should be non-negative",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue >= 0",
+        ))
+
+    # ── semantic: MinValue vs MaxValue for "all negative" ────────────────────
+
+    def test_only_negative_minvalue_rejected(self):
+        """'only negative values' with MinValue < 0 is wrong — must use MaxValue < 0."""
+        err = _post_validate_sql_rule(
+            "only negative values allowed",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue < 0",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("MaxValue", err)
+
+    def test_only_negative_maxvalue_accepted(self):
+        """'only negative values' with MaxValue < 0 is correct."""
+        self.assertIsNone(_post_validate_sql_rule(
+            "only negative values allowed",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MaxValue < 0",
+        ))
+
+    def test_all_negative_minvalue_rejected(self):
+        err = _post_validate_sql_rule(
+            "all values must be negative",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue < 0",
+        )
+        self.assertIsNotNone(err)
+
+    # ── condition direction: upper bound ──────────────────────────────────────
+
+    def test_not_exceed_with_gt_rejected(self):
+        """'should not exceed 100' with MaxValue > 100 is inverted."""
+        err = _post_validate_sql_rule(
+            "MaxValue should not exceed 100",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MaxValue > 100",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("upper bound", err.lower())
+
+    def test_not_exceed_with_lte_accepted(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "MaxValue should not exceed 100",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MaxValue <= 100",
+        ))
+
+    def test_at_most_with_gt_rejected(self):
+        err = _post_validate_sql_rule(
+            "NumObservations at most 1000",
+            "SELECT StatVar, NumObservations FROM stats",
+            "NumObservations > 1000",
+        )
+        self.assertIsNotNone(err)
+
+    # ── condition direction: lower bound ──────────────────────────────────────
+
+    def test_at_least_with_lt_rejected(self):
+        """'at least 1 observation' with NumObservations < 1 is inverted."""
+        err = _post_validate_sql_rule(
+            "each StatVar should have at least 1 observation",
+            "SELECT StatVar, NumObservations FROM stats",
+            "NumObservations < 1",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("lower bound", err.lower())
+
+    def test_at_least_with_gte_accepted(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "each StatVar should have at least 1 observation",
+            "SELECT StatVar, NumObservations FROM stats",
+            "NumObservations >= 1",
+        ))
+
+    def test_no_less_than_with_lt_rejected(self):
+        err = _post_validate_sql_rule(
+            "MinValue no less than 0",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue < 0",
+        )
+        self.assertIsNotNone(err)
+
+    # ── valid rules not blocked ───────────────────────────────────────────────
+
+    def test_valid_minvalue_nonnegative(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "minimum values must be non-negative",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue >= 0",
+        ))
+
+    def test_valid_minval_lte_maxval(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "MinValue should always be <= MaxValue",
+            "SELECT StatVar, MinValue, MaxValue FROM stats",
+            "MinValue <= MaxValue",
+        ))
+
+    def test_valid_units_nonempty(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "units should not be empty",
+            "SELECT StatVar, Units FROM stats",
+            "Units != '[]'",
+        ))
+
+    def test_valid_aggregate_zero_negatives(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "there should be zero StatVars with negative minimum values",
+            "SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0",
+            "n = 0",
         ))
 
 

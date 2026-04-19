@@ -1221,6 +1221,86 @@ class _GenerateSqlRuleRequest(BaseModel):
     csv_columns: list[str] | None = None
 
 
+_SQL_RULE_COLUMNS = {
+    "StatVar", "NumPlaces", "NumObservations", "MinValue", "MaxValue",
+    "NumObservationsDates", "MinDate", "MaxDate",
+    "MeasurementMethods", "Units", "ScalingFactors", "observationPeriods",
+    "ADDED", "DELETED", "MODIFIED",
+}
+_COL_PATTERN = "(?:" + "|".join(re.escape(c) for c in _SQL_RULE_COLUMNS) + ")"
+
+
+def _post_validate_sql_rule(description: str, query: str, condition: str) -> str | None:
+    """Deterministic post-generation checks on LLM-produced SQL rule.
+
+    Returns a human-readable error string on failure, None on success.
+    Checks (in order):
+      1. Trivially-true rules (no duplicate StatVars, etc.)
+      2. MinValue vs MaxValue semantic mistake for "all/only negative"
+      3. Condition direction: upper-bound language with > operator
+      4. Condition direction: lower-bound language with < operator
+    """
+    desc_lower = description.lower()
+
+    # 1. Trivial rules that are always true by schema construction.
+    if re.search(r"\bduplicat\w*\b", desc_lower) and re.search(r"\bstatvars?\b", desc_lower):
+        return (
+            "Unsupported rule: the stats table has exactly one row per StatVar by "
+            "construction, so a duplicate-StatVar check is trivially true. Please "
+            "describe a meaningful data quality constraint instead."
+        )
+
+    # 2. Semantic: "only/all negative" must check MaxValue < 0, not MinValue < 0.
+    #    MinValue < 0 only guarantees the minimum is negative; MaxValue could still be
+    #    positive (mixed positive/negative values).  MaxValue < 0 ensures every value
+    #    in the distribution is negative.
+    if re.search(
+        r"\b(only|all|must be|should be|are)\s+(negative|below\s+zero|less\s+than\s+zero)\b",
+        desc_lower,
+    ):
+        has_minval = re.search(r"\bMinValue\s*<\s*0\b", condition, re.IGNORECASE)
+        has_maxval = re.search(r"\bMaxValue\s*<\s*0\b", condition, re.IGNORECASE)
+        if has_minval and not has_maxval:
+            return (
+                "Semantic error: for 'all/only values are negative', use MaxValue < 0 "
+                "(not MinValue < 0). MinValue < 0 only confirms the minimum is negative "
+                "while MaxValue could still be positive. MaxValue < 0 guarantees every "
+                "value in the distribution is negative."
+            )
+
+    # 3. Upper-bound language in description but > operator in condition (direction inversion).
+    #    Only checked for direct column references (row-level rules), not aggregate aliases.
+    _upper_bound = (
+        r"\b(not\s+exceed|at\s+most|no\s+more\s+than"
+        r"|must\s+not\s+be\s+(more|greater)"
+        r"|should\s+not\s+(be\s+more|be\s+greater|exceed))\b"
+    )
+    _col_gt = _COL_PATTERN + r"\s*>\s*[\d'\"]"
+    if re.search(_upper_bound, desc_lower) and re.search(_col_gt, condition, re.IGNORECASE):
+        return (
+            "Condition direction error: description implies an upper bound (≤) but "
+            "condition uses > on a column. The condition is a PASS predicate — "
+            "'should not exceed 100' → condition: MaxValue <= 100."
+        )
+
+    # 4. Lower-bound language in description but < operator in condition (direction inversion).
+    _lower_bound = (
+        r"\b(at\s+least|no\s+less\s+than"
+        r"|must\s+not\s+be\s+(less|below)"
+        r"|should\s+not\s+(be\s+less|be\s+below)"
+        r"|minimum\s+of)\b"
+    )
+    _col_lt = _COL_PATTERN + r"\s*<\s*[\d'\"]"
+    if re.search(_lower_bound, desc_lower) and re.search(_col_lt, condition, re.IGNORECASE):
+        return (
+            "Condition direction error: description implies a lower bound (≥) but "
+            "condition uses < on a column. The condition is a PASS predicate — "
+            "'at least 1' → condition: NumObservations >= 1."
+        )
+
+    return None
+
+
 @app.post("/api/generate-sql-rule")
 async def generate_sql_rule(body: _GenerateSqlRuleRequest):
     """Generate a SQL validation rule (query + condition) from a natural language description.
@@ -1412,8 +1492,7 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
     # Guard: catch bare aggregate calls in the condition (e.g. "COUNT(*) = 0").
     # The condition is evaluated in a WHERE clause, so aggregate functions there
     # are invalid — columns must be named in the SELECT list of the query instead.
-    import re as _re
-    if _re.search(r'\b(COUNT|SUM|AVG|MIN|MAX)\s*\(', condition, _re.IGNORECASE):
+    if re.search(r'\b(COUNT|SUM|AVG|MIN|MAX)\s*\(', condition, re.IGNORECASE):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1424,6 +1503,11 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
                 "Try rephrasing your description."
             ),
         )
+
+    # Post-generation semantic/direction validator.
+    post_err = _post_validate_sql_rule(body.description, query, condition)
+    if post_err:
+        raise HTTPException(status_code=400, detail=post_err)
 
     # Reuse existing DuckDB EXPLAIN pre-check (validates syntax + column names
     # against real-schema dummy tables; no dataset loaded at this point).
