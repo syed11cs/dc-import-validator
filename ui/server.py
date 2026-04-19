@@ -1230,6 +1230,44 @@ _SQL_RULE_COLUMNS = {
 _COL_PATTERN = "(?:" + "|".join(re.escape(c) for c in _SQL_RULE_COLUMNS) + ")"
 
 
+def _select_columns(query: str) -> set[str] | None:
+    """Return the set of identifiers exposed by the SELECT clause.
+
+    Includes known table column names (from _SQL_RULE_COLUMNS) and aliases
+    declared with AS.  Returns None when the clause cannot be parsed or when
+    SELECT * is used (meaning all columns are available, so the alignment
+    check should be skipped).
+    """
+    m = re.search(r"\bSELECT\s+(.*?)\s+FROM\b", query, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    clause = m.group(1).strip()
+    if clause == "*":
+        return None  # SELECT * — all columns available
+
+    cols: set[str] = set()
+    for item in clause.split(","):
+        item = item.strip()
+        # Alias: anything after AS is available in the condition.
+        alias = re.search(r"\bAS\s+(\w+)\s*$", item, re.IGNORECASE)
+        if alias:
+            cols.add(alias.group(1))
+        # Known table columns appearing in this item (handles bare names and
+        # table-qualified names like stats.MinValue).
+        for col in _SQL_RULE_COLUMNS:
+            if re.search(r"\b" + re.escape(col) + r"\b", item, re.IGNORECASE):
+                cols.add(col)
+    return cols
+
+
+def _condition_columns(condition: str) -> set[str]:
+    """Return known table column names referenced in the condition expression."""
+    return {
+        col for col in _SQL_RULE_COLUMNS
+        if re.search(r"\b" + re.escape(col) + r"\b", condition, re.IGNORECASE)
+    }
+
+
 def _post_validate_sql_rule(description: str, query: str, condition: str) -> str | None:
     """Deterministic post-generation checks on LLM-produced SQL rule.
 
@@ -1237,8 +1275,10 @@ def _post_validate_sql_rule(description: str, query: str, condition: str) -> str
     Checks (in order):
       1. Trivially-true rules (no duplicate StatVars, etc.)
       2. MinValue vs MaxValue semantic mistake for "all/only negative"
-      3. Condition direction: upper-bound language with > operator
-      4. Condition direction: lower-bound language with < operator
+      3. MaxValue vs MinValue semantic mistake for "all/only positive"
+      4. Condition direction: upper-bound language with > operator
+      5. Condition direction: lower-bound language with < operator
+      6. Column alignment: condition references only columns in SELECT list
     """
     desc_lower = description.lower()
 
@@ -1268,7 +1308,24 @@ def _post_validate_sql_rule(description: str, query: str, condition: str) -> str
                 "value in the distribution is negative."
             )
 
-    # 3. Upper-bound language in description but > operator in condition (direction inversion).
+    # 3. Semantic: "only/all positive" must check MinValue > 0, not MaxValue > 0.
+    #    MaxValue > 0 only guarantees the maximum is positive; MinValue could still be
+    #    negative.  MinValue > 0 ensures every value in the distribution is positive.
+    if re.search(
+        r"\b(only|all|must be|should be|are)\s+(positive|above\s+zero|greater\s+than\s+zero)\b",
+        desc_lower,
+    ):
+        has_maxval = re.search(r"\bMaxValue\s*>\s*0\b", condition, re.IGNORECASE)
+        has_minval = re.search(r"\bMinValue\s*>\s*0\b", condition, re.IGNORECASE)
+        if has_maxval and not has_minval:
+            return (
+                "Semantic error: for 'all/only values are positive', use MinValue > 0 "
+                "(not MaxValue > 0). MaxValue > 0 only confirms the maximum is positive "
+                "while MinValue could still be negative. MinValue > 0 guarantees every "
+                "value in the distribution is positive."
+            )
+
+    # 4. Upper-bound language in description but > operator in condition (direction inversion).
     #    Only checked for direct column references (row-level rules), not aggregate aliases.
     _upper_bound = (
         r"\b(not\s+exceed|at\s+most|no\s+more\s+than"
@@ -1297,6 +1354,22 @@ def _post_validate_sql_rule(description: str, query: str, condition: str) -> str
             "condition uses < on a column. The condition is a PASS predicate — "
             "'at least 1' → condition: NumObservations >= 1."
         )
+
+    # 6. Column alignment: every known table column in the condition must appear
+    #    in the SELECT list.  Aggregate aliases (e.g. "n") are not in
+    #    _SQL_RULE_COLUMNS so they are not checked here; the DuckDB EXPLAIN
+    #    pre-check catches unknown identifiers at the SQL level.
+    sel_cols = _select_columns(query)
+    if sel_cols is not None:  # None → SELECT * or unparseable → skip
+        cond_cols = _condition_columns(condition)
+        missing = cond_cols - sel_cols
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            return (
+                f"Column alignment error: condition references {missing_list} "
+                f"but {'that column is' if len(missing) == 1 else 'those columns are'} "
+                f"not in the SELECT list. Add the missing column(s) to the query."
+            )
 
     return None
 

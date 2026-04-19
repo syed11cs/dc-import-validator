@@ -23,9 +23,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts.validate_config_template import _validate_config
 from ui.server import (
+    _condition_columns,
     _create_merged_config,
     _normalize_custom_rule,
     _post_validate_sql_rule,
+    _select_columns,
     _validate_custom_rules,
 )
 
@@ -445,6 +447,116 @@ class TestPostValidateSqlRule(unittest.TestCase):
             "SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0",
             "n = 0",
         ))
+
+    # ── only positive values (symmetry with negative) ─────────────────────────
+
+    def test_only_positive_maxvalue_rejected(self):
+        """'only positive values' with MaxValue > 0 is wrong — must use MinValue > 0."""
+        err = _post_validate_sql_rule(
+            "only positive values allowed",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MaxValue > 0",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("MinValue", err)
+
+    def test_only_positive_minvalue_accepted(self):
+        """'only positive values' with MinValue > 0 is correct."""
+        self.assertIsNone(_post_validate_sql_rule(
+            "only positive values allowed",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue > 0",
+        ))
+
+    def test_all_positive_maxvalue_rejected(self):
+        err = _post_validate_sql_rule(
+            "all values must be positive",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MaxValue > 0",
+        )
+        self.assertIsNotNone(err)
+
+    def test_all_positive_minvalue_accepted(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "all values must be positive",
+            "SELECT StatVar, MinValue FROM stats",
+            "MinValue > 0",
+        ))
+
+    # ── column alignment ──────────────────────────────────────────────────────
+
+    def test_condition_column_not_in_select_rejected(self):
+        """Condition references MinValue but SELECT only has MaxValue."""
+        err = _post_validate_sql_rule(
+            "MinValue should be <= MaxValue",
+            "SELECT StatVar, MaxValue FROM stats",
+            "MinValue <= MaxValue",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("MinValue", err)
+        self.assertIn("SELECT", err)
+
+    def test_condition_columns_all_in_select_accepted(self):
+        self.assertIsNone(_post_validate_sql_rule(
+            "MinValue should be <= MaxValue",
+            "SELECT StatVar, MinValue, MaxValue FROM stats",
+            "MinValue <= MaxValue",
+        ))
+
+    def test_select_star_skips_alignment_check(self):
+        """SELECT * makes all columns available — alignment check must not fire."""
+        self.assertIsNone(_post_validate_sql_rule(
+            "MinValue should be <= MaxValue",
+            "SELECT * FROM stats",
+            "MinValue <= MaxValue",
+        ))
+
+    def test_aggregate_alias_skips_alignment_check(self):
+        """Aggregate alias 'n' is not a table column; condition 'n = 0' must pass."""
+        self.assertIsNone(_post_validate_sql_rule(
+            "there should be zero StatVars with negative minimum values",
+            "SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0",
+            "n = 0",
+        ))
+
+    def test_multiple_missing_columns_listed(self):
+        """All missing columns should be named in the error."""
+        err = _post_validate_sql_rule(
+            "check values",
+            "SELECT StatVar FROM stats",
+            "MinValue >= 0 AND MaxValue <= 100",
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("MinValue", err)
+        self.assertIn("MaxValue", err)
+
+
+# ─── _select_columns / _condition_columns helpers ────────────────────────────
+
+class TestSelectAndConditionColumns(unittest.TestCase):
+    """Unit tests for the two parsing helpers used by _post_validate_sql_rule."""
+
+    def test_select_columns_simple(self):
+        cols = _select_columns("SELECT StatVar, MinValue FROM stats")
+        self.assertEqual(cols, {"StatVar", "MinValue"})
+
+    def test_select_columns_with_alias(self):
+        cols = _select_columns("SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0")
+        self.assertIn("n", cols)
+
+    def test_select_star_returns_none(self):
+        self.assertIsNone(_select_columns("SELECT * FROM stats"))
+
+    def test_select_columns_unparseable_returns_none(self):
+        self.assertIsNone(_select_columns("NOT A VALID QUERY"))
+
+    def test_condition_columns_extracts_known(self):
+        cols = _condition_columns("MinValue <= MaxValue AND Units != '[]'")
+        self.assertEqual(cols, {"MinValue", "MaxValue", "Units"})
+
+    def test_condition_columns_ignores_aliases(self):
+        cols = _condition_columns("n = 0")
+        self.assertEqual(cols, set())
 
 
 if __name__ == "__main__":
