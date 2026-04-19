@@ -259,7 +259,7 @@
     .custom-rule-item:has(.rule-checkbox:not(:checked)) { opacity: 0.72; }
     .custom-rule-body { flex: 1; min-width: 0; }
     .custom-rule-id { font-family: monospace; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 2px; }
-    .custom-rule-query { font-family: monospace; font-size: 0.72rem; color: var(--text); word-break: break-all; white-space: pre-wrap; }
+    .custom-rule-query { font-family: monospace; font-size: 0.71rem; color: var(--text-muted); background: rgba(0,0,0,0.055); border-radius: 3px; padding: 2px 5px; word-break: break-all; white-space: pre-wrap; margin-top: 3px; display: block; }
     .custom-rule-badge { font-size: 0.65rem; color: var(--accent); background: rgba(99,102,241,0.12); padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; align-self: flex-start; margin-top: 2px; }
     .custom-rule-delete { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 1rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
     .custom-rule-delete:hover { opacity: 1; color: var(--fail); }
@@ -272,7 +272,7 @@
     .custom-rule-edit-save { font-size: 0.75rem; padding: 3px 10px; }
     .custom-rule-edit-cancel { font-size: 0.75rem; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius); cursor: pointer; }
     .custom-rule-edit-cancel:hover { color: var(--text); }
-    .custom-rule-editing { background: rgba(99,102,241,0.04); }
+    .custom-rule-editing { background: rgba(99,102,241,0.06); border-color: rgba(99,102,241,0.32) !important; }
     #sql-rule-editor { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); display: flex; flex-direction: column; gap: 8px; }
     #sql-rule-desc-row { display: flex; gap: 6px; align-items: flex-start; }
     #sql-rule-desc { flex: 1; box-sizing: border-box; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; min-height: 48px; }
@@ -282,6 +282,11 @@
     #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
     #sql-rule-editor textarea, #sql-rule-editor input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
     #sql-rule-editor textarea:focus, #sql-rule-editor input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    @keyframes _sql-spin { to { transform: rotate(360deg); } }
+    ._sql-spinner { display: inline-block; width: 9px; height: 9px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: _sql-spin 0.65s linear infinite; margin-right: 5px; vertical-align: middle; }
+    .custom-rule-condition { font-size: 0.73rem; color: var(--text); margin-top: 4px; }
+    .custom-rule-condition-label { color: var(--text-muted); font-size: 0.7rem; margin-right: 3px; }
+    #sql-rule-success { font-size: 0.75rem; color: var(--success); display: none; }
     .rules-category .rule-item { margin-left: 0; }
     .rule-id { font-weight: 500; }
     .rule-desc { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
@@ -1651,7 +1656,8 @@
               <label for="sql-rule-id">Rule ID <span style="font-weight:400;">(optional — auto-generated if empty)</span></label>
               <input type="text" id="sql-rule-id" placeholder="e.g. check_min_value">
             </div>
-            <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>
+            <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;" disabled>Add Rule</button>
+            <div id="sql-rule-success">&#10003; Rule added</div>
           </div>
         </div>
       </div>
@@ -2169,7 +2175,8 @@
           '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (isChecked ? ' checked' : '') + '>' +
           '<div class="custom-rule-body">' +
             '<div class="custom-rule-id">' + escapeHtml(r.rule_id) + '</div>' +
-            '<div class="custom-rule-query">' + escapeHtml(preview) + '</div>' +
+            '<div class="custom-rule-condition"><span class="custom-rule-condition-label">Condition:</span>' + escapeHtml(r.condition) + '</div>' +
+            '<code class="custom-rule-query">' + escapeHtml(preview) + '</code>' +
           '</div>' +
           '<span class="custom-rule-badge">SQL</span>' +
           '<button type="button" class="custom-rule-edit" data-rule-id="' + escapeHtml(r.rule_id) + '" title="Edit rule" aria-label="Edit rule">Edit</button>' +
@@ -2203,7 +2210,10 @@
           item.innerHTML =
             '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (r.enabled !== false ? ' checked' : '') + '>' +
             '<div class="custom-rule-edit-form">' +
-              '<div style="font-size:0.72rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</div>' +
+              '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
+                '<span style="font-size:0.68rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</span>' +
+                '<span style="font-size:0.65rem;color:var(--accent);background:rgba(99,102,241,0.12);padding:1px 6px;border-radius:3px;">Editing</span>' +
+              '</div>' +
               '<textarea class="edit-query" rows="3" placeholder="SQL query">' + escapeHtml(r.query) + '</textarea>' +
               '<input type="text" class="edit-condition" placeholder="Condition (e.g. value >= 0)" value="' + escapeHtml(r.condition) + '">' +
               '<div class="custom-rule-edit-error" style="color:var(--fail);font-size:0.75rem;display:none;"></div>' +
@@ -4728,11 +4738,19 @@
       const conditionEl = document.getElementById('sql-rule-condition');
       const ruleIdEl    = document.getElementById('sql-rule-id');
       const addBtn      = document.getElementById('sql-rule-add-btn');
+      const successEl   = document.getElementById('sql-rule-success');
 
       function showError(msg) {
         errorEl.textContent = msg;
         errorEl.style.display = msg ? 'block' : 'none';
       }
+
+      function syncAddBtn() {
+        addBtn.disabled = !(queryEl.value.trim() && conditionEl.value.trim());
+      }
+
+      queryEl.addEventListener('input', syncAddBtn);
+      conditionEl.addEventListener('input', syncAddBtn);
 
       // Read column headers from the first uploaded CSV file (first 2 KB only).
       async function readCsvColumns() {
@@ -4754,7 +4772,7 @@
         showError('');
         generateBtn.disabled = true;
         descEl.disabled = true;
-        generateBtn.textContent = 'Generating…';
+        generateBtn.innerHTML = '<span class="_sql-spinner"></span>Generating…';
         try {
           const csvColumns = await readCsvColumns();
           const res = await fetch(API + '/api/generate-sql-rule', {
@@ -4782,13 +4800,14 @@
           conditionEl.value = data.condition;
           // Stash rule_id from server; overridden if user changes the Rule ID field.
           generateBtn.dataset.pendingRuleId = data.rule_id;
+          syncAddBtn();
           queryEl.focus();
         } catch (e) {
           showError('Request failed. Check your connection and try again.');
         } finally {
           generateBtn.disabled = false;
           descEl.disabled = false;
-          generateBtn.textContent = 'Generate SQL';
+          generateBtn.textContent = 'Generate SQL'; // textContent clears the spinner span
         }
       });
 
@@ -4809,6 +4828,10 @@
         queryEl.value = '';
         conditionEl.value = '';
         ruleIdEl.value = '';
+        syncAddBtn();
+        // Brief success confirmation.
+        successEl.style.display = 'block';
+        setTimeout(() => { successEl.style.display = 'none'; }, 2000);
       });
     })();
 
