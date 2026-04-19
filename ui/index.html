@@ -1668,11 +1668,11 @@
               </div>
               <div>
                 <label for="custom-sql-query">SQL Query <span style="color:var(--fail);">*</span></label>
-                <textarea id="custom-sql-query" rows="3" placeholder="SELECT COUNT(*) AS row_count FROM stats WHERE value &lt; 0"></textarea>
+                <textarea id="custom-sql-query" rows="3" placeholder="SELECT StatVar, MinValue FROM stats"></textarea>
               </div>
               <div>
                 <label for="custom-sql-condition">Condition <span style="color:var(--fail);">*</span></label>
-                <input type="text" id="custom-sql-condition" placeholder="e.g. row_count = 0">
+                <input type="text" id="custom-sql-condition" placeholder="e.g. MinValue >= 0">
               </div>
               <div id="custom-sql-error"></div>
               <button type="button" id="add-custom-sql-btn" class="btn btn-sm" style="width:auto;">Add Rule</button>

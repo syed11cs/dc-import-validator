@@ -88,8 +88,32 @@ def _validate_custom_rules(custom_rules: list) -> str | None:
 
     Performs structural validation (query/condition present) plus a lightweight
     DuckDB EXPLAIN to catch obvious SQL syntax errors before the job is submitted.
-    Column-reference errors that depend on actual data are not caught here.
+    Dummy stats and differ tables (matching the real schemas) are injected so that
+    column-name errors in those tables are caught here too.
     """
+    # Dummy CTEs that mirror the real runtime table schemas exactly.
+    # stats  → summary_report.csv produced by genmcf
+    # differ → obs_diff_summary.csv produced by import_differ
+    _DUMMY_STATS = (
+        "SELECT CAST(NULL AS TEXT) AS StatVar,"
+        " CAST(NULL AS BIGINT) AS NumPlaces,"
+        " CAST(NULL AS BIGINT) AS NumObservations,"
+        " CAST(NULL AS DOUBLE) AS MinValue,"
+        " CAST(NULL AS DOUBLE) AS MaxValue,"
+        " CAST(NULL AS BIGINT) AS NumObservationsDates,"
+        " CAST(NULL AS TEXT) AS MinDate,"
+        " CAST(NULL AS TEXT) AS MaxDate,"
+        " CAST(NULL AS TEXT) AS MeasurementMethods,"
+        " CAST(NULL AS TEXT) AS Units,"
+        " CAST(NULL AS TEXT) AS ScalingFactors,"
+        " CAST(NULL AS TEXT) AS observationPeriods LIMIT 0"
+    )
+    _DUMMY_DIFFER = (
+        "SELECT CAST(NULL AS TEXT) AS variableMeasured,"
+        " CAST(NULL AS BIGINT) AS ADDED,"
+        " CAST(NULL AS BIGINT) AS DELETED,"
+        " CAST(NULL AS BIGINT) AS MODIFIED LIMIT 0"
+    )
     for i, rule in enumerate(custom_rules):
         if not isinstance(rule, dict):
             return f"custom_rules[{i}] must be an object"
@@ -101,21 +125,15 @@ def _validate_custom_rules(custom_rules: list) -> str | None:
             return f"custom_rules[{i}].params.query is required and must be a non-empty string"
         if not isinstance(params.get("condition"), str) or not params["condition"].strip():
             return f"custom_rules[{i}].params.condition is required and must be a non-empty string"
-        # Pre-check SQL syntax via DuckDB EXPLAIN (best-effort; catches syntax errors early).
-        # The observations table does not exist at validation time, so inject a dummy CTE
-        # so DuckDB can resolve the table reference.  Use _inner (not _data) to avoid a
-        # name collision with the outer _data CTE added by the EXPLAIN wrapper below.
+        # Pre-check SQL syntax via DuckDB EXPLAIN against real-schema dummy tables.
         try:
             import duckdb
             q = params["query"].strip().rstrip(";")
             c = params["condition"].strip()
-            _dummy_obs = (
-                "SELECT CAST(NULL AS TEXT) AS StatVar, CAST(NULL AS DOUBLE) AS Value,"
-                " CAST(NULL AS TEXT) AS observationAbout, CAST(NULL AS TEXT) AS observationDate,"
-                " CAST(NULL AS TEXT) AS unit LIMIT 0"
+            duckdb.execute(
+                f"EXPLAIN WITH stats AS ({_DUMMY_STATS}), differ AS ({_DUMMY_DIFFER}),"
+                f" _data AS ({q}) SELECT * FROM _data WHERE NOT ({c}) LIMIT 1"
             )
-            _wrapped = f"WITH observations AS ({_dummy_obs}), _inner AS ({q}) SELECT * FROM _inner"
-            duckdb.execute(f"EXPLAIN WITH _data AS ({_wrapped}) SELECT * FROM _data WHERE NOT ({c}) LIMIT 1")
         except Exception as exc:
             rule_id = (rule.get("rule_id") or f"rule {i}")
             return f"SQL syntax error in {rule_id}: {exc}"
@@ -1231,31 +1249,32 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "  WITH _data AS ({query}) SELECT * FROM _data WHERE NOT ({condition})\n"
         "Any row returned by that expression is a FAILURE.\n\n"
         "## Your task\n"
-        "Write a rule where:\n"
-        "- `query` selects the rows that SHOULD NOT EXIST (i.e. the failing rows).\n"
-        "  A passing dataset produces zero rows from this query.\n"
-        "- `condition` is always the literal string `TRUE`.\n"
-        "  Because the query already filters to failing rows, no further condition is needed.\n\n"
-        "## SQL constraints (strictly enforced)\n"
+        "- `query`: a SELECT that returns the candidate rows (usually all rows, or a filtered subset).\n"
+        "- `condition`: a boolean expression that MUST BE TRUE for a row to PASS.\n"
+        "  Rows where the condition is false are failures.\n\n"
+        "## Available tables\n"
+        "Only two tables exist at runtime:\n\n"
+        "Table `stats` (one row per StatVar; from genmcf summary_report.csv):\n"
+        "  StatVar TEXT, NumPlaces INTEGER, NumObservations INTEGER,\n"
+        "  MinValue DOUBLE, MaxValue DOUBLE, NumObservationsDates INTEGER,\n"
+        "  MinDate TEXT, MaxDate TEXT,\n"
+        "  MeasurementMethods TEXT, Units TEXT, ScalingFactors TEXT, observationPeriods TEXT\n\n"
+        "Table `differ` (one row per StatVar; from obs_diff_summary.csv — may be empty):\n"
+        "  variableMeasured TEXT, ADDED INTEGER, DELETED INTEGER, MODIFIED INTEGER\n\n"
+        "Do NOT reference any other table (e.g. 'observations' does not exist).\n\n"
+        "## SQL constraints\n"
         "- Only SELECT statements. No INSERT, UPDATE, DELETE, DROP, CREATE, or any DDL/DML.\n"
-        "- Only the table `observations` is available. No subqueries referencing other tables.\n"
         "- No semicolons anywhere.\n"
-        "- Valid DuckDB SQL only.\n"
-        "- Do NOT use COUNT(), SUM(), AVG(), MIN(), MAX(), or GROUP BY.\n"
-        "  The query must return individual failing rows, not aggregates.\n"
-        "- Always end the query with LIMIT 1000.\n\n"
-        "## Schema\n"
-        "Table `observations` standard columns:\n"
-        "  StatVar TEXT, Value REAL, observationAbout TEXT, observationDate TEXT, unit TEXT\n"
-        "Use only these columns unless the user message specifies additional ones.\n\n"
+        "- Valid DuckDB SQL only.\n\n"
         "## DuckDB SQL notes\n"
         "- For regex matching use REGEXP_MATCHES(col, 'pattern') or col ~ 'pattern'.\n"
         "- Do NOT use REGEXP_FULL_MATCH, REGEXP_LIKE, RLIKE, or any other dialect-specific regex function.\n\n"
         "## Output format\n"
-        "Output ONLY a JSON object with exactly two string keys.\n"
+        "Output ONLY a JSON object with exactly two string keys: \"query\" and \"condition\".\n"
         "No markdown fences. No explanation. No extra keys. No trailing text.\n"
-        "Example 1: {\"query\": \"SELECT * FROM observations WHERE Value < 0 LIMIT 1000\", \"condition\": \"TRUE\"}\n"
-        "Example 2: {\"query\": \"SELECT * FROM observations WHERE NOT REGEXP_MATCHES(observationDate, '^[0-9]{4}$') LIMIT 1000\", \"condition\": \"TRUE\"}"
+        "Example 1: {\"query\": \"SELECT StatVar, MinValue FROM stats\", \"condition\": \"MinValue >= 0\"}\n"
+        "Example 2: {\"query\": \"SELECT StatVar, MaxValue FROM stats WHERE Units = 'Percent'\", \"condition\": \"MaxValue <= 100\"}\n"
+        "Example 3: {\"query\": \"SELECT StatVar, COUNT(*) AS n FROM stats GROUP BY StatVar\", \"condition\": \"n = 1\"}"
     )
     user_prompt = f"Rule description: {prompt_text}{columns_hint}"
     full_prompt = system_prompt + "\n\n" + user_prompt
@@ -1304,27 +1323,8 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
             detail="LLM response is missing 'query' or 'condition'",
         )
 
-    # Reject aggregate queries — they return summary counts, not failing rows.
-    query_upper = query.upper()
-    _FORBIDDEN = ("COUNT(", "SUM(", "AVG(", "MIN(", "MAX(", "GROUP BY")
-    for token in _FORBIDDEN:
-        if token in query_upper:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Generated query uses '{token.strip()}' which is not allowed. "
-                    "Rules must return individual failing rows, not aggregates. "
-                    "Try rephrasing your description."
-                ),
-            )
-
-    # Enforce LIMIT — append if absent so runaway queries can't scan unbounded rows.
-    if "LIMIT" not in query_upper:
-        query = query + " LIMIT 1000"
-
-    # Reuse existing DuckDB EXPLAIN pre-check to catch obvious syntax errors.
-    # _validate_custom_rules injects a dummy observations CTE internally so the
-    # table reference resolves even though no dataset is loaded at this point.
+    # Reuse existing DuckDB EXPLAIN pre-check (validates syntax + column names
+    # against real-schema dummy tables; no dataset loaded at this point).
     sql_err = _validate_custom_rules([{
         "rule_id": "tmp",
         "params": {"query": query, "condition": condition},
