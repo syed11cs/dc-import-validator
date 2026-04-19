@@ -8,6 +8,7 @@ locally to logs/dc_import_validator.log and console. See ui/app_logging.py.
 """
 
 import asyncio
+import datetime
 import html
 import json
 import os
@@ -1433,6 +1434,8 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         safe_cols = ", ".join(body.csv_columns[:50])  # cap to avoid prompt bloat
         columns_hint = f"\nActual columns in dataset: {safe_cols}"
 
+    current_year = datetime.date.today().year
+
     system_prompt = (
         "You are generating SQL validation rules for a Data Commons validation system.\n\n"
         "## Execution model\n"
@@ -1508,19 +1511,36 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "NEVER use:\n"
         "  EXTRACT(YEAR FROM MaxDate)      ← fails if MaxDate is TEXT\n"
         "  SUBSTRING(MaxDate, 1, 4)        ← fragile if MaxDate is not a fixed-format string\n\n"
+        "## Relative time references\n"
+        f"The current year is {current_year}. Compute boundaries from this value — do NOT hardcode years.\n\n"
+        "Supported phrases — year-based only:\n"
+        "  'last N years' / 'past N years' / 'within the past N years'\n"
+        "  'not older than N years' / 'no older than N years'\n"
+        f"  → subtract N from {current_year} to get the boundary year, then use 'YYYY-01-01'.\n\n"
+        "Examples:\n"
+        f"  N=1  → MinDate >= '{current_year - 1}-01-01'\n"
+        f"  N=3  → MinDate >= '{current_year - 3}-01-01'\n"
+        f"  N=5  → MinDate >= '{current_year - 5}-01-01'\n"
+        f"  N=10 → MinDate >= '{current_year - 10}-01-01'\n\n"
+        "For month-based phrases (e.g. 'last 6 months', 'last 12 months'):\n"
+        "  → Convert to the nearest whole year (round up) and use year-level boundaries.\n"
+        f"  'last 6 months'  → MinDate >= '{current_year - 1}-01-01'\n"
+        f"  'last 12 months' → MinDate >= '{current_year - 1}-01-01'\n"
+        f"  'last 18 months' → MinDate >= '{current_year - 2}-01-01'\n\n"
+        "Always use full ISO date format 'YYYY-MM-DD' for all boundaries.\n\n"
         "## StatVar scope inference\n\n"
         "Most rules apply to ALL StatVars. Default to no WHERE on StatVar unless the\n"
         "description clearly implies a semantic subset identifiable by naming pattern.\n\n"
         "When a subset is implied, add a WHERE clause using ILIKE (case-insensitive).\n"
         "Use multiple patterns for the same concept — StatVar names vary across datasets.\n\n"
-        "Common patterns:\n"
-        "  'percent'  → WHERE StatVar ILIKE '%Percent%' OR StatVar ILIKE '%Pct%'\n"
-        "  'rate'     → WHERE StatVar ILIKE '%Rate%'\n"
-        "  'ratio'    → WHERE StatVar ILIKE '%Ratio%' OR StatVar ILIKE '%Fraction%' OR StatVar ILIKE '%Share%'\n"
-        "  'count'    → WHERE StatVar ILIKE '%Count%'\n"
-        "  'index'    → WHERE StatVar ILIKE '%Index%'\n"
-        "  'median'   → WHERE StatVar ILIKE '%Median%'\n"
-        "  'mean/avg' → WHERE StatVar ILIKE '%Mean%' OR StatVar ILIKE '%Average%'\n\n"
+        "Common patterns (singular and plural both apply):\n"
+        "  'percent/percentage/percentages' → WHERE StatVar ILIKE '%Percent%' OR StatVar ILIKE '%Pct%'\n"
+        "  'rate/rates'                     → WHERE StatVar ILIKE '%Rate%'\n"
+        "  'ratio/ratios'                   → WHERE StatVar ILIKE '%Ratio%' OR StatVar ILIKE '%Fraction%' OR StatVar ILIKE '%Share%'\n"
+        "  'count/counts'                   → WHERE StatVar ILIKE '%Count%'\n"
+        "  'index/indices/indexes'          → WHERE StatVar ILIKE '%Index%'\n"
+        "  'median'                         → WHERE StatVar ILIKE '%Median%'\n"
+        "  'mean/average/avg'               → WHERE StatVar ILIKE '%Mean%' OR StatVar ILIKE '%Average%'\n\n"
         "Rules:\n"
         "  1. NEVER use = 'exact_name' — you do not know the exact StatVar names.\n"
         "  2. NEVER use case-sensitive LIKE for StatVar names — always ILIKE.\n"
@@ -1573,9 +1593,24 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "- Valid DuckDB SQL.\n"
         "- Regex: REGEXP_MATCHES(col, 'pattern') or col ~ 'pattern'.\n"
         "  Do NOT use REGEXP_FULL_MATCH, REGEXP_LIKE, RLIKE.\n\n"
+        "## Vague or ambiguous descriptions\n"
+        "Use \"error\" ONLY when NO column, threshold, or comparison can be inferred.\n"
+        "If any reasonable interpretation exists, generate SQL instead of failing.\n\n"
+        "Examples that are too vague — return {\"error\": ...}:\n"
+        "  'values should look reasonable'\n"
+        "  'data should be consistent'\n"
+        "  'everything should be correct'\n"
+        "  'check the data'\n\n"
+        "Examples that have a reasonable interpretation — generate SQL:\n"
+        "  'values should not be negative' → MinValue >= 0\n"
+        "  'dates should be recent'        → MaxDate >= '2020-01-01'\n"
+        "  'there should be observations'  → NumObservations >= 1\n\n"
+        "When returning {\"error\"}, include ONLY the \"error\" key — no \"query\" or \"condition\".\n\n"
         "## Output format (STRICT)\n"
-        "Output ONLY a JSON object with exactly two string keys: \"query\" and \"condition\".\n"
-        "No markdown, no explanation, no extra keys, no trailing text.\n\n"
+        "Output ONLY a JSON object. Exactly one of these two shapes:\n"
+        "  SQL result:   {\"query\": \"...\", \"condition\": \"...\"}  — no other keys\n"
+        "  Vague rule:   {\"error\": \"...\"}                       — no other keys\n"
+        "Never return both shapes together. No markdown, no explanation, no trailing text.\n\n"
         "Worked examples (study the condition direction in each):\n"
         "{\"query\": \"SELECT StatVar, MinValue FROM stats\", \"condition\": \"MinValue >= 0\"}\n"
         "{\"query\": \"SELECT StatVar, MaxValue FROM stats\", \"condition\": \"MaxValue <= 100\"}\n"
@@ -1624,6 +1659,9 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
             status_code=400,
             detail=f"LLM returned invalid JSON. Response: {text[:200]}",
         )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
 
     query = (result.get("query") or "").strip().rstrip(";")
     condition = (result.get("condition") or "").strip()
