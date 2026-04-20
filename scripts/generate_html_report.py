@@ -771,7 +771,7 @@ def _render_rule_failure_section(results: list, output_dir: str) -> str:
         if rule_count == 1 and len(samples) == 1:
             html += "      <p>1 blocking rule failed.</p>\n"
         elif len(samples) != rule_count:
-            html += f"      <p>{rule_count} blocking rules failed ({len(samples)} affected entries).</p>\n"
+            html += f"      <p>{rule_count} blocking rules failed ({len(samples)} StatVars affected).</p>\n"
         else:
             html += f"      <p>{rule_count} blocking rules failed.</p>\n"
         html += "      <table class='details lint-table'><thead><tr><th>Rule</th><th>StatVar</th><th>Expected</th><th>Value</th><th>Location</th><th>Source row</th><th>Message</th></tr></thead><tbody>\n"

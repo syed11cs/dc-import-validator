@@ -5365,9 +5365,14 @@
           '</div>';
         }
         function getRuleImpactLabel(ruleId, count) {
-          if (count === 1) return '1 issue';
-          if (ruleId === 'check_unit_consistency') return count + ' StatVars affected';
-          return count + ' entries affected';
+          // Per-observation rules (raw TMCF/CSV level)
+          if (ruleId === 'check_observation_date_granularity')
+            return count === 1 ? '1 observation affected' : count + ' observations affected';
+          // Lint error-count rules (structural / missing refs)
+          if (ruleId === 'check_structural_lint_error_count' || ruleId === 'check_missing_refs_count')
+            return count === 1 ? '1 lint error' : count + ' lint errors';
+          // Stats-table rules (per-StatVar aggregated), differ rules, and custom SQL rules
+          return count === 1 ? '1 StatVar affected' : count + ' StatVars affected';
         }
         const ruleCount = new Set(samples.map(function(s) { return s.rule; })).size;
         const summaryText = ruleCount === 1 ? '1 blocking rule failed' : ruleCount + ' blocking rules failed';
