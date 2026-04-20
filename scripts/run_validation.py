@@ -62,6 +62,46 @@ def _rewrite_sql_validator_messages(results: list[dict]) -> None:
         )
 
 
+_DIFFER_NO_BASELINE_RE = _re.compile(
+    r"Differ summary is missing required field", _re.IGNORECASE
+)
+
+
+def _rewrite_differ_no_baseline_messages(results: list[dict]) -> None:
+    """Rewrite DATA_ERROR differ messages that indicate a missing baseline into
+    user-friendly WARNINGs.
+
+    When no baseline exists (e.g. first run), the DC runner emits DATA_ERROR with
+    "Differ summary is missing required field: 'previous_obs_size'." for differ
+    rules. This is expected — not a genuine data error. Promote to WARNING with a
+    clear explanation so it appears in the Warnings section, not "Other".
+
+    Genuine differ failures (malformed JSON, unexpected fields) produce different
+    error messages and are left untouched.
+    Operates in-place.
+    """
+    _DIFFER_RULE_IDS = frozenset({
+        "check_deleted_records_count",
+        "check_deleted_records_percent",
+        "check_modified_records_count",
+        "check_added_records_count",
+    })
+    for r in results:
+        if r.get("validation_name") not in _DIFFER_RULE_IDS:
+            continue
+        if r.get("status") != "DATA_ERROR":
+            continue
+        msg = r.get("message") or ""
+        if not _DIFFER_NO_BASELINE_RE.search(msg):
+            continue
+        r["status"] = "WARNING"
+        r["message"] = "No baseline found — skipping change detection (first run)."
+        r.setdefault("details", {})["differ_context"] = (
+            "This is expected on the first run or when no baseline has been accepted. "
+            "Use 'Accept Baseline' after a successful run to enable differ checks."
+        )
+
+
 def _split_rules(config: dict) -> tuple[list, list]:
     """Split rules into DC rules and custom rules (only enabled)."""
     rules = config.get("rules", [])
@@ -276,6 +316,7 @@ def main() -> int:
     )
     combined = dc_results + custom_results
     _rewrite_sql_validator_messages(combined)
+    _rewrite_differ_no_baseline_messages(combined)
 
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

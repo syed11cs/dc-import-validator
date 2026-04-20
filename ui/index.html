@@ -4841,6 +4841,7 @@
         const description = descEl.value.trim();
         customRulesList.push({ rule_id: ruleId, query, condition, description: description || undefined, enabled: true });
         renderCustomRules();
+        updateRunButtonState();
         descEl.value = '';
         queryEl.value = '';
         conditionEl.value = '';
