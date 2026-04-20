@@ -1309,7 +1309,9 @@ def _post_validate_sql_rule(description: str, query: str, condition: str) -> str
       3. MaxValue vs MinValue semantic mistake for "all/only positive"
       4. Condition direction: upper-bound language with > operator
       5. Condition direction: lower-bound language with < operator
-      6. Column alignment: condition references only columns in SELECT list
+      6. Upper-bound phrasing using MinValue instead of MaxValue
+      7. Lower-bound phrasing using MaxValue instead of MinValue
+      8. Column alignment: condition references only columns in SELECT list
     """
     desc_lower = description.lower()
 
@@ -1386,7 +1388,27 @@ def _post_validate_sql_rule(description: str, query: str, condition: str) -> str
             "'at least 1' → condition: NumObservations >= 1."
         )
 
-    # 6. Column alignment: every known table column in the condition must appear
+    # 6. Upper-bound phrasing but condition uses MinValue instead of MaxValue.
+    #    MinValue <= X does not prevent values from exceeding X — only MaxValue <= X does.
+    if re.search(r"\b(not\s+exceed|at\s+most|no\s+more\s+than)\b", desc_lower):
+        if re.search(r"\bMinValue\s*<=\s*\d+(?:\.\d+)?", condition, re.IGNORECASE):
+            return (
+                "Semantic error: upper bound constraints must use MaxValue, not MinValue. "
+                "MinValue <= X does not prevent values from exceeding X — it only checks "
+                "the minimum observed value. Use MaxValue <= X to enforce an upper bound."
+            )
+
+    # 7. Lower-bound phrasing but condition uses MaxValue instead of MinValue.
+    #    MaxValue >= X does not guarantee all values meet the lower bound.
+    if re.search(r"\b(at\s+least|no\s+less\s+than)\b", desc_lower):
+        if re.search(r"\bMaxValue\s*>=\s*\d+(?:\.\d+)?", condition, re.IGNORECASE):
+            return (
+                "Semantic error: lower bound constraints must use MinValue, not MaxValue. "
+                "MaxValue >= X only confirms the maximum meets the bound — it does not "
+                "guarantee all values do. Use MinValue >= X to enforce a lower bound."
+            )
+
+    # 8. Column alignment: every known table column in the condition must appear
     #    in the SELECT list.  Aggregate aliases (e.g. "n") are not in
     #    _SQL_RULE_COLUMNS so they are not checked here; the DuckDB EXPLAIN
     #    pre-check catches unknown identifiers at the SQL level.
@@ -1648,7 +1670,7 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "     b) The threshold is not universally safe (i.e. not MinValue >= 0 or\n"
         "        NumObservations >= 1), AND\n"
         "     c) The rule is global (no StatVar scope) AND multiple semantic groups\n"
-        "        are present (e.g. count-type + percent-type StatVars in the same dataset)\n"
+        "        are present (e.g. counts, percentages, and rates in the same dataset)\n"
         "     Do NOT rely on inferred value magnitudes — use group membership as the signal.\n"
         "     → Reject with {\"error\"} and suggestions. Threshold is ambiguous.\n\n"
         "  3. TYPE-SPECIFIC — rule clearly targets a single known group\n"
