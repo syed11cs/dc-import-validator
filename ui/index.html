@@ -1617,6 +1617,7 @@
           <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
         </div>
       </div>
+      <div id="app-version" style="font-size:0.65rem;color:var(--text-muted);opacity:0.35;margin-top:14px;user-select:none;letter-spacing:0.02em;"></div>
       </div>
     </aside>
     <main class="main">
@@ -4887,6 +4888,17 @@
 
     // Close modal on overlay click (outside the dialog box)
     document.addEventListener('DOMContentLoaded', () => {
+      // Fetch and display app version once on load.
+      fetch(API + '/api/version')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return;
+          const el = document.getElementById('app-version');
+          if (!el) return;
+          el.textContent = d.version;
+          if (d.commit) el.title = d.version + ' (' + d.commit + ')';
+        })
+        .catch(() => {});
       const overlay = document.getElementById('baseline-modal-overlay');
       if (overlay) {
         overlay.addEventListener('click', (e) => {

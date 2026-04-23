@@ -64,6 +64,11 @@ from ui.services.job_status import get_job_status as _get_job_status
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_BYTES = 100 * 1024**3  # 100 GB per file
+
+# Version info — set APP_VERSION and optionally COMMIT_SHA via env at deploy time.
+# Example: APP_VERSION=v0.3.0 COMMIT_SHA=abc1234 uvicorn ...
+_APP_VERSION = os.environ.get("APP_VERSION", "dev-local").strip() or "dev-local"
+_COMMIT_SHA = os.environ.get("COMMIT_SHA", "").strip()[:7]  # short SHA only
 SCRIPT_DIR = APP_ROOT
 OUTPUT_DIR = APP_ROOT / "output"
 CONFIG_DIR = APP_ROOT / "validation_configs"
@@ -387,6 +392,15 @@ def llm_status():
     """Check if GEMINI_API_KEY or GOOGLE_API_KEY is set (for Gemini Review)."""
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     return {"key_set": bool(key and key.strip())}
+
+
+@app.get("/api/version")
+def app_version():
+    """Return app version and optional commit SHA for display in the UI."""
+    payload: dict = {"version": _APP_VERSION}
+    if _COMMIT_SHA:
+        payload["commit"] = _COMMIT_SHA
+    return payload
 
 
 @app.get("/api/upload-config")
