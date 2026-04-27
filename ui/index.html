@@ -289,6 +289,7 @@
     #sql-rule-add-btn:not(:disabled):hover { opacity: 1; border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.08); }
     #sql-rule-add-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     #sql-rule-error { font-size: 0.75rem; color: var(--fail); display: none; }
+    #sql-rule-vague-hint { font-size: 0.72rem; color: var(--text-muted); display: none; margin-top: 2px; }
     #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
     #sql-rule-editor textarea, #sql-rule-editor input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.78rem; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); resize: vertical; }
     #sql-rule-editor textarea:focus, #sql-rule-editor input[type="text"]:focus { outline: none; border-color: var(--accent); }
@@ -298,6 +299,10 @@
     .custom-rule-condition-label { color: var(--text-muted); font-size: 0.7rem; margin-right: 3px; }
     #sql-rule-success { font-size: 0.75rem; color: var(--success); display: none; }
     #sql-rule-explanation { font-size: 0.73rem; color: var(--text-muted); background: rgba(99,102,241,0.07); border-left: 2px solid rgba(99,102,241,0.35); padding: 5px 8px; border-radius: 0 3px 3px 0; display: none; }
+    #sql-rule-suggestions { display: none; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .sql-suggestion-chip { font-size: 0.72rem; padding: 3px 9px; border-radius: 12px; border: 1px solid var(--border); background: none; color: var(--text); opacity: 0.8; cursor: pointer; transition: all 0.12s ease; font-family: inherit; }
+    .sql-suggestion-chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.08); opacity: 1; }
+    #sql-suggestions-label { font-size: 0.72rem; color: var(--text-muted); margin-top: 8px; display: none; }
     .custom-rule-desc { font-size: 0.75rem; color: var(--text); margin-bottom: 2px; }
     .custom-rule-title { font-size: 0.82rem; font-weight: 500; color: var(--text); margin-bottom: 1px; }
     .custom-rule-meta-id { font-family: monospace; font-size: 0.65rem; color: var(--text-muted); opacity: 0.6; margin-bottom: 4px; }
@@ -960,7 +965,7 @@
     .summary-card-outcome-left { display: flex; align-items: center; gap: 10px; min-width: 0; line-height: 1.25; }
     .summary-card-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; line-height: 1.2; }
     .summary-card-duration { font-size: 0.8rem; font-weight: 500; color: var(--text-muted); }
-    .summary-card-run-time { font-size: 0.75rem; font-weight: 400; color: var(--text-muted); opacity: 0.9; }
+
     .summary-card-status-dot {
       flex-shrink: 0;
       width: 10px;
@@ -1663,10 +1668,13 @@
               <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
                 <label for="sql-rule-desc" style="font-size:0.72rem;color:var(--text-muted);">Rule description</label>
                 <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'no negative values')"></textarea>
+                <div id="sql-rule-vague-hint">Try being more specific (e.g. "after 2020", "greater than 0")</div>
               </div>
               <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate Rule</button>
             </div>
             <div id="sql-rule-error"></div>
+            <div id="sql-suggestions-label"></div>
+            <div id="sql-rule-suggestions"></div>
             <details id="sql-rule-logic" style="display:none;">
               <summary style="font-size:0.75rem;color:var(--text-muted);cursor:pointer;user-select:none;margin-bottom:6px;">How this rule works</summary>
               <div id="sql-rule-explanation"></div>
@@ -1680,7 +1688,9 @@
               </div>
               <input type="text" id="sql-rule-id" style="display:none;">
             </details>
-            <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;display:none;" disabled>Add Rule</button>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;display:none;" disabled>Add Rule</button>
+            </div>
             <div id="sql-rule-success">&#10003; Rule added</div>
           </div>
         </div>
@@ -1789,44 +1799,7 @@
     const STORAGE_KEY_PRESETS = 'import_validation_presets';
     const LAST_OUTCOME_KEY = 'import_validation_last_outcome_';
     const LAST_DATASET_KEY = 'import_validation_last_dataset';
-    const LAST_RUN_STATE_KEY = 'import_validation_last_run_state';
 
-    function saveLastRunState(state) {
-      try {
-        localStorage.setItem(LAST_RUN_STATE_KEY, JSON.stringify(state));
-      } catch (_) {}
-    }
-    function getStoredLastRunState() {
-      try {
-        const raw = localStorage.getItem(LAST_RUN_STATE_KEY);
-        if (!raw) return null;
-        const state = JSON.parse(raw);
-        if (!state || typeof state.dataset !== 'string' || !state.status) return null;
-        return state;
-      } catch (_) {
-        return null;
-      }
-    }
-    function restoreExecutionHeaderFromStored(status, durationSec) {
-      const executionHeaderStatus = document.getElementById('execution-header-status');
-      const resultsSection = document.getElementById('results-section');
-      if (!executionHeaderStatus || !resultsSection) return;
-      executionHeaderStatus.classList.remove('running');
-      const sec = Math.round(durationSec || 0);
-      if (status === 'success') {
-        executionHeaderStatus.textContent = '\u2713 Completed · ' + formatElapsed(sec);
-        resultsSection.classList.remove('execution-running', 'execution-failed', 'execution-cancelled');
-        resultsSection.classList.add('execution-complete');
-      } else if (status === 'failed') {
-        executionHeaderStatus.textContent = '\u2715 Failed · ' + formatElapsed(sec);
-        resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-cancelled');
-        resultsSection.classList.add('execution-failed');
-      } else if (status === 'cancelled') {
-        executionHeaderStatus.textContent = 'Cancelled · ' + formatElapsed(sec);
-        resultsSection.classList.remove('execution-running', 'execution-complete', 'execution-failed');
-        resultsSection.classList.add('execution-cancelled');
-      }
-    }
 
     let lastWarnCount = 0;
     let lastRunDurationSec = null;
@@ -2064,42 +2037,7 @@
       document.querySelectorAll('.dataset-option').forEach(opt => {
         opt.classList.toggle('selected', opt.getAttribute('data-value') === currentDataset);
       });
-      const storedRunState = getStoredLastRunState();
-      const hasRestore = !!(storedRunState && storedRunState.dataset === currentDataset && storedRunState.status);
-      const restoreApply = (hasRestore && storedRunState.status === 'success')
-        ? { runId: storedRunState.runId ?? null }
-        : null;
-      if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true, restoreApply });
-      if (hasRestore) {
-        lastRunReportId = storedRunState.runId ?? null;
-        lastRunBaselineId = storedRunState.baselineId ?? (storedRunState.dataset !== 'custom' ? storedRunState.dataset : null);
-        lastRunDataset = storedRunState.dataset;
-        lastRunStatus = storedRunState.status ?? null;
-        lastRunCustomDatasetName = storedRunState.customDatasetName ?? null;
-        lastRunSummary = storedRunState.lastRunSummary ?? null;
-        const summaryCard = storedRunState.summaryCard;
-        if (summaryCard) {
-          if (summaryCard.completedAt) summaryCard.completedAt = new Date(summaryCard.completedAt);
-          setSummaryCard(summaryCard);
-        }
-        restoreExecutionHeaderFromStored(storedRunState.status, storedRunState.durationSec);
-        if (storedRunState.status === 'success') {
-          lastRunReportGenerated = true;
-          lastRunHadAiReview = true;
-          // applyValidationResults is called by loadRules after the rule DOM is ready
-        }
-        const notice = document.getElementById('custom-restore-notice');
-        // Only show the restore notice when results come from a previous session.
-        // If a fresh run already happened in this session for this dataset, skip it.
-        if (notice && !_sessionRunDatasets.has(currentDataset)) {
-          notice.textContent = currentDataset === 'custom'
-            ? 'ℹ Showing results from a previous run. Upload files to run validation again.'
-            : 'ℹ Showing results from the last validation run.';
-          notice.style.display = '';
-        }
-        loadReport();
-        return;
-      }
+      if (currentDataset) loadRules(currentDataset, { skipApplyValidationResults: true });
       const executionHeaderStatus = document.getElementById('execution-header-status');
       const resultsSection = document.getElementById('results-section');
       if (executionHeaderStatus) {
@@ -2433,20 +2371,6 @@
         lastRunSummary = { dataset: (opts.dataset != null ? opts.dataset : currentDataset) || null, run_id: opts.run_id ?? null, success: false, cancelled: true };
         setReportActionsVisible(true, false);
         card.classList.add('outcome-fail');
-        const outcome = document.createElement('div');
-        outcome.className = 'summary-card-outcome';
-        outcome.style.color = 'var(--text-muted)';
-        const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : null;
-        const left = document.createElement('span');
-        left.textContent = 'Validation cancelled';
-        outcome.appendChild(left);
-        if (runTime) {
-          const runEl = document.createElement('span');
-          runEl.className = 'summary-card-run-time';
-          runEl.textContent = formatRunTimestampShort(runTime);
-          outcome.appendChild(runEl);
-        }
-        content.appendChild(outcome);
         card.classList.add('visible');
         return;
       }
@@ -2456,8 +2380,6 @@
       const warnCount = opts.warnCount ?? 0;
       const pipelineFailedBeforeValidation = opts.pipelineFailedBeforeValidation === true;
       const showDetailsToggle = runCount > 0 || pipelineFailedBeforeValidation;
-      const runTime = opts.completedAt != null ? (opts.completedAt instanceof Date ? opts.completedAt : new Date(opts.completedAt)) : null;
-
       const outcome = document.createElement('div');
       outcome.className = 'summary-card-outcome';
       const outcomeLeft = document.createElement('div');
@@ -2497,21 +2419,13 @@
       outcomeLeft.appendChild(statusDot);
       outcomeLeft.appendChild(outcomeText);
       outcome.appendChild(outcomeLeft);
-      if (opts.durationSec != null || runTime) {
+      if (opts.durationSec != null) {
         const headerRight = document.createElement('div');
         headerRight.className = 'summary-card-header-right';
-        if (opts.durationSec != null) {
-          const durationEl = document.createElement('span');
-          durationEl.className = 'summary-card-duration';
-          durationEl.textContent = opts.durationSec.toFixed(1) + 's';
-          headerRight.appendChild(durationEl);
-        }
-        if (runTime) {
-          const runEl = document.createElement('span');
-          runEl.className = 'summary-card-run-time';
-          runEl.textContent = formatRunTimestampShort(runTime);
-          headerRight.appendChild(runEl);
-        }
+        const durationEl = document.createElement('span');
+        durationEl.className = 'summary-card-duration';
+        durationEl.textContent = opts.durationSec.toFixed(1) + 's';
+        headerRight.appendChild(durationEl);
         outcome.appendChild(headerRight);
       }
       content.appendChild(outcome);
@@ -4003,6 +3917,7 @@
           _sessionRunDatasets.add(runDataset);
           lastRunReportId = data.run_id || null;
           lastRunBaselineId = data.baseline_id || (runDataset !== 'custom' ? runDataset : null);
+          if (window._refreshSqlSuggestions) window._refreshSqlSuggestions(runDataset, lastRunReportId);
           let hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           const pipelineFailedBeforeValidation = false;
           const failureInfo = getFailureInfo(data);
@@ -4081,17 +3996,6 @@
           };
           setSummaryCard(summaryDataToShow);
           await Promise.all([reportPromise, validationPromise]);
-          saveLastRunState({
-            dataset: runDataset,
-            runId: data.run_id || null,
-            baselineId: lastRunBaselineId,
-            status: 'success',
-            durationSec: lastRunDurationSec != null ? Math.round(lastRunDurationSec) : 0,
-            summaryCard: summaryDataToShow,
-            lastRunSummary: lastRunSummary,
-            timestamp: Date.now(),
-            customDatasetName: lastRunCustomDatasetName || undefined,
-          });
         } else if (data.cancelled) {
           lastRunStatus = 'cancelled';
           _sessionRunDatasets.add(runDataset);
@@ -4125,15 +4029,6 @@
           setSummaryCard(summaryDataToShow);
           switchToReportTab({ scrollIntoView: true });
           await loadReport();
-          saveLastRunState({
-            dataset: runDataset,
-            runId: data.run_id || null,
-            status: 'failed',
-            durationSec: lastRunDurationSec != null ? Math.round(lastRunDurationSec) : 0,
-            summaryCard: summaryDataToShow,
-            lastRunSummary: lastRunSummary,
-            timestamp: Date.now()
-          });
         }
       } catch (e) {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
@@ -4166,15 +4061,6 @@
           // permanently disabled (finally re-sets btn.disabled=true after
           // the timer has already re-enabled it).
           setSummaryCard(cancelSummaryData);
-          saveLastRunState({
-            dataset: runDataset,
-            runId: null,
-            status: 'cancelled',
-            durationSec,
-            summaryCard: cancelSummaryData,
-            lastRunSummary: { dataset: runDataset, run_id: null, success: false, cancelled: true },
-            timestamp: Date.now()
-          });
         } else {
           const durationSec = (Date.now() - runStartTime) / 1000;
           finishProgressBar(false, durationSec, null);
@@ -4759,21 +4645,101 @@
       }
     }
 
+
     // ── Unified Custom SQL Rule editor ──────────────────────────────────────────
     (function () {
-      const generateBtn = document.getElementById('sql-generate-btn');
-      const descEl      = document.getElementById('sql-rule-desc');
-      const errorEl     = document.getElementById('sql-rule-error');
-      const queryEl     = document.getElementById('sql-rule-query');
-      const conditionEl = document.getElementById('sql-rule-condition');
-      const ruleIdEl    = document.getElementById('sql-rule-id');
-      const addBtn        = document.getElementById('sql-rule-add-btn');
-      const successEl     = document.getElementById('sql-rule-success');
-      const explanationEl = document.getElementById('sql-rule-explanation');
+      let defaultSuggestions = [];
+
+      const generateBtn    = document.getElementById('sql-generate-btn');
+      const descEl         = document.getElementById('sql-rule-desc');
+      const errorEl        = document.getElementById('sql-rule-error');
+      const suggestLabelEl = document.getElementById('sql-suggestions-label');
+      const suggestionsEl  = document.getElementById('sql-rule-suggestions');
+      const queryEl        = document.getElementById('sql-rule-query');
+      const conditionEl    = document.getElementById('sql-rule-condition');
+      const ruleIdEl       = document.getElementById('sql-rule-id');
+      const addBtn         = document.getElementById('sql-rule-add-btn');
+      const successEl      = document.getElementById('sql-rule-success');
+      const explanationEl  = document.getElementById('sql-rule-explanation');
+      const vagueHintEl    = document.getElementById('sql-rule-vague-hint');
+
+      const _VAGUE_TERMS = /\b(good|recent|valid|correct|reasonable|large|small)\b/i;
+      descEl.addEventListener('input', () => {
+        if (vagueHintEl) vagueHintEl.style.display = _VAGUE_TERMS.test(descEl.value) ? 'block' : 'none';
+      });
 
       function showError(msg) {
         errorEl.textContent = msg;
         errorEl.style.display = msg ? 'block' : 'none';
+      }
+
+      function showSuggestions(suggestions, label) {
+        suggestionsEl.innerHTML = '';
+        suggestLabelEl.textContent = '';
+        suggestLabelEl.style.display = 'none';
+        if (!suggestions || !suggestions.length) {
+          suggestionsEl.style.display = 'none';
+          return;
+        }
+        if (label) {
+          suggestLabelEl.textContent = label;
+          suggestLabelEl.style.display = 'block';
+        }
+        suggestionsEl.style.display = 'flex';
+        suggestions.forEach(function(s) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'sql-suggestion-chip';
+          btn.textContent = s;
+          btn.addEventListener('click', function() {
+            btn.disabled = true;
+            descEl.value = s;
+            generateBtn.click();
+          });
+          suggestionsEl.appendChild(btn);
+        });
+      }
+
+      // Tracks whether the current generate call is a clarification follow-up (round 1).
+      // Reset to 0 after every request so normal retries start fresh.
+      let clarificationRound = 0;
+      // Last prompt sent to the API. Prevents re-sending the same prompt when clicking
+      // a suggestion that would return the identical error again (infinite loop guard).
+      let lastPrompt = null;
+
+      function showClarifyOptions(question, options) {
+        showError(question);
+        suggestionsEl.innerHTML = '';
+        suggestLabelEl.textContent = '';
+        suggestLabelEl.style.display = 'none';
+        if (!options || !options.length) { suggestionsEl.style.display = 'none'; return; }
+        suggestLabelEl.textContent = 'Try one of these:';
+        suggestLabelEl.style.display = 'block';
+        suggestionsEl.style.display = 'flex';
+        options.forEach(function(opt) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'sql-suggestion-chip';
+          btn.textContent = opt.label;
+          btn.addEventListener('click', function() {
+            btn.disabled = true;
+            descEl.value = opt.refined;
+            clarificationRound = 1;
+            generateBtn.click();
+          });
+          suggestionsEl.appendChild(btn);
+        });
+      }
+
+      function clearResult() {
+        queryEl.value = '';
+        conditionEl.value = '';
+        explanationEl.style.display = 'none';
+        const logicEl = document.getElementById('sql-rule-logic');
+        if (logicEl) logicEl.style.display = 'none';
+        addBtn.style.display = 'none';
+        addBtn.disabled = true;
+        if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
       }
 
       function syncAddBtn() {
@@ -4782,6 +4748,7 @@
 
       queryEl.addEventListener('input', syncAddBtn);
       conditionEl.addEventListener('input', syncAddBtn);
+      descEl.addEventListener('input', function() { lastPrompt = null; });
 
       // Read column headers from the first uploaded CSV file (first 2 KB only).
       async function readCsvColumns() {
@@ -4797,11 +4764,59 @@
         }
       }
 
+      // Derive lightweight dataset stats from the uploaded CSV (first 50 KB) without a
+      // validation run. Used as fallback context when no stats_summary.csv exists.
+      // Returns a backend-compatible stats dict, or null if no CSV is uploaded.
+      async function readCsvPreviewStats() {
+        if (!customCsvFiles || !customCsvFiles.length) return null;
+        try {
+          const slice = customCsvFiles[0].slice(0, 51200);
+          const text = await slice.text();
+          const lines = text.split('\n').filter(Boolean);
+          if (lines.length < 2) return null;
+          const headers = lines[0].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+          const col = name => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+          const valueIdx = col('value');
+          const dateIdx  = col('observationdate') !== -1 ? col('observationdate') : col('date');
+          const varIdx   = col('variablemeasured') !== -1 ? col('variablemeasured') : col('statvar');
+          let minVal = null, maxVal = null;
+          const dates = new Set(), statvarNames = new Set();
+          for (let i = 1; i < lines.length; i++) {
+            const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+            if (valueIdx !== -1) {
+              const v = parseFloat(cells[valueIdx]);
+              if (!isNaN(v)) {
+                if (minVal === null || v < minVal) minVal = v;
+                if (maxVal === null || v > maxVal) maxVal = v;
+              }
+            }
+            if (dateIdx !== -1 && cells[dateIdx]) dates.add(cells[dateIdx]);
+            if (varIdx  !== -1 && cells[varIdx])  statvarNames.add(cells[varIdx]);
+          }
+          const sortedDates = Array.from(dates).sort();
+          return {
+            num_rows:      statvarNames.size || (lines.length - 1),
+            min_value:     minVal,
+            max_value:     maxVal,
+            dates:         sortedDates.slice(0, 2).concat(sortedDates.length > 2 ? [sortedDates[sortedDates.length - 1]] : []),
+            statvar_names: Array.from(statvarNames).slice(0, 20),
+          };
+        } catch {
+          return null;
+        }
+      }
+
       generateBtn.addEventListener('click', async () => {
         if (generateBtn.classList.contains('btn-loading')) return;
         const prompt = (descEl.value || '').trim();
         if (!prompt) { showError('Please describe the rule to generate SQL.'); return; }
+        if (prompt === lastPrompt) {
+          showError('This rule cannot be generated due to a structural limitation. Try a different rule.');
+          return;
+        }
+        lastPrompt = prompt;
         showError('');
+        clearResult();
         generateBtn.style.width = generateBtn.offsetWidth + 'px';
         generateBtn.classList.add('btn-loading');
         generateBtn.disabled = true;
@@ -4809,6 +4824,7 @@
         generateBtn.innerHTML = '<span class="_sql-spinner"></span>Generating\u2026';
         try {
           const csvColumns = await readCsvColumns();
+          const csvPreviewStats = lastRunReportId ? null : await readCsvPreviewStats();
           const res = await fetch(API + '/api/generate-sql-rule', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4816,40 +4832,53 @@
               prompt,
               dataset: currentDataset || null,
               csv_columns: csvColumns,
+              clarification_round: clarificationRound,
+              run_id: lastRunReportId || null,
+              csv_preview_stats: csvPreviewStats || null,
             }),
           });
           const data = await res.json();
+          // Infrastructure errors only (LLM unavailable etc.) — not structured responses.
           if (!res.ok) {
             if (res.status === 503) {
               showError('SQL generation requires a Gemini API key (GEMINI_API_KEY not set).');
             } else if (res.status === 502) {
               showError('LLM request failed. Please try again.');
             } else {
-              showError(data.detail || 'Generation failed. Try rephrasing your description.');
+              showError((data && data.detail) || 'Generation failed. Try rephrasing your description.');
             }
             return;
           }
-          // Fill fields and reveal the SQL logic section.
-          queryEl.value = data.query;
-          conditionEl.value = data.condition;
-          // Show explanation for counter-intuitive conditions (MinValue/MaxValue semantics).
-          if (data.explanation) {
-            explanationEl.textContent = data.explanation;
-            explanationEl.style.display = 'block';
+          // Detect response type by shape — never rely on HTTP status for sql/error.
+          if (data.query) {
+            // SQL result
+            queryEl.value = data.query;
+            conditionEl.value = data.condition;
+            if (data.explanation) {
+              explanationEl.textContent = data.explanation;
+              explanationEl.style.display = 'block';
+            }
+            const logicEl = document.getElementById('sql-rule-logic');
+            if (logicEl) { logicEl.style.display = ''; logicEl.open = true; }
+            lastPrompt = null;
+            addBtn.style.display = '';
+            generateBtn.dataset.pendingRuleId = data.rule_id;
+            syncAddBtn();
+            queryEl.focus();
+          } else if (data.error) {
+            // Error + suggestions
+            showError(data.error);
+            showSuggestions(data.suggestions || [], 'Try one of these:');
+          } else if (data.clarify) {
+            // Clarification options — single round only (backend enforces round limit)
+            showClarifyOptions(data.clarify, data.options || []);
           } else {
-            explanationEl.style.display = 'none';
+            showError('Unexpected response. Try rephrasing your description.');
           }
-          // Reveal the collapsible SQL section and Add Rule button.
-          const logicEl = document.getElementById('sql-rule-logic');
-          if (logicEl) { logicEl.style.display = ''; logicEl.open = true; }
-          addBtn.style.display = '';
-          // Stash rule_id from server; overridden if user changes the Rule ID field.
-          generateBtn.dataset.pendingRuleId = data.rule_id;
-          syncAddBtn();
-          queryEl.focus();
         } catch (e) {
           showError('Request failed. Check your connection and try again.');
         } finally {
+          clarificationRound = 0;
           generateBtn.classList.remove('btn-loading');
           generateBtn.disabled = false;
           descEl.disabled = false;
@@ -4886,6 +4915,31 @@
         successEl.style.display = 'block';
         setTimeout(() => { successEl.style.display = 'none'; }, 2000);
       });
+
+      // Fetch suggestions from backend (data-aware when dataset/run_id are known).
+      function refreshSuggestions(dataset, runId) {
+        const params = new URLSearchParams();
+        if (dataset && dataset !== 'custom') params.set('dataset', dataset);
+        if (runId) params.set('run_id', runId);
+        const qs = params.toString() ? '?' + params.toString() : '';
+        fetch(API + '/api/sql-rule-suggestions' + qs)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (d && Array.isArray(d.suggestions)) defaultSuggestions = d.suggestions;
+          })
+          .catch(() => {
+            defaultSuggestions = [
+              'every StatVar should have at least one observation',
+              'no StatVar should have negative values',
+            ];
+          })
+          .finally(() => { clearResult(); });
+      }
+
+      // Expose so run-completion handler can trigger a refresh with context.
+      window._refreshSqlSuggestions = refreshSuggestions;
+
+      refreshSuggestions(currentDataset, lastRunReportId);
     })();
 
     // Close modal on overlay click (outside the dialog box)
@@ -5961,16 +6015,6 @@
       const s = String(d.getSeconds()).padStart(2, '0');
       return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
     }
-    function formatRunTimestampShort(d) {
-      if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
-      const mon = d.toLocaleDateString('en-US', { month: 'short' });
-      const day = d.getDate();
-      const year = d.getFullYear();
-      const h = String(d.getHours()).padStart(2, '0');
-      const min = String(d.getMinutes()).padStart(2, '0');
-      return mon + ' ' + day + ', ' + year + ' · ' + h + ':' + min;
-    }
-
     function formatTimeAgo(unixSec) {
       const diff = Date.now() / 1000 - unixSec;
       if (diff < 60) return 'just now';

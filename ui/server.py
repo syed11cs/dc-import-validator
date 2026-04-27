@@ -9,6 +9,7 @@ locally to logs/dc_import_validator.log and console. See ui/app_logging.py.
 
 import asyncio
 import datetime
+from dataclasses import dataclass as _dataclass
 import html
 import json
 import os
@@ -401,6 +402,64 @@ def app_version():
     if _COMMIT_SHA:
         payload["commit"] = _COMMIT_SHA
     return payload
+
+
+@app.get("/api/sql-rule-suggestions")
+def sql_rule_suggestions(dataset: str | None = None, run_id: str | None = None):
+    """Return SQL rule suggestion strings.
+
+    Without query params, returns the static defaults.
+    With dataset/run_id, augments suggestions using _DatasetContext derived from
+    summary_report.csv (same source used by rule generation).
+    """
+    ctx = _compute_dataset_context(run_id, dataset) if (dataset or run_id) else None
+    suggestions = _build_suggestions(ctx)
+    return {"suggestions": suggestions}
+
+
+def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
+    """Build a deterministic, data-aware suggestion list from _DatasetContext.
+
+    Falls back to _DEFAULT_SQL_SUGGESTIONS when no context is available.
+    All rules are purely conditional — no LLM involved.
+    """
+    if ctx is None:
+        return list(_DEFAULT_SQL_SUGGESTIONS)
+
+    result = []
+
+    # Date-range suggestion: if we observed any dates, recency is a meaningful check.
+    if ctx.date_range and ctx.date_range[0]:
+        result.append("observation dates should be recent")
+
+    # Multi-StatVar suggestion: unit consistency only makes sense with >1 StatVar.
+    if ctx.num_statvars > 1:
+        result.append("units should be consistent across StatVars")
+
+    # Mixed-scale suggestion: flag the gotcha of applying a single threshold.
+    if ctx.has_mixed_scales:
+        result.append("avoid applying a single threshold across all StatVars — scales differ")
+
+    # Observation count is always a sensible baseline check.
+    if ctx.num_statvars > 0:
+        first_concept = ctx.concepts[0] if ctx.concepts else "every StatVar"
+        result.append(f"{first_concept} should have at least one observation")
+    else:
+        result.append("every StatVar should have at least one observation")
+
+    # Negative-value suggestion: appended last to match its position in _DEFAULT_SQL_SUGGESTIONS.
+    # _DatasetContext has no min_value field so there is never an explicit contradiction —
+    # always include as a safe default.
+    result.append("no StatVar should have negative values")
+
+    # De-duplicate while preserving order (ctx may overlap with defaults).
+    seen: set[str] = set()
+    deduped = []
+    for s in result:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped
 
 
 @app.get("/api/upload-config")
@@ -1234,6 +1293,171 @@ class _GenerateSqlRuleRequest(BaseModel):
     dataset: str | None = None
     tmcf_schema: str | None = None
     csv_columns: list[str] | None = None
+    run_id: str | None = None
+    clarification_round: int = 0
+    # Optional lightweight stats derived from uploaded CSV (no validation run needed).
+    # Keys: num_rows (int), min_value (float|None), max_value (float|None),
+    #       dates (list[str]), statvar_names (list[str])
+    csv_preview_stats: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# DatasetContext — precomputed from stats_summary CSV for prompt injection
+# ---------------------------------------------------------------------------
+
+@_dataclass
+class _DatasetContext:
+    num_statvars: int
+    concepts: list[str]
+    has_mixed_scales: bool
+    date_range: tuple[str, str]
+    # True when context was derived from the raw uploaded CSV rather than stats_summary.csv.
+    # The prompt and response flag differ slightly in this case.
+    from_csv_preview: bool = False
+
+
+_CONCEPT_KEYWORDS = ["birth", "death", "population", "fertility", "mortality", "gdp"]
+
+
+def _extract_concepts(names: list[str]) -> list[str]:
+    text = " ".join(names).lower()
+    return sorted(set(k for k in _CONCEPT_KEYWORDS if k in text))
+
+
+def _find_stats_summary(run_id: str | None, dataset: str | None) -> Path | None:
+    """Return path to the stats/summary CSV if available for the given run/dataset.
+
+    The pipeline writes summary_report.csv; an older convention used stats_summary.csv.
+    Both filenames are checked so custom-dataset preview works regardless of which name
+    the pipeline produced.  Checked in priority order:
+      1. output/<dataset>/<run_id>/summary_report.csv   ← actual pipeline output (UI runs)
+      2. output/<dataset>/<run_id>/stats_summary.csv    ← legacy name
+      3. output/<dataset>_genmcf/summary_report.csv     ← named datasets, canonical dir
+      4. output/<dataset>_genmcf/stats_summary.csv      ← legacy name, canonical dir
+    """
+    _FILENAMES = ("summary_report.csv", "stats_summary.csv")
+    if run_id and dataset:
+        base = APP_ROOT / "output" / dataset / run_id
+        for name in _FILENAMES:
+            p = base / name
+            if p.exists():
+                return p
+    if dataset:
+        base = APP_ROOT / "output" / f"{dataset}_genmcf"
+        for name in _FILENAMES:
+            p = base / name
+            if p.exists():
+                return p
+    return None
+
+
+def _compute_dataset_context(
+    run_id: str | None,
+    dataset: str | None,
+    csv_preview_stats: dict | None = None,
+) -> "_DatasetContext | None":
+    """Compute a minimal DatasetContext from stats_summary CSV.
+
+    Falls back to csv_preview_stats (lightweight stats from the raw uploaded CSV)
+    when no validation run exists. Returns None if unavailable.
+    """
+    csv_path = _find_stats_summary(run_id, dataset)
+    if not csv_path:
+        # Try to build minimal context from client-side CSV preview stats.
+        if csv_preview_stats and isinstance(csv_preview_stats, dict):
+            try:
+                num = int(csv_preview_stats.get("num_rows") or 0)
+                min_val = csv_preview_stats.get("min_value")
+                max_val = csv_preview_stats.get("max_value")
+                dates = csv_preview_stats.get("dates") or []
+                statvar_names = csv_preview_stats.get("statvar_names") or []
+                has_mixed = (
+                    max_val is not None and min_val is not None
+                    and float(max_val) > 1000 and abs(float(min_val)) < 1
+                )
+                concepts = _extract_concepts([str(n) for n in statvar_names])
+                min_date = str(dates[0]) if dates else ""
+                max_date = str(dates[-1]) if dates else ""
+                return _DatasetContext(
+                    num_statvars=num,
+                    concepts=concepts,
+                    has_mixed_scales=bool(has_mixed),
+                    date_range=(min_date, max_date),
+                    from_csv_preview=True,
+                )
+            except Exception as _exc:
+                logger.debug("csv_preview_stats context failed: %s", _exc)
+        return None
+    try:
+        import duckdb as _duckdb
+        con = _duckdb.connect()
+        con.execute(f"CREATE VIEW stats AS SELECT * FROM read_csv_auto('{csv_path}')")
+        row = con.execute(
+            "SELECT COUNT(*), MIN(MinDate), MAX(MaxDate), MIN(MinValue), MAX(MaxValue) FROM stats"
+        ).fetchone()
+        if row is None:
+            con.close()
+            return None
+        num, min_date, max_date, min_val, max_val = row
+        has_mixed = (max_val or 0) > 1000 and abs(min_val or 0) < 1
+        names_rows = con.execute("SELECT StatVar FROM stats").fetchall()
+        con.close()
+        names = [r[0] for r in names_rows if r[0]]
+        concepts = _extract_concepts(names)
+        return _DatasetContext(
+            num_statvars=int(num or 0),
+            concepts=concepts,
+            has_mixed_scales=bool(has_mixed),
+            date_range=(str(min_date or ""), str(max_date or "")),
+        )
+    except Exception as _exc:
+        logger.debug("dataset_context unavailable run_id=%s dataset=%s: %s", run_id, dataset, _exc)
+        return None
+
+
+def _format_dataset_context(ctx: "_DatasetContext | None") -> str:
+    if ctx is None:
+        return (
+            "## Dataset context\n"
+            "Not available — no validation run has been completed yet.\n"
+            "If dataset context is NOT available:\n"
+            "  - Do NOT assume specific concept names (birth, death, population, etc.) exist in the data.\n"
+            "  - Prefer generic rules that apply to any dataset (MinValue, MaxValue, NumObservations, Units).\n"
+            "  - If dataset context is not available, ILIKE-based concept matching may be unreliable.\n"
+            "    Use it cautiously. Prefer generic rules when possible.\n\n"
+        )
+    concepts_str = ", ".join(ctx.concepts) if ctx.concepts else "none detected"
+    return (
+        f"## Dataset context\n"
+        f"{ctx.num_statvars} StatVars. "
+        f"Date range: {ctx.date_range[0]}–{ctx.date_range[1]}.\n"
+        f"Concepts present: {concepts_str}.\n"
+        f"{'Values span multiple scales (counts and small ratios mixed).\n' if ctx.has_mixed_scales else ''}"
+        "Use this to improve suggestion specificity. "
+        "Prefer these concepts when relevant, but do not assume this list is exhaustive.\n\n"
+    )
+
+
+_DEFAULT_SQL_SUGGESTIONS = [
+    "every StatVar should have at least one observation",
+    "no StatVar should have negative values",
+]
+
+
+def _fallback_error(ctx: "_DatasetContext | None") -> dict:
+    """Generic error returned when clarification round limit is hit or options are invalid."""
+    if ctx and ctx.concepts:
+        first = ctx.concepts[0]
+        suggestions = [
+            f"{first} values should have at least one observation",
+            *_DEFAULT_SQL_SUGGESTIONS[1:],
+        ]
+    else:
+        suggestions = list(_DEFAULT_SQL_SUGGESTIONS)
+    return {
+        "error": "Rule is too vague to generate SQL — no column or threshold can be inferred.",
+        "suggestions": suggestions,
+    }
 
 
 _SQL_RULE_COLUMNS = {
@@ -1459,6 +1683,38 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         raise HTTPException(status_code=400, detail="prompt is required")
     if len(prompt_text) > 2000:
         raise HTTPException(status_code=400, detail="prompt too long (max 2000 characters)")
+
+    _VAGUE_TERMS = {
+        "good": "please specify what makes a value good (e.g. greater than 0, within a known range)",
+        "recent": "please specify a date (e.g. after 2020)",
+        "valid": "please specify what makes a value valid (e.g. between 0 and 100)",
+        "correct": "please specify what correct means (e.g. matches a known set of values)",
+        "reasonable": "please specify a numeric range (e.g. between 0 and 1000)",
+        "large": "please specify a threshold (e.g. greater than 1000)",
+        "small": "please specify a threshold (e.g. less than 10)",
+    }
+    import re as _re_vague
+    _HAS_NUMERIC_SIGNAL = bool(
+        _re_vague.search(r"\d", prompt_text)
+        or _re_vague.search(
+            r"\b(after|before|above|below|greater than|less than|at least|at most)\b|\bbetween\s+[-+]?\d",
+            prompt_text, _re_vague.IGNORECASE,
+        )
+        or _re_vague.search(r"[<>]=?", prompt_text)
+    )
+    _word_count = len(prompt_text.split())
+    if not _HAS_NUMERIC_SIGNAL:
+        if _word_count < 4:
+            raise HTTPException(
+                status_code=400,
+                detail="Description is too vague — please be more specific (e.g. 'values must be greater than 0', 'dates after 2020').",
+            )
+        for term, suggestion in _VAGUE_TERMS.items():
+            if _re_vague.search(rf"\b{term}\b", prompt_text, _re_vague.IGNORECASE):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"The term '{term}' is ambiguous — {suggestion}.",
+                )
 
     try:
         from google import genai
@@ -1778,6 +2034,10 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "ALWAYS include \"suggestions\": at least 2–3 concrete prompts the user can try next.\n"
         "Keep the error message to 1–2 lines. Prioritise actionable output over explanation.\n\n"
         "## How to write context-aware suggestions (IMPORTANT)\n"
+        "Suggestions are directly usable rule descriptions — concrete, dataset-ready prompts\n"
+        "that the user can submit immediately to generate valid SQL.\n"
+        "They are NOT intent summaries. Write them as complete, actionable rule statements.\n"
+        "Example: \"every StatVar should have at least one observation\" (not \"Check observations\")\n\n"
         "Suggestions must reflect the user's original intent — not generic fallbacks.\n\n"
         "Rules (apply all):\n"
         "  1. Extract named concepts from the description (e.g. 'Female', 'Births', 'GDP', 'Total').\n"
@@ -1792,85 +2052,245 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "  5. Vary suggestion types across: value checks (non-negative, bounded),\n"
         "     completeness (has observations, units not empty), structural (consistent place count).\n"
         "     Cover key concepts from the input, but prioritise quality and diversity over rigid coverage.\n"
-        "  6. Suggestions must be plain JSON strings — no comments, no placeholders, no markup.\n\n"
-        "Ordering:\n"
-        "  a) Closest approximation to original intent (using extracted terms)\n"
-        "  b) A related constraint of a different type (e.g. completeness if a was a value check)\n"
-        "  c) A safe universal fallback — only if a and b are exhausted\n\n"
+        "  6. Suggestions must be plain JSON strings — no comments, no placeholders, no markup.\n"
+        "  7. Every suggestion MUST be expressible as a valid single-StatVar SQL rule.\n"
+        "     Do NOT suggest rules that compare different StatVars to each other\n"
+        "     (e.g. 'births should equal deaths', 'A should be greater than B').\n"
+        "     Do NOT suggest rules that require joins or alignment across StatVars.\n"
+        "     If a constraint cannot be expressed within a single StatVar row, it must NOT be suggested.\n"
+        "     A suggestion that would itself produce a CROSS_STATVAR or structural error is invalid\n"
+        "     and must not be included.\n"
+        "     This rule overrides all ordering rules. If a suggestion violates this constraint,\n"
+        "     it must be excluded even if it would otherwise be first.\n\n"
+        "Ordering (apply strictly in this sequence):\n"
+        "  a) STRUCTURAL first — but ONLY if it can be expressed as a valid single-StatVar rule.\n"
+        "     If the original intent is a cross-StatVar comparison (A vs B, A > B, A matches B):\n"
+        "       - DO NOT attempt to approximate the relationship directly.\n"
+        "       - Instead, fall back to single-StatVar rules derived from each concept independently.\n"
+        "     A structural suggestion that references alignment, co-presence, or comparability\n"
+        "     between two different StatVars (e.g. 'birth and death values should exist for the\n"
+        "     same places and dates') is itself a cross-StatVar rule and MUST NOT be suggested.\n"
+        "     Example:\n"
+        "       Input: 'births should be greater than deaths'\n"
+        "       INVALID: 'birth and death values should exist for the same places and dates'\n"
+        "       VALID:   'birth count values should have at least one observation'\n"
+        "                'death count values should be non-negative'\n"
+        "     For non-comparison rules, structural suggestions (e.g. 'all dates should be\n"
+        "     consistent across StatVars') are fine — they do not compare StatVar rows.\n"
+        "  b) COMPLETENESS second — use one of the extracted concept terms, not both.\n"
+        "     Do NOT output two near-identical completeness suggestions\n"
+        "     (e.g. 'birth count has observations' AND 'death count has observations' — pick one,\n"
+        "     or vary by concept: one for births, one for a different attribute like units or dates).\n"
+        "  c) VALUE CHECK last — non-negative, bounded.\n"
+        "     'non-negative' is a last-resort fallback. Do NOT use it as suggestion 1 or 2\n"
+        "     when structural or completeness alternatives exist for the named concepts.\n\n"
+        "  Example — input: 'Births should be greater than Deaths'\n"
+        "  BAD:  [\n"
+        "    \"birth and death values should exist for the same places and dates\",\n"
+        "    \"birth count values should be non-negative\",\n"
+        "    \"death count values should be non-negative\"\n"
+        "  ]\n"
+        "  (First entry is cross-StatVar — invalid even as a structural suggestion.)\n"
+        "  GOOD: [\n"
+        "    \"birth count values should have at least one observation\",\n"
+        "    \"death count values should be non-negative\",\n"
+        "    \"birth count values should have non-empty units\"\n"
+        "  ]\n\n"
         "  Example — input: 'Female + Male should equal Total'\n"
         "  BAD:  [\"all related StatVars should have at least one observation\",\n"
         "         \"<first named concept> values should be non-negative\"]\n"
         "  GOOD: [\n"
+        "    \"female, male, and total population values should exist for the same places and dates\",\n"
         "    \"female population values should have at least one observation\",\n"
-        "    \"male population values should have at least one observation\",\n"
-        "    \"total population values should have at least one observation\"\n"
+        "    \"total population values should be non-negative\"\n"
         "  ]\n\n"
-        "  Example — input: 'Births should be greater than Deaths'\n"
-        "  BAD:  [\"no StatVar in this group should have negative values\"]\n"
+        "  Example — input: 'GDP and population growth rate should move together'\n"
         "  GOOD: [\n"
-        "    \"birth count values should be non-negative\",\n"
-        "    \"death count values should be non-negative\",\n"
-        "    \"birth count should have the same number of places as death count\"\n"
+        "    \"GDP and population growth rate values should be measured for the same time periods\",\n"
+        "    \"GDP values should have at least one observation\",\n"
+        "    \"population growth rate values should be non-negative\"\n"
         "  ]\n\n"
         "  Example — input: 'data should be consistent' (no extractable concept)\n"
-        "  GOOD: [\n"
-        "    \"no StatVar should have negative values\",\n"
-        "    \"every StatVar should have at least one observation\",\n"
-        "    \"the latest date should be within the last 3 years\"\n"
-        "  ]\n\n"
+        "  Pick 2–3 from the pool below; vary — do NOT output the same list each time:\n"
+        "    structural:   \"observation dates should be consistent across StatVars\"\n"
+        "                  \"the number of places covered should be consistent across StatVars\"\n"
+        "    completeness: \"every StatVar should have at least one observation\"\n"
+        "                  \"every StatVar should have non-empty units\"\n"
+        "    value check:  \"no StatVar should have negative values\"\n"
+        "                  \"observation dates should be recent\"\n\n"
         "If any reasonable single-StatVar interpretation exists, generate SQL instead of erroring:\n"
         "  'values should not be negative'     → MinValue >= 0\n"
         "  'dates should be recent'            → MaxDate >= '2020-01-01'\n"
         "  'there should be observations'      → NumObservations >= 1\n\n"
-        "  1. TOO VAGUE — no column, threshold, or comparison can be inferred:\n"
-        "       'values should look reasonable', 'data should be consistent', 'check the data'\n"
-        "     → Extract any named concepts from the description and use them in suggestions.\n"
-        "     → If none exist, use general but distinct alternatives (see example above).\n"
-        "     → {\"error\": \"Rule is too vague to generate SQL — no column or threshold can be inferred.\",\n"
-        "        \"suggestions\": [\n"
-        "          \"no StatVar should have negative values\",\n"
-        "          \"every StatVar should have at least one observation\",\n"
-        "          \"the latest date should be within the last 3 years\"\n"
-        "        ]}\n\n"
-        "  2. CROSS-STATVAR — rule compares or combines values from different StatVars:\n"
+        "  1. CROSS-STATVAR — rule compares or combines values from different StatVars:\n"
         "       'Births should be greater than Deaths'\n"
         "       'Female + Male should equal Total'\n"
         "     → Extract named concepts (e.g. Female, Male, Total, Births, Deaths).\n"
-        "     → Cover key concepts, vary types (value check, completeness, structural).\n"
+        "     → First suggestion: structural alignment adapted to context (spatial+temporal, temporal\n"
+        "       only, or general comparability — whichever the rule implies). Do not hardcode\n"
+        "       'places and dates' unless both dimensions are clearly relevant.\n"
+        "     → Then one completeness check (pick the most relevant concept — do not repeat for each).\n"
+        "     → Value check last, only if no better option.\n"
         "     → The stats table has one row per StatVar — no join key exists between rows.\n"
         "     → {\"error\": \"Cross-StatVar comparison is not possible: each StatVar is a separate row with no join key.\",\n"
         "        \"suggestions\": [\n"
-        "          \"birth count values should be non-negative\",\n"
-        "          \"death count values should have at least one observation\",\n"
-        "          \"birth and death StatVars should cover the same number of places\"\n"
+        "          \"birth count values should have at least one observation\",\n"
+        "          \"death count values should be non-negative\",\n"
+        "          \"birth count values should have non-empty units\"\n"
         "        ]}\n\n"
-        "  3. OBSERVATION PERIOD — rule depends on observationPeriod or temporal frequency:\n"
+        "  2. OBSERVATION PERIOD — rule depends on observationPeriod or temporal frequency:\n"
         "       'monthly values should be less than yearly values'\n"
         "       'observations with P1M should have more rows'\n"
+        "     → First suggestion: structural date consistency. Then completeness. Then recency.\n"
         "     → {\"error\": \"observationPeriod is a serialized string and cannot be queried as structured data.\",\n"
         "        \"suggestions\": [\n"
+        "          \"observation dates should be consistent across StatVars\",\n"
         "          \"every StatVar should have at least one observation\",\n"
-        "          \"every StatVar should have observations dated within the last 3 years\"\n"
+        "          \"observation dates should be recent\"\n"
         "        ]}\n\n"
-        "  4. DUPLICATE / TRIVIALLY TRUE — rule checks something the schema guarantees:\n"
+        "  3. DUPLICATE / TRIVIALLY TRUE — rule checks something the schema guarantees:\n"
         "       'check for duplicate rows', 'no StatVar should appear twice'\n"
         "     → The stats table has exactly one row per StatVar by construction.\n"
+        "     → First suggestion: uniqueness within observations (not at StatVar level — already guaranteed).\n"
+        "     → Then completeness. Then value check.\n"
         "     → {\"error\": \"Duplicate detection is not meaningful: the stats table has exactly one row per StatVar.\",\n"
         "        \"suggestions\": [\n"
+        "          \"each StatVar should have a unique set of observations by place and date\",\n"
         "          \"every StatVar should have at least one observation\",\n"
-        "          \"no StatVar should have missing units\",\n"
         "          \"no StatVar should have negative values\"\n"
         "        ]}\n\n"
-        "  5. MIXED SCALE — numeric threshold globally across StatVars with different scales:\n"
+        "  4. MIXED SCALE — numeric threshold globally across StatVars with different scales:\n"
         "       'min value should be less than 20000'  ← ambiguous across all StatVars\n"
         "     → Already handled in ## Numeric threshold assessment (with suggestions).\n\n"
         "When returning {\"error\"}, include ONLY \"error\" and \"suggestions\" — no \"query\" or \"condition\".\n\n"
+        "## Clarification output\n"
+        "Clarification MUST be used for vague or underspecified inputs where multiple valid\n"
+        "interpretations exist. Do NOT return {\"error\"} for vague inputs — use {\"clarify\"} instead.\n\n"
+        "DO NOT emit {\"clarify\": ...} for structural errors. These ALWAYS use {\"error\": ..., \"suggestions\": [...]}:\n"
+        "  CROSS_STATVAR, OBSERVATION_PERIOD, MIXED_SCALE, DUPLICATE / TRIVIALLY TRUE\n\n"
+        "PURPOSE DISTINCTION — clarification options vs suggestions:\n"
+        "  Options (in {\"clarify\"}): intent-oriented. Help the user choose an interpretation.\n"
+        "    Slightly higher-level — describe what the rule is checking, not the exact SQL constraint.\n"
+        "    Example: \"Values should be non-negative\" (intent label, not a full rule description)\n"
+        "  Suggestions (in {\"error\"}): action-oriented. Directly usable rule descriptions.\n"
+        "    Concrete and dataset-ready — the user can submit them as-is.\n"
+        "    Example: \"every StatVar should have at least one observation\"\n"
+        "  Options and suggestions MUST NOT be identical lists. They may cover similar ground\n"
+        "  but must differ in style: options are interpretations, suggestions are prompts.\n\n"
+        "Shape:\n"
+        "  {\"clarify\": \"What should this rule check?\", \"options\": [{\"label\": \"...\", \"refined\": \"...\"}, ...]}\n\n"
+        "Option rules:\n"
+        "  1. Always generate 3–4 options. Each must represent a distinct intent direction —\n"
+        "     not the same rule rephrased.\n"
+        "  2. Each \"refined\" MUST be a complete NL prompt that produces valid SQL when re-submitted.\n"
+        "     Do NOT produce refined prompts that would trigger clarification, cross-StatVar errors,\n"
+        "     or mixed-scale errors.\n"
+        "     Before emitting an option, verify:\n"
+        "       a) The \"refined\" text maps to a supported column: MinValue, MaxValue,\n"
+        "          NumObservations, Units (non-empty check only), or MaxDate.\n"
+        "       b) The rule does NOT require parsing serialized list contents, counting list\n"
+        "          elements, or referencing non-existent columns.\n"
+        "       c) The rule does NOT trigger CROSS_STATVAR, MIXED_SCALE, or unsupported logic.\n"
+        "       d) The label and refined text are semantically aligned.\n"
+        "     If any check fails, discard the option and generate another.\n"
+        "     INVALID examples (discard these):\n"
+        "       \"each StatVar has only one unit\"  ← requires parsing list contents\n"
+        "       \"observation date recorded\"        ← column does not exist\n"
+        "  3. If dataset context lists concepts:\n"
+        "     - The first option MUST use a detected concept.\n"
+        "     - At least one additional option SHOULD also use a detected concept when relevant.\n"
+        "     - Do not force concept usage into every option — generic options are fine for the rest.\n"
+        "  4. Labels are intent-oriented: describe what the rule is checking.\n"
+        "     Write labels as short intent phrases, NOT full rule statements.\n"
+        "     WRONG label: \"every StatVar should have at least one observation\" (too literal)\n"
+        "     RIGHT label: \"Check that all StatVars have at least one observation\"\n"
+        "  5. Labels MUST preserve the exact semantic meaning of the refined rule.\n"
+        "     Do NOT drop key constraints such as \"at least one\", \"non-empty\", or \"across StatVars\".\n"
+        "     Do NOT oversimplify or introduce concepts not present in the schema.\n"
+        "     WRONG label: \"Check that all StatVars have observations\"  ← drops \"at least one\"\n"
+        "     RIGHT label: \"Check that all StatVars have at least one observation\"\n"
+        "     WRONG label: \"Check that dates are consistent\"            ← drops \"across StatVars\"\n"
+        "     RIGHT label: \"Check that observation dates are consistent across StatVars\"\n"
+        "     WRONG label: \"Check that units are valid\"                 ← introduces vague concept\n"
+        "     RIGHT label: \"Check that every StatVar has non-empty units\"\n"
+        "  6. Controlled variation: do NOT always return the same fixed set of options.\n"
+        "     Ensure at least one option varies across generations by rotating coverage.\n"
+        "     Valid variation pool — each entry maps to a supported column and valid SQL:\n"
+        "       - Date recency:     MaxDate → observation dates should be recent\n"
+        "       - Date consistency: MaxDate → observation dates should be consistent across StatVars\n"
+        "       - Completeness:     NumObservations → every StatVar should have at least one observation\n"
+        "       - Units non-empty:  Units → every StatVar should have non-empty units\n"
+        "       - Value lower bound: MinValue → no StatVar should have negative values\n"
+        "       - Value upper bound: MaxValue → percent StatVars should not exceed 100\n"
+        "     Choose the most relevant 3–4 dimensions for the input. Do NOT always pick the\n"
+        "     same combination — vary which dimensions are included each time.\n\n"
+        "Example — input: \"make sure data is fine\", concepts: births, deaths\n"
+        "  {\"clarify\": \"What should this rule check?\",\n"
+        "   \"options\": [\n"
+        "     {\"label\": \"Check that birth values are non-negative\",\n"
+        "      \"refined\": \"birth count values should be non-negative\"},\n"
+        "     {\"label\": \"Check that all StatVars have at least one observation\",\n"
+        "      \"refined\": \"every StatVar should have at least one observation\"},\n"
+        "     {\"label\": \"Check that observation dates are recent\",\n"
+        "      \"refined\": \"observation dates should be recent\"},\n"
+        "     {\"label\": \"Check that death values have non-empty units\",\n"
+        "      \"refined\": \"death count values should have non-empty units\"}\n"
+        "   ]}\n\n"
+        "Example — input: \"validate\", no concepts available\n"
+        "  {\"clarify\": \"What should this rule check?\",\n"
+        "   \"options\": [\n"
+        "     {\"label\": \"Check that no StatVar has negative values\",\n"
+        "      \"refined\": \"no StatVar should have negative values\"},\n"
+        "     {\"label\": \"Check that all StatVars have at least one observation\",\n"
+        "      \"refined\": \"every StatVar should have at least one observation\"},\n"
+        "     {\"label\": \"Check that observation dates are consistent across StatVars\",\n"
+        "      \"refined\": \"observation dates should be consistent across StatVars\"},\n"
+        "     {\"label\": \"Check that every StatVar has non-empty units\",\n"
+        "      \"refined\": \"every StatVar should have non-empty units\"}\n"
+        "   ]}\n\n"
+        "## Vague term detection (check BEFORE generating SQL)\n"
+        "If the input contains terms that are inherently ambiguous and cannot be mapped to a column\n"
+        "or threshold without guessing, return a clarification or error — do NOT silently infer.\n\n"
+        "Ambiguous terms that require clarification:\n"
+        "  - 'recent', 'up to date', 'current' — date threshold unknown; ask for a specific year/date.\n"
+        "  - 'good', 'valid', 'correct', 'ok', 'fine', 'proper' — no measurable column implied.\n"
+        "  - 'reasonable', 'sensible', 'appropriate' — threshold undefined.\n"
+        "  - 'large', 'small', 'high', 'low' without a number — relative without a reference point.\n\n"
+        "When a vague term is the primary constraint (not just a modifier on an explicit value):\n"
+        "  - Use {\"clarify\"} to ask for the missing specifics.\n"
+        "  - Include 3–4 options that show what 'specific' looks like.\n"
+        "  Example: input 'dates should be recent'\n"
+        "    → {\"clarify\": \"What cutoff date should 'recent' mean?\", \"options\": [\n"
+        "         {\"label\": \"After 2020\", \"refined\": \"observation dates should be after 2020\"},\n"
+        "         {\"label\": \"After 2022\", \"refined\": \"observation dates should be after 2022\"},\n"
+        "         {\"label\": \"Within the last 5 years\", \"refined\": \"observation dates should be after 2019\"},\n"
+        "         {\"label\": \"Check date consistency instead\", \"refined\": \"observation dates should be consistent across StatVars\"}\n"
+        "       ]}\n\n"
+        "## Explanation rules\n"
+        "Every SQL response MUST include \"explanation\": a plain-English description that states:\n"
+        "  1. Which column is checked (e.g. MinValue, MaxDate, NumObservations, Units).\n"
+        "  2. What condition is applied and what it means in plain terms.\n"
+        "  3. Any assumption made (e.g. ILIKE scope, inferred threshold).\n\n"
+        "Explanation must be precise and directly tied to the generated SQL. No generic filler.\n"
+        "Examples:\n"
+        "  condition 'MinValue >= 0'   → \"Checks MinValue for each StatVar; passes when the smallest observed value is non-negative (no StatVar has a negative value).\"\n"
+        "  condition 'MaxValue <= 100' → \"Checks MaxValue for each StatVar; passes when the largest observed value does not exceed 100.\"\n"
+        "  condition 'NumObservations >= 1' → \"Checks NumObservations; passes when every StatVar has at least one observation.\"\n"
+        "  condition 'Units != '[]''  → \"Checks Units for each StatVar; passes when the unit field is non-empty (not an empty list).\"\n"
+        "  condition 'MaxDate >= ...' → \"Checks MaxDate; passes when the most recent observation date meets the specified cutoff. Threshold was inferred from the description.\"\n\n"
+        "If a concept cannot be reliably mapped to a column, prefer rules on generic columns:\n"
+        "MinValue, MaxValue, NumObservations, Units — these apply to all StatVars without ILIKE.\n\n"
         "## Output format (STRICT)\n"
-        "Output ONLY a JSON object. Exactly one of these two shapes:\n"
-        "  SQL result:   {\"query\": \"...\", \"condition\": \"...\"}           — no other keys\n"
-        "  Error:        {\"error\": \"...\"}                                 — no \"query\"/\"condition\"\n"
-        "  Error + hints:{\"error\": \"...\", \"suggestions\": [\"...\", \"...\"]} — no \"query\"/\"condition\"\n"
-        "Never mix SQL keys with error keys. No markdown, no explanation, no trailing text.\n\n"
+        "Output ONLY a JSON object. Exactly one of these three shapes:\n"
+        "  SQL:           {\"query\": \"...\", \"condition\": \"...\", \"explanation\": \"...\"}\n"
+        "  Error:         {\"error\": \"...\", \"suggestions\": [\"...\", ...]}\n"
+        "  Clarification: {\"clarify\": \"...\", \"options\": [{\"label\": \"...\", \"refined\": \"...\"}, ...]}\n\n"
+        "Rules:\n"
+        "  - SQL responses MUST include \"explanation\". Never omit it.\n"
+        "  - Error responses MUST include \"suggestions\". Never return a bare {\"error\": \"...\"}.\n"
+        "  - Clarification is for vague/underspecified inputs. Structural errors (CROSS_STATVAR,\n"
+        "    OBSERVATION_PERIOD, MIXED_SCALE, DUPLICATE) ALWAYS use the Error shape.\n"
+        "  - Never mix keys across shapes. No markdown, no explanation outside the JSON, no trailing text.\n\n"
         "## Self-verification (do this before generating output)\n"
         "Before emitting your response, work through these checks in order:\n"
         "  1. Is the rule scoped to a named StatVar subset?\n"
@@ -1882,10 +2302,15 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "     Distribution → explain schema limitation and suggest per-StatVar alternatives.\n"
         "  4. Is the condition a PASS test (not failure logic)?\n"
         "     'should not exceed 100' → MaxValue <= 100  (not MaxValue > 100).\n"
-        "  5. Does the condition reference only columns in the SELECT list?\n"
-        "  6. Is there any redundant filter or clause that can be removed?\n"
-        "  7. Is the rule cross-StatVar, trivially true, or uses observationPeriod? → {\"error\"} + suggestions.\n"
-        "     Every {\"error\"} response MUST include \"suggestions\" with 1–3 usable prompt alternatives.\n\n"
+        "  5. Does the input contain a vague term ('recent', 'valid', 'good', 'correct', 'reasonable')?\n"
+        "     Yes → return {\"clarify\"} with specific options. Do NOT silently infer a threshold.\n"
+        "  6. Is the input vague or underspecified (no clear column, threshold, or constraint)?\n"
+        "     Yes → return {\"clarify\"} with 3–4 options. Do NOT return {\"error\"} for vague inputs.\n"
+        "  7. Does the condition reference only columns in the SELECT list?\n"
+        "  8. Is there any redundant filter or clause that can be removed?\n"
+        "  9. Is the rule cross-StatVar, trivially true, or uses observationPeriod? → {\"error\"} + suggestions.\n"
+        "     Every {\"error\"} response MUST include \"suggestions\" with 1–3 usable prompt alternatives.\n"
+        "  10. Does the SQL response include \"explanation\" that names the column, condition, and any assumption?\n\n"
         "Worked examples (study the condition direction in each):\n"
         "{\"query\": \"SELECT StatVar, MinValue FROM stats\", \"condition\": \"MinValue >= 0\"}\n"
         "{\"query\": \"SELECT StatVar, MaxValue FROM stats\", \"condition\": \"MaxValue <= 100\"}\n"
@@ -1896,8 +2321,11 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "{\"query\": \"SELECT COUNT(*) AS n FROM stats WHERE MinValue < 0\", \"condition\": \"n = 0\"}\n"
         "{\"query\": \"SELECT StatVar, MaxValue FROM stats WHERE Units = '[Percent]' OR Units LIKE '%Percent%' OR StatVar ILIKE '%Percent%' OR StatVar ILIKE '%Pct%'\", \"condition\": \"MaxValue <= 100\"}"
     )
+    ctx = _compute_dataset_context(body.run_id, body.dataset, body.csv_preview_stats)
+    context_section = _format_dataset_context(ctx)
+
     user_prompt = f"Rule description: {prompt_text}{columns_hint}"
-    full_prompt = system_prompt + "\n\n" + user_prompt
+    full_prompt = system_prompt + "\n\n" + context_section + "\n" + user_prompt
 
     try:
         async with _GENERATE_SQL_RULE_SEMAPHORE:
@@ -1935,12 +2363,29 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
             detail=f"LLM returned invalid JSON. Response: {text[:200]}",
         )
 
+    # Route by response shape — return HTTP 200 for all structured responses.
+    if "clarify" in result and "query" not in result and "error" not in result:
+        if body.clarification_round >= 1:
+            return _fallback_error(ctx)
+        options = result.get("options")
+        if not isinstance(options, list):
+            return _fallback_error(ctx)
+        valid_opts = [
+            o for o in options
+            if isinstance(o, dict) and o.get("label") and o.get("refined")
+        ]
+        if not valid_opts:
+            return _fallback_error(ctx)
+        return {
+            "clarify": result.get("clarify", "What should this rule check?"),
+            "options": valid_opts[:4],
+        }
+
     if "error" in result:
-        error_msg = result["error"]
         suggestions = result.get("suggestions")
-        if suggestions and isinstance(suggestions, list):
-            error_msg += "\n\nSuggested alternatives:\n" + "\n".join(f"• {s}" for s in suggestions)
-        raise HTTPException(status_code=400, detail=error_msg)
+        if not isinstance(suggestions, list) or not suggestions:
+            suggestions = list(_DEFAULT_SQL_SUGGESTIONS)
+        return {"error": result["error"], "suggestions": suggestions}
 
     query = (result.get("query") or "").strip().rstrip(";")
     condition = (result.get("condition") or "").strip()
@@ -1984,9 +2429,91 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         )
 
     rule_id = "custom_sql_" + secrets.token_hex(4)
-    explanation = _explain_sql_condition(condition)
-    logger.info("generate_sql_rule rule_id=%s prompt_len=%d", rule_id, len(prompt_text))
-    return {"query": query, "condition": condition, "rule_id": rule_id, "explanation": explanation}
+    explanation = result.get("explanation") or _explain_sql_condition(condition)
+    logger.info(
+        "generate_sql_rule rule_id=%s prompt_len=%d",
+        rule_id, len(prompt_text),
+    )
+    return {
+        "query": query,
+        "condition": condition,
+        "has_dataset_context": ctx is not None,
+        "context_source": (
+            "csv_preview" if (ctx is not None and ctx.from_csv_preview)
+            else ("run" if ctx is not None else "none")
+        ),
+        "rule_id": rule_id,
+        "explanation": explanation,
+    }
+
+
+class _PreviewSqlRuleRequest(BaseModel):
+    query: str
+    condition: str
+    dataset: str | None = None
+    run_id: str | None = None
+
+
+@app.post("/api/preview-sql-rule")
+async def preview_sql_rule(body: _PreviewSqlRuleRequest):
+    """Run a SQL rule against the actual stats CSV for the dataset/run and return pass/fail + violations."""
+    query = (body.query or "").strip().rstrip(";")
+    condition = (body.condition or "").strip()
+    if not query or not condition:
+        raise HTTPException(status_code=400, detail="query and condition are required")
+
+    csv_path = _find_stats_summary(body.run_id, body.dataset)
+    if csv_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No stats data found — run a validation first to enable rule preview.",
+        )
+
+    try:
+        import duckdb as _duckdb
+        con = _duckdb.connect()
+        con.execute(f"CREATE VIEW stats AS SELECT * FROM read_csv_auto('{csv_path}')")
+
+        # Validate condition against query output by attempting a LIMIT 1 execution.
+        validate_sql = (
+            f"WITH _data AS ({query}) "
+            f"SELECT * FROM _data WHERE NOT ({condition}) LIMIT 1"
+        )
+        try:
+            con.execute(validate_sql)
+        except Exception:
+            con.close()
+            return {"error": "Invalid SQL condition or column reference."}
+
+        # Execute the user query as a CTE, then filter for violations (rows where condition is NOT met).
+        violations_sql = (
+            f"WITH _data AS ({query}) "
+            f"SELECT * FROM _data WHERE NOT ({condition}) LIMIT 10"
+        )
+        try:
+            cur = con.execute(violations_sql)
+            violation_rows = cur.fetchall()
+            col_names = [d[0] for d in cur.description]
+
+            # Count total violations (without LIMIT).
+            count_sql = (
+                f"WITH _data AS ({query}) "
+                f"SELECT COUNT(*) FROM _data WHERE NOT ({condition})"
+            )
+            total_violations = con.execute(count_sql).fetchone()[0]
+        except Exception:
+            con.close()
+            return {"error": "SQL execution failed. Please verify the query and condition."}
+        con.close()
+    except Exception:
+        return {"error": "SQL execution failed. Please verify the query and condition."}
+
+    sample_rows = [dict(zip(col_names, row)) for row in violation_rows]
+    return {
+        "passed": total_violations == 0,
+        "violations": int(total_violations),
+        "sample_rows": sample_rows,
+    }
 
 
 @app.get("/api/review-summary/{dataset}")
