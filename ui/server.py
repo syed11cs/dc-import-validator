@@ -404,17 +404,10 @@ def app_version():
     return payload
 
 
-@app.get("/api/sql-rule-suggestions")
-def sql_rule_suggestions(dataset: str | None = None, run_id: str | None = None):
-    """Return SQL rule suggestion strings.
-
-    Without query params, returns the static defaults.
-    With dataset/run_id, augments suggestions using _DatasetContext derived from
-    summary_report.csv (same source used by rule generation).
-    """
-    ctx = _compute_dataset_context(run_id, dataset) if (dataset or run_id) else None
-    suggestions = _build_suggestions(ctx)
-    return {"suggestions": suggestions}
+_DEFAULT_SQL_SUGGESTIONS = [
+    "every StatVar should have at least one observation",
+    "no StatVar should have negative values",
+]
 
 
 def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
@@ -460,6 +453,19 @@ def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
             seen.add(s)
             deduped.append(s)
     return deduped
+
+
+@app.get("/api/sql-rule-suggestions")
+def sql_rule_suggestions(dataset: str | None = None, run_id: str | None = None):
+    """Return SQL rule suggestion strings.
+
+    Without query params, returns the static defaults.
+    With dataset/run_id, augments suggestions using _DatasetContext derived from
+    summary_report.csv (same source used by rule generation).
+    """
+    ctx = _compute_dataset_context(run_id, dataset) if (dataset or run_id) else None
+    suggestions = _build_suggestions(ctx)
+    return {"suggestions": suggestions}
 
 
 @app.get("/api/upload-config")
@@ -1427,21 +1433,16 @@ def _format_dataset_context(ctx: "_DatasetContext | None") -> str:
             "    Use it cautiously. Prefer generic rules when possible.\n\n"
         )
     concepts_str = ", ".join(ctx.concepts) if ctx.concepts else "none detected"
+    mixed_scales_line = "Values span multiple scales (counts and small ratios mixed).\n" if ctx.has_mixed_scales else ""
     return (
         f"## Dataset context\n"
         f"{ctx.num_statvars} StatVars. "
         f"Date range: {ctx.date_range[0]}–{ctx.date_range[1]}.\n"
         f"Concepts present: {concepts_str}.\n"
-        f"{'Values span multiple scales (counts and small ratios mixed).\n' if ctx.has_mixed_scales else ''}"
+        f"{mixed_scales_line}"
         "Use this to improve suggestion specificity. "
         "Prefer these concepts when relevant, but do not assume this list is exhaustive.\n\n"
     )
-
-
-_DEFAULT_SQL_SUGGESTIONS = [
-    "every StatVar should have at least one observation",
-    "no StatVar should have negative values",
-]
 
 
 def _fallback_error(ctx: "_DatasetContext | None") -> dict:
