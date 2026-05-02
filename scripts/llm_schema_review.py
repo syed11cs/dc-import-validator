@@ -552,15 +552,47 @@ def _read_csv_header(csv_path: str | Path) -> list[str] | None:
         return None
 
 
+_LLM_FALLBACK_MODEL = "gemini-2.5-flash"
+
+# Exceptions that indicate the requested model is unavailable or over quota —
+# safe to retry with the fallback model.  Errors that reflect a bad API key
+# (PermissionDenied, Unauthenticated) or a malformed request (InvalidArgument)
+# are NOT in this set and will surface normally.
+def _is_model_availability_error(exc: BaseException) -> bool:
+    try:
+        from google.api_core import exceptions as _gax
+        return isinstance(exc, (
+            _gax.ResourceExhausted,   # 429 quota / rate limit
+            _gax.ServiceUnavailable,  # 503 model temporarily down
+            _gax.DeadlineExceeded,    # model response timeout
+            _gax.InternalServerError, # 500 server-side model error
+        ))
+    except ImportError:
+        pass
+    # Fallback: inspect the string representation for known quota/availability
+    # phrases in case google-api-core is not installed.  Raw HTTP status codes
+    # are intentionally excluded to avoid false positives.
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "quota", "rate limit", "resource exhausted",
+        "service unavailable", "deadline exceeded",
+        "internal server error",
+    ))
+
+
 def _call_gemini(
     tmcf_content: str,
     api_key: str,
-    model_id: str = "gemini-2.5-flash",
+    model_id: str = "gemini-2.5-pro",
     stat_vars_content: str | None = None,
     stat_vars_schema_content: str | None = None,
     csv_header_columns: list[str] | None = None,
 ) -> str:
-    """Call Gemini API for TMCF review (uses google-genai SDK)."""
+    """Call Gemini API for TMCF review (uses google-genai SDK).
+
+    Tries model_id first; falls back to gemini-2.5-flash only for quota or
+    model-availability errors.  Auth errors and bad requests surface normally.
+    """
     try:
         from google import genai
     except ImportError as exc:
@@ -581,15 +613,25 @@ def _call_gemini(
         config = types.GenerateContentConfig(temperature=0)
     except (ImportError, AttributeError):
         config = None
-    if config is not None:
-        response = client.models.generate_content(
-            model=model_id,
-            contents=prompt,
-            config=config,
+
+    def _generate(mid: str) -> str:
+        if config is not None:
+            resp = client.models.generate_content(model=mid, contents=prompt, config=config)
+        else:
+            resp = client.models.generate_content(model=mid, contents=prompt)
+        return resp.text if resp.text else "[]"
+
+    try:
+        return _generate(model_id)
+    except Exception as e:
+        if model_id == _LLM_FALLBACK_MODEL or not _is_model_availability_error(e):
+            raise
+        print(
+            f"Gemini model {model_id!r} unavailable ({e}); retrying with {_LLM_FALLBACK_MODEL!r}",
+            file=__import__("sys").stderr,
+            flush=True,
         )
-    else:
-        response = client.models.generate_content(model=model_id, contents=prompt)
-    return response.text if response.text else "[]"
+        return _generate(_LLM_FALLBACK_MODEL)
 
 
 def _build_prompt(
@@ -722,7 +764,7 @@ def _parse_llm_response(text: str) -> list[dict]:
 
 def review_tmcf(
     tmcf_path: str,
-    model_id: str = "gemini-2.5-flash",
+    model_id: str = "gemini-2.5-pro",
     stat_vars_mcf_path: str | None = None,
     stat_vars_schema_mcf_path: str | None = None,
     csv_path: str | None = None,
@@ -844,8 +886,8 @@ def main():
     parser.add_argument("--output", "-o", default="-", help="Output path (default: stdout, use - for stdout)")
     parser.add_argument(
         "--model",
-        default="gemini-2.5-flash",
-        help="Gemini model ID (default: gemini-2.5-flash)",
+        default="gemini-2.5-pro",
+        help="Gemini model ID (default: gemini-2.5-pro, falls back to gemini-2.5-flash on error)",
     )
     parser.add_argument(
         "--stat-vars-mcf",
