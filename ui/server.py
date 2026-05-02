@@ -421,17 +421,32 @@ def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
 
     result = []
 
-    # Date-range suggestion: if we observed any dates, recency is a meaningful check.
+    # Date-range suggestion: concrete year threshold so the vague-term guard never fires.
+    # "recent" is blocked by the guard — always use an explicit year instead.
+    # If the context has an actual date (from summary_report.csv or csv_preview_stats),
+    # anchor to one year before the earliest observed date so the rule is meaningful for
+    # the dataset.  Otherwise use 2010 as a safe, concrete fallback.
     if ctx.date_range and ctx.date_range[0]:
-        result.append("observation dates should be recent")
+        raw = ctx.date_range[0]
+        year = None
+        if raw not in ("present", ""):
+            import re as _re_date
+            m = _re_date.match(r"(\d{4})", str(raw))
+            if m:
+                year = int(m.group(1))
+        threshold = str((year - 1) if year else 2010)
+        result.append(f"observation dates should be after {threshold}")
 
-    # Multi-StatVar suggestion: unit consistency only makes sense with >1 StatVar.
+    # Unit presence check: per-row, always executable (Units != '[]').
+    # "consistent across StatVars" requires an aggregate query the LLM generates
+    # inconsistently — replaced with the per-row equivalent that always works.
+    # Unit consistency is already enforced by the built-in check_unit_consistency rule.
     if ctx.num_statvars > 1:
-        result.append("units should be consistent across StatVars")
+        result.append("every StatVar should have non-empty units")
 
-    # Mixed-scale suggestion: flag the gotcha of applying a single threshold.
-    if ctx.has_mixed_scales:
-        result.append("avoid applying a single threshold across all StatVars — scales differ")
+    # Mixed-scale note: injected into LLM context via _format_dataset_context already.
+    # Not added as a chip — it is advisory text, not a valid rule description, and
+    # would fail if submitted directly to the SQL generator.
 
     # Observation count is always a sensible baseline check.
     if ctx.num_statvars > 0:
