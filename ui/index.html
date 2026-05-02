@@ -473,11 +473,6 @@
       color: var(--text-muted);
       margin-top: 8px;
     }
-    #llm-model-row { width: 100%; }
-    #llm-model-select { display: block; width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: inherit; font-size: 0.8rem; }
-    #llm-model-select optgroup { font-size: 0.7rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; padding-top: 6px; margin-top: 4px; border-top: 1px solid var(--border); }
-    #llm-model-select optgroup:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
-    #llm-model-select option { font-size: 0.8rem; font-weight: normal; color: var(--text); }
     .btn-icon { display: inline-flex; align-items: center; margin-right: 4px; vertical-align: middle; }
     .btn-icon svg { display: block; }
     .progress-steps-row {
@@ -1036,36 +1031,6 @@
     .summary-card .rule-item-id { font-weight: 700; font-family: ui-monospace, monospace; font-size: 0.8rem; display: block; margin-bottom: 2px; }
     .summary-card .rule-item-msg { font-size: 0.85rem; color: var(--text-muted); margin-left: 0; }
     .summary-card .rule-item-sql-ctx { font-size: 0.78rem; color: var(--text-muted); font-style: italic; margin-top: 2px; }
-    .ai-review-section {
-      margin-top: 14px;
-      padding: 16px 18px;
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border);
-      background: var(--bg);
-      transition: border-color var(--transition), box-shadow var(--transition);
-    }
-    .ai-review-section.is-active {
-      border-color: rgba(16,185,129,0.4);
-      box-shadow: 0 0 0 1px rgba(16,185,129,0.1);
-    }
-    #ai-review-section .ai-review-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      width: 100%;
-      cursor: default;
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 0;
-    }
-    .ai-review-badge {
-      display: inline-block;
-      margin-top: 6px;
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      font-weight: 500;
-    }
     #llm-report-section { margin-top: 12px; margin-bottom: 16px; }
     .llm-report-table-wrap { overflow-x: auto; }
     .llm-report-truncate-msg { margin: 0 0 10px 0; font-size: 0.875rem; color: var(--text-muted); }
@@ -1434,22 +1399,10 @@
     #custom-dataset-name.name-valid { border-color: var(--success, #22c55e); }
     #custom-dataset-name.name-valid:focus { box-shadow: 0 0 0 1px var(--success, #22c55e); }
     .custom-restore-notice { margin-top: 8px; font-size: 0.78rem; color: var(--text-secondary, #94a3b8); line-height: 1.4; }
-    .custom-upload-optional { margin-top: 12px; }
-    .custom-upload-optional-summary {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      cursor: pointer;
-      list-style: none;
-      user-select: none;
-    }
-    .custom-upload-optional-summary::-webkit-details-marker { display: none; }
-    .custom-upload-optional-summary::marker { display: none; }
-    .custom-upload-optional-summary::before { content: '▸ '; color: var(--text-muted); }
-    .custom-upload-optional[open] .custom-upload-optional-summary::before { content: '▾ '; }
-    .custom-upload-optional-summary:hover { color: var(--accent); }
-    .custom-upload-optional-fields { margin-top: 10px; padding-left: 0; }
-    .custom-upload-optional-fields > label { margin-top: 10px; }
+    .custom-upload-optional-fields { margin-top: 14px; padding-left: 0; }
+    .custom-upload-optional-fields > label { margin-top: 14px; display: block; }
     .custom-upload-optional-fields > label:first-child { margin-top: 0; }
+    .custom-upload-optional-fields .field-hint { font-size: 0.72rem; color: var(--text-muted); margin: 2px 0 0; line-height: 1.4; }
     .required-asterisk { color: var(--fail); font-weight: 500; }
     .file-input-row {
       display: flex;
@@ -1563,28 +1516,26 @@
           <div class="custom-dataset-name-row">
             <label for="custom-dataset-name">Dataset name <span class="required-asterisk" aria-label="required">*</span></label>
             <input type="text" id="custom-dataset-name" placeholder="e.g. canada-population" maxlength="48" autocomplete="off" spellcheck="false" />
-            <p class="custom-upload-baseline-note" id="custom-dataset-name-hint">Enter a name (3–48 characters, lowercase letters, numbers, hyphens). Example: canada-population</p>
+            <p class="custom-upload-baseline-note" id="custom-dataset-name-hint">Use lowercase letters, numbers, and hyphens</p>
           </div>
-          <details class="custom-upload-optional" id="custom-upload-optional">
-            <summary class="custom-upload-optional-summary">Optional: Stat vars MCF files</summary>
-            <div class="custom-upload-optional-fields">
-              <label>Stat vars MCF</label>
-              <div class="file-input-row">
-                <input type="file" id="stat-vars-mcf-file" accept=".mcf" />
-                <button type="button" id="stat-vars-mcf-choose-btn" class="file-choose-btn">Choose File</button>
-                <span id="stat-vars-mcf-file-name" class="file-name">No file chosen</span>
-                <button type="button" id="stat-vars-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
-              </div>
-              <label>Stat vars schema MCF</label>
-              <div class="file-input-row">
-                <input type="file" id="stat-vars-schema-mcf-file" accept=".mcf" />
-                <button type="button" id="stat-vars-schema-mcf-choose-btn" class="file-choose-btn">Choose File</button>
-                <span id="stat-vars-schema-mcf-file-name" class="file-name">No file chosen</span>
-                <button type="button" id="stat-vars-schema-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
-              </div>
-              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">If provided, passed to genmcf for schema conformance validation.</div>
+          <div class="custom-upload-optional-fields" id="custom-upload-optional">
+            <label>Stat vars MCF <span style="font-size: 0.72rem; font-weight: 400; color: var(--text-muted);">(optional)</span></label>
+            <div class="file-input-row">
+              <input type="file" id="stat-vars-mcf-file" accept=".mcf" />
+              <button type="button" id="stat-vars-mcf-choose-btn" class="file-choose-btn">Choose File</button>
+              <span id="stat-vars-mcf-file-name" class="file-name">No file chosen</span>
+              <button type="button" id="stat-vars-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
             </div>
-          </details>
+            <p class="field-hint">Used when defining new StatVars not yet in the KG.</p>
+            <label>Stat vars schema MCF <span style="font-size: 0.72rem; font-weight: 400; color: var(--text-muted);">(optional)</span></label>
+            <div class="file-input-row">
+              <input type="file" id="stat-vars-schema-mcf-file" accept=".mcf" />
+              <button type="button" id="stat-vars-schema-mcf-choose-btn" class="file-choose-btn">Choose File</button>
+              <span id="stat-vars-schema-mcf-file-name" class="file-name">No file chosen</span>
+              <button type="button" id="stat-vars-schema-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
+            </div>
+            <p class="field-hint">Used for custom schema definitions.</p>
+          </div>
         </div>
       </div>
       <div class="form-group" style="margin-bottom: 14px;">
@@ -1593,36 +1544,12 @@
           <input type="checkbox" id="existence-checks-toggle" />
           <label for="existence-checks-toggle">Enable Data Commons existence checks</label>
         </div>
-        <p class="existence-checks-hint">Validates referenced DCIDs against the Data Commons Knowledge Graph. Disabled by default because it can significantly increase runtime for large datasets.</p>
-      </div>
-      <div id="ai-review-section" class="ai-review-section form-group">
-        <div class="ai-review-row">
-          <span class="ai-review-label-text">Gemini Review</span>
-        </div>
-        <div id="llm-model-row" style="display: block; margin-top: 10px; margin-left: 0; overflow: visible;">
-          <label style="font-size: 0.7rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Model</label>
-          <select id="llm-model-select" autocomplete="off">
-            <optgroup label="Stable">
-              <option value="gemini-2.5-flash" selected>gemini-2.5-flash (default)</option>
-              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-            </optgroup>
-            <optgroup label="Preview">
-              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
-            </optgroup>
-          </select>
-        </div>
-        <div id="llm-api-key-warning" style="display: none; margin-top: 6px; margin-left: 0; padding: 8px 10px; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius); font-size: 0.75rem; color: var(--warn);">
-          ⚠ GEMINI_API_KEY or GOOGLE_API_KEY not set. Gemini review will be skipped.
-        </div>
+        <p class="existence-checks-hint">Validates DCIDs against the Data Commons KG. Disabled by default for performance.</p>
       </div>
       </div>
       <div class="sidebar-footer">
       <div class="run-action" style="padding-top: 20px;">
         <button id="run-btn" class="btn" disabled>▶ Run validation</button>
-        <div class="shortcut-hint" style="font-size: 0.7rem; color: var(--text-muted); margin-top: 8px;">
-          <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to stop
-        </div>
       </div>
       <div id="app-version"></div>
       </div>
@@ -3536,7 +3463,6 @@
       if (datasetMenu) datasetMenu.classList.remove('open');
       const datasetDropdown = document.getElementById('dataset-dropdown');
       if (datasetDropdown) datasetDropdown.classList.remove('open');
-      document.getElementById('llm-model-select').disabled = true;
       document.getElementById('tmcf-file').disabled = true;
       document.getElementById('csv-file').disabled = true;
       document.getElementById('stat-vars-mcf-file').disabled = true;
@@ -3597,7 +3523,6 @@
         const rulesParam = selectedRules.length > 0 ? selectedRules.join(',') : '';
         const selectedCustomRules = getSelectedCustomRules();
         let r, data;
-        const llmModel = document.getElementById('llm-model-select').value;
         if (runDataset === 'custom') {
           if (!customTmcfFile || customCsvFiles.length === 0) {
             setOutputContent('Please select both TMCF and CSV files.', false);
@@ -3733,7 +3658,6 @@
             if (rulesParam) formData.append('rules', rulesParam);
             formData.append('dataset_name', lastRunCustomDatasetName || '');
             formData.append('llm_review', '1');
-            formData.append('llm_model', llmModel);
             formData.append('existence_checks', existenceChecks);
             if (selectedCustomRules.length > 0) formData.append('custom_rules_json', JSON.stringify(selectedCustomRules));
             r = await fetch(API + '/api/run/custom/stream', {
@@ -4082,7 +4006,6 @@
         document.getElementById('dataset').disabled = false;
         const datasetTrigger = document.getElementById('dataset-trigger');
         if (datasetTrigger) datasetTrigger.disabled = false;
-        document.getElementById('llm-model-select').disabled = false;
         document.getElementById('tmcf-file').disabled = false;
         document.getElementById('csv-file').disabled = false;
         document.getElementById('stat-vars-mcf-file').disabled = false;
@@ -5675,9 +5598,6 @@
       if (progressContainer) progressContainer.style.display = 'none';
       resetProgressBar();
 
-      const optionalDetails = document.getElementById('custom-upload-optional');
-      if (optionalDetails) optionalDetails.removeAttribute('open');
-
       const mainEl = document.querySelector('main.main');
       if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -5711,25 +5631,6 @@
     }
 
     document.getElementById('run-btn').addEventListener('click', onRunButtonClick);
-    const aiReviewSection = document.getElementById('ai-review-section');
-    function syncAiReviewSectionActive() {
-      if (aiReviewSection) aiReviewSection.classList.add('is-active');
-      const row = document.getElementById('llm-model-row');
-      if (row) row.style.display = 'block';
-    }
-    async function updateAiReviewWarningVisibility() {
-      const warning = document.getElementById('llm-api-key-warning');
-      if (!warning) return;
-      try {
-        const r = await fetch(API + '/api/llm-status');
-        const data = await r.json();
-        warning.style.display = data.key_set ? 'none' : 'block';
-      } catch {
-        warning.style.display = 'block';
-      }
-    }
-    syncAiReviewSectionActive();
-    updateAiReviewWarningVisibility();
     function setupCustomFileInput(inputId, chooseBtnId, nameSpanId, clearBtnId, setFile, clearFile) {
       const input = document.getElementById(inputId);
       const btn = document.getElementById(chooseBtnId);
@@ -5762,14 +5663,14 @@
       if (!input || !hint) return;
       const val = input.value.trim();
       if (!val) {
-        hint.textContent = 'Enter a name (3–48 characters, lowercase letters, numbers, hyphens). Example: canada-population';
+        hint.textContent = 'Use lowercase letters, numbers, and hyphens';
         input.classList.remove('name-invalid', 'name-valid');
       } else if (!/^[a-z0-9-]{3,48}$/.test(val)) {
-        hint.textContent = 'Use lowercase letters, numbers, and hyphens, 3–48 characters (e.g. canada-population).';
+        hint.textContent = 'Lowercase letters, numbers, and hyphens (3–48 chars).';
         input.classList.remove('name-valid');
         input.classList.add('name-invalid');
       } else {
-        hint.textContent = 'Looks good. This name will identify the dataset across validation runs.';
+        hint.textContent = '';
         input.classList.remove('name-invalid');
         input.classList.add('name-valid');
       }

@@ -441,7 +441,8 @@ def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
     # "consistent across StatVars" requires an aggregate query the LLM generates
     # inconsistently — replaced with the per-row equivalent that always works.
     # Unit consistency is already enforced by the built-in check_unit_consistency rule.
-    if ctx.num_statvars > 1:
+    # Guard is > 0 (not > 1) because the check is per-row and valid for any dataset size.
+    if ctx.num_statvars > 0:
         result.append("every StatVar should have non-empty units")
 
     # Mixed-scale note: injected into LLM context via _format_dataset_context already.
