@@ -455,15 +455,26 @@ def _build_suggestions(ctx: "_DatasetContext | None") -> list[str]:
     return deduped
 
 
-@app.get("/api/sql-rule-suggestions")
-def sql_rule_suggestions(dataset: str | None = None, run_id: str | None = None):
+class _SuggestionsRequest(BaseModel):
+    dataset: str | None = None
+    run_id: str | None = None
+    # Optional pre-run stats sampled client-side (first ~50 KB of uploaded CSV).
+    # Keys: num_rows (int), min_value (float|None), max_value (float|None),
+    #       dates (list[str]), statvar_names (list[str])
+    csv_preview_stats: dict | None = None
+
+
+@app.post("/api/sql-rule-suggestions")
+def sql_rule_suggestions(body: _SuggestionsRequest):
     """Return SQL rule suggestion strings.
 
-    Without query params, returns the static defaults.
-    With dataset/run_id, augments suggestions using _DatasetContext derived from
-    summary_report.csv (same source used by rule generation).
+    Without any fields, returns the static defaults.
+    With dataset/run_id, builds context from post-run artifacts (report.json,
+    validation_output.json, or summary_report.csv).
+    With csv_preview_stats, builds context from pre-run CSV sample — allows
+    data-aware suggestions immediately after upload, before validation runs.
     """
-    ctx = _compute_dataset_context(run_id, dataset) if (dataset or run_id) else None
+    ctx = _compute_dataset_context(body.run_id, body.dataset, body.csv_preview_stats)
     suggestions = _build_suggestions(ctx)
     return {"suggestions": suggestions}
 
@@ -1317,8 +1328,8 @@ class _DatasetContext:
     concepts: list[str]
     has_mixed_scales: bool
     date_range: tuple[str, str]
-    # True when context was derived from the raw uploaded CSV rather than stats_summary.csv.
-    # The prompt and response flag differ slightly in this case.
+    # True when context was derived from a client-side CSV sample (pre-run).
+    # False for all post-run sources: summary_report.csv, report.json, validation_output.json.
     from_csv_preview: bool = False
 
 
@@ -1357,68 +1368,158 @@ def _find_stats_summary(run_id: str | None, dataset: str | None) -> Path | None:
     return None
 
 
+def _context_from_artifacts(
+    report_json_bytes: bytes | None,
+    validation_output_bytes: bytes | None,
+) -> "_DatasetContext | None":
+    """Build a DatasetContext by combining report.json and validation_output.json.
+
+    report.json  — statsCheckSummary provides the *complete* StatVar list regardless of
+                   pass/fail status (each entry is one StatVar × location pair processed
+                   by the DC import tool).  Non-empty summary also signals dates exist.
+    validation_output.json — adds unit-consistency and date-rule signals, plus StatVar
+                   names from failing rows (covers cases where report.json is absent).
+
+    Returns None when neither source yields any useful signal.
+    """
+    # --- report.json: complete StatVar list from statsCheckSummary ---
+    statvars: set[str] = set()
+    if report_json_bytes:
+        try:
+            rj = json.loads(report_json_bytes.decode("utf-8"))
+            for item in (rj.get("statsCheckSummary") or []):
+                sv = (item.get("statVarDcid") or "").strip()
+                if sv:
+                    statvars.add(sv)
+        except Exception:
+            pass
+
+    # --- validation_output.json: unit-consistency, date signals, failing-row StatVars ---
+    has_mixed_scales = False
+    # statsCheckSummary non-empty → DC tool processed observations → dates exist in data.
+    has_dates = bool(statvars)
+    vo_statvars: set[str] = set()
+    if validation_output_bytes:
+        try:
+            vo_results = json.loads(validation_output_bytes.decode("utf-8"))
+            _DATE_RULES = frozenset({"check_max_date_latest", "check_max_date_consistent"})
+            if isinstance(vo_results, list):
+                for r in vo_results:
+                    if not isinstance(r, dict):
+                        continue
+                    rule_id = r.get("validation_name") or ""
+                    status = r.get("status") or ""
+                    details = r.get("details") or {}
+                    if rule_id == "check_unit_consistency" and status == "FAILED":
+                        has_mixed_scales = True
+                    if rule_id in _DATE_RULES:
+                        has_dates = True
+                    # Collect failing-row StatVars as a fallback when report.json absent.
+                    for row_key in ("failed_rows", "failing_rows"):
+                        for row in (details.get(row_key) or []):
+                            if not isinstance(row, dict):
+                                continue
+                            sv = (row.get("StatVar") or row.get("stat_var") or "").strip()
+                            if sv:
+                                vo_statvars.add(sv)
+        except Exception:
+            pass
+
+    all_statvars = statvars or vo_statvars
+    if not all_statvars and not has_dates and not has_mixed_scales:
+        return None
+
+    concepts = _extract_concepts(list(all_statvars))
+    return _DatasetContext(
+        num_statvars=len(all_statvars),
+        concepts=concepts,
+        has_mixed_scales=has_mixed_scales,
+        date_range=("present" if has_dates else "", ""),
+    )
+
+
 def _compute_dataset_context(
     run_id: str | None,
     dataset: str | None,
     csv_preview_stats: dict | None = None,
 ) -> "_DatasetContext | None":
-    """Compute a minimal DatasetContext from stats_summary CSV.
+    """Compute a minimal DatasetContext for SQL rule suggestion generation.
 
-    Falls back to csv_preview_stats (lightweight stats from the raw uploaded CSV)
-    when no validation run exists. Returns None if unavailable.
+    Resolution order:
+    1. summary_report.csv / stats_summary.csv — richest source (local pipeline runs).
+    2. report.json + validation_output.json — available on GCS; report.json provides the
+       complete StatVar list via statsCheckSummary (works even for clean/all-PASSED runs);
+       validation_output.json adds unit-consistency and date signals.
+    3. csv_preview_stats — lightweight client-side stats from the raw uploaded CSV.
+    Returns None if no source is available.
     """
     csv_path = _find_stats_summary(run_id, dataset)
-    if not csv_path:
-        # Try to build minimal context from client-side CSV preview stats.
-        if csv_preview_stats and isinstance(csv_preview_stats, dict):
-            try:
-                num = int(csv_preview_stats.get("num_rows") or 0)
-                min_val = csv_preview_stats.get("min_value")
-                max_val = csv_preview_stats.get("max_value")
-                dates = csv_preview_stats.get("dates") or []
-                statvar_names = csv_preview_stats.get("statvar_names") or []
-                has_mixed = (
-                    max_val is not None and min_val is not None
-                    and float(max_val) > 1000 and abs(float(min_val)) < 1
-                )
-                concepts = _extract_concepts([str(n) for n in statvar_names])
-                min_date = str(dates[0]) if dates else ""
-                max_date = str(dates[-1]) if dates else ""
-                return _DatasetContext(
-                    num_statvars=num,
-                    concepts=concepts,
-                    has_mixed_scales=bool(has_mixed),
-                    date_range=(min_date, max_date),
-                    from_csv_preview=True,
-                )
-            except Exception as _exc:
-                logger.debug("csv_preview_stats context failed: %s", _exc)
-        return None
-    try:
-        import duckdb as _duckdb
-        con = _duckdb.connect()
-        con.execute(f"CREATE VIEW stats AS SELECT * FROM read_csv_auto('{csv_path}')")
-        row = con.execute(
-            "SELECT COUNT(*), MIN(MinDate), MAX(MaxDate), MIN(MinValue), MAX(MaxValue) FROM stats"
-        ).fetchone()
-        if row is None:
+    if csv_path:
+        try:
+            import duckdb as _duckdb
+            con = _duckdb.connect()
+            con.execute(f"CREATE VIEW stats AS SELECT * FROM read_csv_auto('{csv_path}')")
+            row = con.execute(
+                "SELECT COUNT(*), MIN(MinDate), MAX(MaxDate), MIN(MinValue), MAX(MaxValue) FROM stats"
+            ).fetchone()
+            if row is None:
+                con.close()
+                return None
+            num, min_date, max_date, min_val, max_val = row
+            has_mixed = (max_val or 0) > 1000 and abs(min_val or 0) < 1
+            names_rows = con.execute("SELECT StatVar FROM stats").fetchall()
             con.close()
-            return None
-        num, min_date, max_date, min_val, max_val = row
-        has_mixed = (max_val or 0) > 1000 and abs(min_val or 0) < 1
-        names_rows = con.execute("SELECT StatVar FROM stats").fetchall()
-        con.close()
-        names = [r[0] for r in names_rows if r[0]]
-        concepts = _extract_concepts(names)
-        return _DatasetContext(
-            num_statvars=int(num or 0),
-            concepts=concepts,
-            has_mixed_scales=bool(has_mixed),
-            date_range=(str(min_date or ""), str(max_date or "")),
-        )
-    except Exception as _exc:
-        logger.debug("dataset_context unavailable run_id=%s dataset=%s: %s", run_id, dataset, _exc)
-        return None
+            names = [r[0] for r in names_rows if r[0]]
+            concepts = _extract_concepts(names)
+            return _DatasetContext(
+                num_statvars=int(num or 0),
+                concepts=concepts,
+                has_mixed_scales=bool(has_mixed),
+                date_range=(str(min_date or ""), str(max_date or "")),
+            )
+        except Exception as _exc:
+            logger.debug("dataset_context csv failed run_id=%s dataset=%s: %s", run_id, dataset, _exc)
+
+    # Fallback: GCS/local JSON artifacts.
+    # report.json provides the complete StatVar list (statsCheckSummary).
+    # validation_output.json adds unit-consistency and date signals.
+    # Both are fetched once and merged by _context_from_artifacts.
+    if run_id or dataset:
+        try:
+            raw_report = _resolve_artifact(dataset, run_id, "report.json")
+            raw_vo = _resolve_artifact(dataset, run_id, "validation_output.json")
+            ctx = _context_from_artifacts(raw_report, raw_vo)
+            if ctx is not None:
+                return ctx
+        except Exception as _exc:
+            logger.debug("dataset_context artifacts failed run_id=%s dataset=%s: %s", run_id, dataset, _exc)
+
+    # Fallback: lightweight stats from the client-side CSV preview.
+    if csv_preview_stats and isinstance(csv_preview_stats, dict):
+        try:
+            num = int(csv_preview_stats.get("num_rows") or 0)
+            min_val = csv_preview_stats.get("min_value")
+            max_val = csv_preview_stats.get("max_value")
+            dates = csv_preview_stats.get("dates") or []
+            statvar_names = csv_preview_stats.get("statvar_names") or []
+            has_mixed = (
+                max_val is not None and min_val is not None
+                and float(max_val) > 1000 and abs(float(min_val)) < 1
+            )
+            concepts = _extract_concepts([str(n) for n in statvar_names])
+            min_date = str(dates[0]) if dates else ""
+            max_date = str(dates[-1]) if dates else ""
+            return _DatasetContext(
+                num_statvars=num,
+                concepts=concepts,
+                has_mixed_scales=bool(has_mixed),
+                date_range=(min_date, max_date),
+                from_csv_preview=True,
+            )
+        except Exception as _exc:
+            logger.debug("csv_preview_stats context failed: %s", _exc)
+
+    return None
 
 
 def _format_dataset_context(ctx: "_DatasetContext | None") -> str:

@@ -4917,23 +4917,33 @@
       });
 
       // Fetch suggestions from backend (data-aware when dataset/run_id are known).
-      function refreshSuggestions(dataset, runId) {
-        const params = new URLSearchParams();
-        if (dataset && dataset !== 'custom') params.set('dataset', dataset);
-        if (runId) params.set('run_id', runId);
-        const qs = params.toString() ? '?' + params.toString() : '';
-        fetch(API + '/api/sql-rule-suggestions' + qs)
-          .then(r => r.ok ? r.json() : null)
-          .then(d => {
-            if (d && Array.isArray(d.suggestions)) defaultSuggestions = d.suggestions;
-          })
-          .catch(() => {
-            defaultSuggestions = [
-              'every StatVar should have at least one observation',
-              'no StatVar should have negative values',
-            ];
-          })
-          .finally(() => { clearResult(); });
+      // Pre-run: when no runId, samples the uploaded CSV client-side for context.
+      async function refreshSuggestions(dataset, runId) {
+        // Compute pre-run preview stats when no validated run exists yet.
+        let previewStats = null;
+        if (!runId && dataset === 'custom') {
+          previewStats = await readCsvPreviewStats();
+        }
+        try {
+          const r = await fetch(API + '/api/sql-rule-suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dataset: (dataset && dataset !== 'custom') ? dataset : null,
+              run_id: runId || null,
+              csv_preview_stats: previewStats,
+            }),
+          });
+          const d = r.ok ? await r.json() : null;
+          if (d && Array.isArray(d.suggestions)) defaultSuggestions = d.suggestions;
+        } catch {
+          defaultSuggestions = [
+            'every StatVar should have at least one observation',
+            'no StatVar should have negative values',
+          ];
+        } finally {
+          clearResult();
+        }
       }
 
       // Expose so run-completion handler can trigger a refresh with context.
@@ -5807,6 +5817,8 @@
           if (clearBtn) clearBtn.style.display = 'inline';
           _updateCsvSizeWarning();
           updateRunButtonState();
+          // Refresh suggestions using CSV sample — pre-run data-aware suggestions.
+          if (window._refreshSqlSuggestions) window._refreshSqlSuggestions('custom', null);
         }
       });
       if (clearBtn) {
@@ -5820,6 +5832,8 @@
           _updateCsvSizeWarning();
           _updateDatasetNameHint();
           updateRunButtonState();
+          // Reset suggestions to defaults when CSV is removed.
+          if (window._refreshSqlSuggestions) window._refreshSqlSuggestions('custom', null);
         });
       }
     })();
