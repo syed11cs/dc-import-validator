@@ -1549,13 +1549,13 @@
             <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
             <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" />
             <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
-            <input type="text" id="csv-gcs-paths" placeholder="gs://bucket/path/a.csv, gs://bucket/path/b.csv" autocomplete="off" spellcheck="false" />
-            <p class="field-hint">Separate multiple paths with commas</p>
+            <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false" style="resize: vertical;"></textarea>
+            <p class="field-hint">One path per line for multiple CSVs</p>
             <label>StatVars MCF <span style="font-size: 0.72rem; font-weight: 400;">(optional)</span></label>
             <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
             <label>StatVars Schema MCF <span style="font-size: 0.72rem; font-weight: 400;">(optional)</span></label>
             <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
-            <p class="gcs-sa-hint">Files must be readable by the service account running this server.</p>
+            <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
           </div>
         </div>
       </div>
@@ -3322,6 +3322,11 @@
             stat_vars_mcf_filename: opts.stat_vars_mcf_filename || '',
             stat_vars_schema_mcf_filename: opts.stat_vars_schema_mcf_filename || '',
             csv_total_bytes: opts.csv_total_bytes || 0,
+            // GCS path mode fields (only set when customInputMode === 'gcs').
+            tmcf_gcs_path: opts.tmcf_gcs_path || '',
+            csv_gcs_paths: opts.csv_gcs_paths || [],
+            stat_vars_mcf_gcs_path: opts.stat_vars_mcf_gcs_path || '',
+            stat_vars_schema_mcf_gcs_path: opts.stat_vars_schema_mcf_gcs_path || '',
             llm_review: !!opts.llm_review,
             rules: opts.rules || '',
             skip_rules: opts.skip_rules || '',
@@ -3543,7 +3548,14 @@
         const selectedCustomRules = getSelectedCustomRules();
         let r, data;
         if (runDataset === 'custom' && customInputMode === 'gcs') {
-          // ── GCS input path mode ────────────────────────────────────────────────
+          // ── GCS path mode → Cloud Batch ────────────────────────────────────────
+          // Routes through /api/jobs (same as upload mode) so the Batch VM downloads
+          // the files directly using its service account. Progress is polled from
+          // status.json on GCS, not streamed from Cloud Run.
+          if (!gcsUploadsConfigured) {
+            setOutputContent('GCS path mode requires GCS to be configured on this server (GCS_REPORTS_BUCKET).', false);
+            return;
+          }
           const tmcfGcsPath = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
           const csvGcsPaths = (document.getElementById('csv-gcs-paths')?.value || '').trim();
           if (!tmcfGcsPath || !csvGcsPaths) {
@@ -3554,37 +3566,26 @@
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
           const statVarsMcfGcsPath = (document.getElementById('stat-vars-mcf-gcs-path')?.value || '').trim();
           const statVarsSchemaMcfGcsPath = (document.getElementById('stat-vars-schema-mcf-gcs-path')?.value || '').trim();
-          const formData = new FormData();
-          formData.append('tmcf_gcs_path', tmcfGcsPath);
-          formData.append('csv_gcs_paths', csvGcsPaths);
-          if (statVarsMcfGcsPath) formData.append('stat_vars_mcf_gcs_path', statVarsMcfGcsPath);
-          if (statVarsSchemaMcfGcsPath) formData.append('stat_vars_schema_mcf_gcs_path', statVarsSchemaMcfGcsPath);
-          formData.append('dataset_name', lastRunCustomDatasetName || '');
-          formData.append('llm_review', '1');
-          formData.append('existence_checks', existenceChecks);
-          if (rulesParam) formData.append('rules', rulesParam);
-          if (selectedCustomRules.length > 0) formData.append('custom_rules_json', JSON.stringify(selectedCustomRules));
-          r = await fetch(API + '/api/run/custom/stream', {
-            method: 'POST',
-            body: formData,
-            signal: runAbortController.signal,
-          });
-          if (!r.ok) {
-            const errJson = await r.json().catch(() => ({}));
-            throw new Error(errJson.detail || `Server error (${r.status})`);
-          }
-          if (!r.body) throw new Error('Streaming not supported');
-          data = await consumeStream(r.body, (msg) => {
-            if (msg.t === 'step') {
-              const s = msg.step ?? -1;
-              if (msg.label != null && msg.label !== '') stepLabels[s] = msg.label;
-              const displayLabel = stepLabels[s] ?? DEFAULT_STEP_LABELS[s] ?? ('Step ' + s);
-              const pill = document.getElementById('progress-pill-' + s);
-              if (pill) pill.textContent = s + '. ' + displayLabel;
-              if (typeof msg.step === 'number') updateProgressStep(msg.step);
-              _setActiveStep(displayLabel);
-            }
-          });
+          const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          _setActiveStep('Submitting validation job\u2026');
+          data = await _submitAndPollBatchJob(batchRunId, 'custom', {
+            session_id: '',
+            tmcf_filename: '',
+            csv_filenames: [],
+            tmcf_gcs_path: tmcfGcsPath,
+            // Split on newlines or commas; server validates each gs:// URI.
+            csv_gcs_paths: csvGcsPaths.split(/[\n,]/).map(s => s.trim()).filter(Boolean),
+            stat_vars_mcf_gcs_path: statVarsMcfGcsPath,
+            stat_vars_schema_mcf_gcs_path: statVarsSchemaMcfGcsPath,
+            csv_total_bytes: 0,  // server overrides to largest tier for GCS path mode
+            llm_review: true,
+            rules: rulesParam,
+            skip_rules: '',
+            baseline_name: lastRunCustomDatasetName ? 'custom_' + lastRunCustomDatasetName : '',
+            import_resolution_mode: 'LOCAL',
+            existence_checks: existenceChecks,
+            custom_rules: selectedCustomRules,
+          }, runAbortController.signal);
         } else if (runDataset === 'custom') {
           if (!customTmcfFile || customCsvFiles.length === 0) {
             setOutputContent('Please select both TMCF and CSV files.', false);

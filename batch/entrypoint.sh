@@ -54,6 +54,13 @@ TMCF_FILENAME="${TMCF_FILENAME:-}"
 CSV_FILENAMES="${CSV_FILENAMES:-}"
 STAT_VARS_MCF_FILENAME="${STAT_VARS_MCF_FILENAME:-}"
 STAT_VARS_SCHEMA_MCF_FILENAME="${STAT_VARS_SCHEMA_MCF_FILENAME:-}"
+# GCS path mode: full gs:// URIs (alternative to GCS_INPUT_PREFIX + *_FILENAME vars).
+# The Batch VM's attached service account (BATCH_SERVICE_ACCOUNT) is used for downloads
+# via the GCE metadata server — not the Cloud Run service account.
+TMCF_GCS_PATH="${TMCF_GCS_PATH:-}"
+CSV_GCS_PATHS="${CSV_GCS_PATHS:-}"            # newline-separated full gs:// URIs
+STAT_VARS_MCF_GCS_PATH="${STAT_VARS_MCF_GCS_PATH:-}"
+STAT_VARS_SCHEMA_MCF_GCS_PATH="${STAT_VARS_SCHEMA_MCF_GCS_PATH:-}"
 LLM_REVIEW="${LLM_REVIEW:-false}"
 RULES_FILTER="${RULES_FILTER:-}"
 SKIP_RULES_FILTER="${SKIP_RULES_FILTER:-}"
@@ -171,11 +178,11 @@ write_status "0" "Starting" "running"
 # ─── 2. Validate inputs for custom datasets ───────────────────────────────────
 
 if [[ "$DATASET" == "custom" ]]; then
-    if [[ -z "$TMCF_FILENAME" || -z "$CSV_FILENAMES" ]]; then
-        log "ERROR: TMCF_FILENAME and CSV_FILENAMES are required when DATASET=custom"
+    if [[ -z "$TMCF_GCS_PATH" && ( -z "$TMCF_FILENAME" || -z "$CSV_FILENAMES" ) ]]; then
+        log "ERROR: TMCF_FILENAME+CSV_FILENAMES or TMCF_GCS_PATH+CSV_GCS_PATHS required when DATASET=custom"
         write_status "0" "Starting" "failed" \
             "MISSING_INPUTS" \
-            "TMCF_FILENAME and CSV_FILENAMES must be set for custom datasets"
+            "TMCF_FILENAME and CSV_FILENAMES must be set for custom datasets (or TMCF_GCS_PATH + CSV_GCS_PATHS)"
         exit 1
     fi
 fi
@@ -186,16 +193,70 @@ fi
 # already have their source files inside the container at sample_data/; no download needed.
 
 if [[ "$DATASET" == "custom" ]]; then
-    ACTUAL_PREFIX="${GCS_INPUT_PREFIX:-inputs/${RUN_ID}}"
-    log "Downloading inputs from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
+    if [[ -n "$TMCF_GCS_PATH" ]]; then
+        # ── GCS path mode: download each file from its full gs:// URI. ────────────
+        # Files may live in any GCS bucket. Authentication is via the Batch VM's
+        # attached service account (BATCH_SERVICE_ACCOUNT), resolved through the GCE
+        # metadata server — not the Cloud Run service account.
+        log "GCS path mode: downloading inputs from explicit GCS URIs"
 
-    if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
-            "gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/" "${WORKSPACE}/"; then
-        log "ERROR: Input download failed from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
-        write_status "0" "Starting" "failed" \
-            "DOWNLOAD_FAILED" \
-            "Failed to download input files from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
-        exit 1
+        TMCF_FILENAME="$(basename "${TMCF_GCS_PATH%%\?*}")"
+        if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                "$TMCF_GCS_PATH" "${WORKSPACE}/${TMCF_FILENAME}"; then
+            log "ERROR: Failed to download TMCF from ${TMCF_GCS_PATH}"
+            write_status "0" "Starting" "failed" \
+                "DOWNLOAD_FAILED" \
+                "Failed to download TMCF from ${TMCF_GCS_PATH}"
+            exit 1
+        fi
+
+        _csv_basenames=()
+        mapfile -t _CSV_PATH_LIST <<< "$CSV_GCS_PATHS"
+        for _csv_path in "${_CSV_PATH_LIST[@]}"; do
+            # Trim surrounding whitespace.
+            _csv_path="${_csv_path#"${_csv_path%%[![:space:]]*}"}"
+            _csv_path="${_csv_path%"${_csv_path##*[![:space:]]}"}"
+            [[ -z "$_csv_path" ]] && continue
+            _bn="$(basename "${_csv_path%%\?*}")"
+            if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                    "$_csv_path" "${WORKSPACE}/${_bn}"; then
+                log "ERROR: Failed to download CSV from ${_csv_path}"
+                write_status "0" "Starting" "failed" \
+                    "DOWNLOAD_FAILED" \
+                    "Failed to download CSV from ${_csv_path}"
+                exit 1
+            fi
+            _csv_basenames+=("$_bn")
+        done
+        # Reconstruct CSV_FILENAMES from basenames for E2E_ARGS building below.
+        CSV_FILENAMES="$(IFS=','; echo "${_csv_basenames[*]}")"
+
+        # Optional stat vars files — non-fatal if download fails (pipeline will warn).
+        if [[ -n "$STAT_VARS_MCF_GCS_PATH" ]]; then
+            STAT_VARS_MCF_FILENAME="$(basename "${STAT_VARS_MCF_GCS_PATH%%\?*}")"
+            python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                "$STAT_VARS_MCF_GCS_PATH" "${WORKSPACE}/${STAT_VARS_MCF_FILENAME}" || \
+                log "WARNING: Failed to download stat vars MCF from ${STAT_VARS_MCF_GCS_PATH}"
+        fi
+        if [[ -n "$STAT_VARS_SCHEMA_MCF_GCS_PATH" ]]; then
+            STAT_VARS_SCHEMA_MCF_FILENAME="$(basename "${STAT_VARS_SCHEMA_MCF_GCS_PATH%%\?*}")"
+            python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                "$STAT_VARS_SCHEMA_MCF_GCS_PATH" "${WORKSPACE}/${STAT_VARS_SCHEMA_MCF_FILENAME}" || \
+                log "WARNING: Failed to download stat vars schema MCF from ${STAT_VARS_SCHEMA_MCF_GCS_PATH}"
+        fi
+    else
+        # ── Upload session mode: download all files from the GCS prefix. ──────────
+        ACTUAL_PREFIX="${GCS_INPUT_PREFIX:-inputs/${RUN_ID}}"
+        log "Downloading inputs from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
+
+        if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                "gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/" "${WORKSPACE}/"; then
+            log "ERROR: Input download failed from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
+            write_status "0" "Starting" "failed" \
+                "DOWNLOAD_FAILED" \
+                "Failed to download input files from gs://${GCS_REPORTS_BUCKET}/${ACTUAL_PREFIX}/"
+            exit 1
+        fi
     fi
 fi
 

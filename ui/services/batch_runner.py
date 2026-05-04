@@ -66,6 +66,12 @@ class InputFiles:
     stat_vars_mcf_filename: Optional[str] = None
     stat_vars_schema_mcf_filename: Optional[str] = None
     csv_total_bytes: int = 0                     # used for tier selection
+    # GCS path mode: full gs:// URIs passed directly (alternative to gcs_prefix + filenames).
+    # Used when the user provides existing GCS paths instead of uploading files.
+    tmcf_gcs_path: str = ""
+    csv_gcs_paths: list = field(default_factory=list)   # list of full gs:// URIs
+    stat_vars_mcf_gcs_path: str = ""
+    stat_vars_schema_mcf_gcs_path: str = ""
     # Pipeline options
     llm_review: bool = False
     rules_filter: str = ""
@@ -149,6 +155,18 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles) -> dict:
         env["STAT_VARS_MCF_FILENAME"] = input_files.stat_vars_mcf_filename
     if input_files.stat_vars_schema_mcf_filename:
         env["STAT_VARS_SCHEMA_MCF_FILENAME"] = input_files.stat_vars_schema_mcf_filename
+    # GCS path mode: full gs:// URIs for each input file. The Batch VM downloads them
+    # directly using its attached service account (BATCH_SERVICE_ACCOUNT), which must
+    # have read access to the target buckets (not necessarily GCS_REPORTS_BUCKET).
+    # Paths are newline-separated — GCS object names cannot contain newlines.
+    if input_files.tmcf_gcs_path:
+        env["TMCF_GCS_PATH"] = input_files.tmcf_gcs_path
+    if input_files.csv_gcs_paths:
+        env["CSV_GCS_PATHS"] = "\n".join(input_files.csv_gcs_paths)
+    if input_files.stat_vars_mcf_gcs_path:
+        env["STAT_VARS_MCF_GCS_PATH"] = input_files.stat_vars_mcf_gcs_path
+    if input_files.stat_vars_schema_mcf_gcs_path:
+        env["STAT_VARS_SCHEMA_MCF_GCS_PATH"] = input_files.stat_vars_schema_mcf_gcs_path
     if input_files.baseline_name:
         env["BASELINE_NAME"] = input_files.baseline_name
 

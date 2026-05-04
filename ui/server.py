@@ -3260,6 +3260,18 @@ def get_baseline_versions(dataset: str, baseline_id: str | None = Query(None)):
 _BUILTIN_DATASETS = frozenset({"child_birth", "statistics_poland", "finland_census", "uae_population"})
 
 
+def _validate_gcs_uri(uri: str, field: str) -> str | None:
+    """Return an error string if uri is not a valid gs:// URI, else None."""
+    if not uri.startswith("gs://"):
+        return f"{field} must start with gs://, got: {uri!r}"
+    parts = uri[5:].split("/", 1)
+    if not parts[0]:
+        return f"{field} has no bucket name: {uri!r}"
+    if len(parts) < 2 or not parts[1].strip():
+        return f"{field} has no object path (bucket-only URI): {uri!r}"
+    return None
+
+
 class _SubmitJobRequest(BaseModel):
     """Request body for POST /api/jobs."""
     run_id: str
@@ -3273,6 +3285,11 @@ class _SubmitJobRequest(BaseModel):
     stat_vars_schema_mcf_filename: str = ""
     # Total compressed CSV bytes — used for machine tier selection.
     csv_total_bytes: int = 0
+    # GCS path mode: full gs:// URIs (mutually exclusive with session_id + tmcf_filename).
+    tmcf_gcs_path: str = ""
+    csv_gcs_paths: list[str] = []
+    stat_vars_mcf_gcs_path: str = ""
+    stat_vars_schema_mcf_gcs_path: str = ""
     # Pipeline options.
     llm_review: bool = False
     rules: str = ""
@@ -3288,11 +3305,14 @@ class _SubmitJobRequest(BaseModel):
 async def submit_batch_job(body: _SubmitJobRequest):
     """Submit a Cloud Batch validation job.
 
-    For custom datasets the files must have been uploaded to GCS already
-    (via POST /api/prepare-upload + direct browser PUT). The session_id
-    from prepare-upload becomes GCS_INPUT_PREFIX for the Batch VM.
+    Supports two file-delivery modes for custom datasets (mutually exclusive):
+    - Upload session: files uploaded via POST /api/prepare-upload + browser PUT.
+      Pass session_id + tmcf_filename + csv_filenames.
+    - GCS path mode: files already in GCS. Pass tmcf_gcs_path + csv_gcs_paths.
+      The Batch VM downloads them directly using BATCH_SERVICE_ACCOUNT, which
+      must have read access to the target buckets.
 
-    For built-in datasets (child_birth, etc.) session_id may be omitted —
+    For built-in datasets (child_birth, etc.) all file fields may be omitted —
     the container already has those files baked in.
 
     Returns { run_id, job_name } on success.
@@ -3307,10 +3327,32 @@ async def submit_batch_job(body: _SubmitJobRequest):
     if dataset not in _BUILTIN_DATASETS and dataset != "custom":
         raise HTTPException(status_code=400, detail=f"Unknown dataset: {dataset!r}")
     if dataset == "custom":
-        if not body.tmcf_filename:
-            raise HTTPException(status_code=400, detail="tmcf_filename is required for custom dataset")
-        if not body.csv_filenames:
-            raise HTTPException(status_code=400, detail="csv_filenames is required for custom dataset")
+        has_filenames = bool(body.tmcf_filename and body.csv_filenames)
+        has_gcs_paths = bool(body.tmcf_gcs_path and body.csv_gcs_paths)
+        if not has_filenames and not has_gcs_paths:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either tmcf_filename+csv_filenames (upload session) "
+                       "or tmcf_gcs_path+csv_gcs_paths (GCS path mode)",
+            )
+        if has_gcs_paths:
+            body.tmcf_gcs_path = body.tmcf_gcs_path.strip()
+            body.csv_gcs_paths = [u.strip() for u in body.csv_gcs_paths if u.strip()]
+            if not body.csv_gcs_paths:
+                raise HTTPException(status_code=400, detail="csv_gcs_paths is empty after stripping whitespace")
+            body.stat_vars_mcf_gcs_path = body.stat_vars_mcf_gcs_path.strip()
+            body.stat_vars_schema_mcf_gcs_path = body.stat_vars_schema_mcf_gcs_path.strip()
+            if err := _validate_gcs_uri(body.tmcf_gcs_path, "tmcf_gcs_path"):
+                raise HTTPException(status_code=400, detail=err)
+            for i, uri in enumerate(body.csv_gcs_paths):
+                if err := _validate_gcs_uri(uri, f"csv_gcs_paths[{i}]"):
+                    raise HTTPException(status_code=400, detail=err)
+            if body.stat_vars_mcf_gcs_path:
+                if err := _validate_gcs_uri(body.stat_vars_mcf_gcs_path, "stat_vars_mcf_gcs_path"):
+                    raise HTTPException(status_code=400, detail=err)
+            if body.stat_vars_schema_mcf_gcs_path:
+                if err := _validate_gcs_uri(body.stat_vars_schema_mcf_gcs_path, "stat_vars_schema_mcf_gcs_path"):
+                    raise HTTPException(status_code=400, detail=err)
 
     if body.custom_rules:
         err = _validate_custom_rules(body.custom_rules)
@@ -3356,13 +3398,64 @@ async def submit_batch_job(body: _SubmitJobRequest):
                 )
             logger.info("submit_batch_job: merged config uploaded run_id=%s path=%s", run_id, merged_config_gcs_path)
 
+    # GCS path mode: csv_total_bytes is 0 because the client has no File objects to
+    # measure. Fetch actual object sizes from GCS so tier selection is accurate.
+    # Falls back to the largest tier on any error (permission denied, missing object,
+    # GCS unavailable) so the job always proceeds.
+    csv_total_bytes = body.csv_total_bytes
+    if csv_total_bytes == 0 and body.csv_gcs_paths:
+        _LARGEST_TIER_BYTES = 50 * 1024 ** 3 + 1  # forces n2-highmem-64 / 12 h in _select_tier
+        try:
+            from google.cloud import storage as _gcs
+            _client = _gcs.Client()
+            _total = 0
+            _fallback = False
+            _bucket_cache: dict = {}
+            for _uri in body.csv_gcs_paths:
+                # Parse gs://bucket/object-path
+                _without_scheme = _uri[len("gs://"):]
+                _bucket_name, _, _blob_path = _without_scheme.partition("/")
+                if not _bucket_name or not _blob_path:
+                    logger.warning(
+                        "submit_batch_job: malformed GCS URI %r — falling back to largest tier",
+                        _uri,
+                    )
+                    _fallback = True
+                    break
+                if _bucket_name not in _bucket_cache:
+                    _bucket_cache[_bucket_name] = _client.bucket(_bucket_name)
+                _blob = _bucket_cache[_bucket_name].get_blob(_blob_path)
+                if _blob is None or _blob.size is None:
+                    logger.warning(
+                        "submit_batch_job: cannot get size for %s — falling back to largest tier",
+                        _uri,
+                    )
+                    _fallback = True
+                    break
+                _total += _blob.size
+            csv_total_bytes = _LARGEST_TIER_BYTES if _fallback else _total
+            logger.info(
+                "submit_batch_job: GCS path mode csv_total_bytes=%d fallback=%s run_id=%s",
+                csv_total_bytes, _fallback, run_id,
+            )
+        except Exception as _exc:
+            logger.warning(
+                "submit_batch_job: failed to fetch GCS object sizes (%s) — falling back to largest tier",
+                _exc,
+            )
+            csv_total_bytes = _LARGEST_TIER_BYTES
+
     input_files = _InputFiles(
         gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
         tmcf_filename=body.tmcf_filename,
         csv_filenames=body.csv_filenames,
         stat_vars_mcf_filename=body.stat_vars_mcf_filename or None,
         stat_vars_schema_mcf_filename=body.stat_vars_schema_mcf_filename or None,
-        csv_total_bytes=body.csv_total_bytes,
+        csv_total_bytes=csv_total_bytes,
+        tmcf_gcs_path=body.tmcf_gcs_path,
+        csv_gcs_paths=body.csv_gcs_paths,
+        stat_vars_mcf_gcs_path=body.stat_vars_mcf_gcs_path,
+        stat_vars_schema_mcf_gcs_path=body.stat_vars_schema_mcf_gcs_path,
         llm_review=body.llm_review,
         rules_filter=body.rules,
         skip_rules_filter=body.skip_rules,
