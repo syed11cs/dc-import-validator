@@ -3340,6 +3340,8 @@ async def submit_batch_job(body: _SubmitJobRequest):
             body.csv_gcs_paths = [u.strip() for u in body.csv_gcs_paths if u.strip()]
             if not body.csv_gcs_paths:
                 raise HTTPException(status_code=400, detail="csv_gcs_paths is empty after stripping whitespace")
+            if len(body.csv_gcs_paths) > 100:
+                raise HTTPException(status_code=400, detail=f"csv_gcs_paths exceeds maximum of 100 entries (got {len(body.csv_gcs_paths)})")
             body.stat_vars_mcf_gcs_path = body.stat_vars_mcf_gcs_path.strip()
             body.stat_vars_schema_mcf_gcs_path = body.stat_vars_schema_mcf_gcs_path.strip()
             if err := _validate_gcs_uri(body.tmcf_gcs_path, "tmcf_gcs_path"):
