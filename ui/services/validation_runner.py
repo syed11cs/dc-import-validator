@@ -339,6 +339,9 @@ async def run_validation_process(
     extra_cleanup_dirs: list[Path] | None = None,
     extra_done_fields: dict | None = None,
     extra_env: dict | None = None,
+    prefix_lines: list[str] | None = None,
+    setup_gen=None,
+    args_fn=None,
 ):
     """Run the validation script; stream NDJSON or wait and return result. Cleans up config_path on exit.
     If output_dir and dataset are set, uploads reports to GCS (when GCS_REPORTS_BUCKET is set), then
@@ -369,6 +372,7 @@ async def run_validation_process(
         return await _run_validation_process_impl(
             args, request, config_path, stream, app_root, output_dir, dataset,
             canonical_output_dir, extra_cleanup_dirs, extra_done_fields, extra_env,
+            prefix_lines, setup_gen, args_fn,
         )
     finally:
         _active_runs -= 1
@@ -386,14 +390,228 @@ async def _run_validation_process_impl(
     extra_cleanup_dirs: list[Path] | None = None,
     extra_done_fields: dict | None = None,
     extra_env: dict | None = None,
+    prefix_lines: list[str] | None = None,
+    setup_gen=None,
+    args_fn=None,
 ):
-    """Internal: spawn and manage the subprocess after the concurrency check."""
+    """Internal: spawn and manage the subprocess after the concurrency check.
+
+    setup_gen: optional async-generator factory (() -> AsyncGenerator[str, None]) called at the
+        start of the stream, before the subprocess starts. Yields NDJSON lines (e.g. download
+        progress). Any exception raised inside setup_gen emits a synthetic "done" failure event
+        and stops the stream without launching the subprocess.
+    args_fn: optional sync callable (() -> list[str]) resolved inside the generator after
+        setup_gen completes. Used when args depend on setup_gen results (e.g. GCS downloads).
+        Ignored for non-streaming runs.
+    """
     request_id = getattr(request.state, "request_id", "")
     # Always set RUN_ID and disable auto baseline updates for UI-initiated runs.
     # Baseline promotion is handled explicitly via POST /api/accept-baseline/{dataset}.
     env = {**os.environ, "RUN_ID": request_id, "BASELINE_AUTO_UPDATE": "false", **(extra_env or {})}
     run_start_time = time.monotonic()
     timeout_sec = _run_timeout_sec()  # 0 = no timeout
+
+    # ── Streaming path ───────────────────────────────────────────────────────────────
+    # The subprocess is created inside gen() so that setup_gen (e.g. GCS downloads) can
+    # yield real-time progress lines before the subprocess starts.
+    if stream:
+        run_timed_out = False
+
+        async def gen():
+            nonlocal run_timed_out
+
+            # 1. Setup phase — runs before subprocess starts, yields NDJSON progress lines.
+            #    Errors (e.g. GCS 404/403) emit a synthetic "done" failure and stop the stream.
+            if setup_gen is not None:
+                try:
+                    async for line in setup_gen():
+                        yield line
+                except Exception as exc:
+                    duration_sec = round(time.monotonic() - run_start_time, 2)
+                    logger.error(
+                        "setup_gen failed request_id=%s duration_sec=%s: %s",
+                        request_id, duration_sec, exc,
+                    )
+                    yield json.dumps({
+                        "t": "done",
+                        "success": False,
+                        "exit_code": 1,
+                        "run_id": request_id,
+                        "failure_code": "SETUP_ERROR",
+                        "failure_step": 0,
+                        "failure_message": getattr(exc, "detail", str(exc)),
+                        **(extra_done_fields or {}),
+                    }) + "\n"
+                    if config_path and config_path.exists():
+                        config_path.unlink(missing_ok=True)
+                    await asyncio.to_thread(
+                        _cleanup_run_dirs, output_dir, canonical_output_dir, extra_cleanup_dirs, request_id
+                    )
+                    return
+
+            # 2. Resolve args — args_fn() is called after setup_gen so download results are available.
+            resolved_args = args_fn() if args_fn is not None else args
+
+            # 3. Start the validation subprocess.
+            proc = await asyncio.create_subprocess_exec(
+                *resolved_args,
+                cwd=str(app_root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+
+            async def timeout_killer():
+                nonlocal run_timed_out
+                await asyncio.sleep(timeout_sec)
+                if proc.returncode is None:
+                    run_timed_out = True
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    logger.warning("validation run timed out after %s sec request_id=%s", timeout_sec, request_id)
+
+            timeout_task = asyncio.create_task(timeout_killer()) if timeout_sec > 0 else None
+            done_yielded = False
+            try:
+                for _pl in (prefix_lines or []):
+                    yield json.dumps({"t": "line", "v": _pl}) + "\n"
+                async for chunk in _stream_run_output(proc):
+                    needs_post_yield_upload = False
+                    try:
+                        obj = json.loads(chunk) if chunk.strip() else {}
+                        if obj.get("t") == "done":
+                            done_yielded = True
+                            if run_timed_out:
+                                obj["timeout"] = True
+                                obj["success"] = False
+                                obj["exit_code"] = -1
+                                obj["failure_code"] = "RUN_TIMEOUT"
+                                obj["failure_step"] = None
+                                obj["failure_message"] = "Validation run timed out."
+                            elif (
+                                not obj.get("success")
+                                and not obj.get("cancelled")
+                                and not obj.get("failure_code")
+                                and output_dir is not None
+                                and not (output_dir / "validation_output.json").exists()
+                            ):
+                                obj["failure_code"] = "OOM_SUSPECTED"
+                                obj["failure_step"] = None
+                                obj["failure_message"] = (
+                                    "Validation terminated unexpectedly. The dataset may be too large"
+                                    " for the current server memory limit."
+                                )
+                            duration_sec = round(time.monotonic() - run_start_time, 2)
+                            logger.info(
+                                "run_finished request_id=%s success=%s cancelled=%s duration_sec=%s",
+                                request_id,
+                                obj.get("success"),
+                                obj.get("cancelled"),
+                                duration_sec,
+                            )
+                            # Add run_id and any caller-supplied fields (e.g. baseline_id)
+                            obj["run_id"] = request_id
+                            if extra_done_fields:
+                                obj.update(extra_done_fields)
+                            chunk = json.dumps(obj) + "\n"
+                            # GCS upload happens after yielding done so the client receives
+                            # the final result immediately, before the upload delay.
+                            needs_post_yield_upload = bool(output_dir and dataset)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    yield chunk
+                    # Upload to GCS after yielding done so the client already has the result.
+                    # Runs only once (needs_post_yield_upload is only set on the done event).
+                    if needs_post_yield_upload:
+                        await asyncio.to_thread(
+                            _upload_reports_sync, output_dir, request_id, dataset
+                        )
+                        if canonical_output_dir and output_dir != canonical_output_dir:
+                            await asyncio.to_thread(
+                                _copy_run_to_canonical, output_dir, canonical_output_dir
+                            )
+                # If we timed out and the subprocess never sent "done", emit a synthetic done so UI gets structured failure
+                if run_timed_out and not done_yielded:
+                    duration_sec = round(time.monotonic() - run_start_time, 2)
+                    logger.info(
+                        "run_finished request_id=%s success=False timeout=True duration_sec=%s",
+                        request_id,
+                        duration_sec,
+                    )
+                    synthetic = {
+                        "t": "done",
+                        "success": False,
+                        "exit_code": -1,
+                        "timeout": True,
+                        "run_id": request_id,
+                        "failure_code": "RUN_TIMEOUT",
+                        "failure_step": None,
+                        "failure_message": "Validation run timed out.",
+                    }
+                    yield json.dumps(synthetic) + "\n"
+                    # Upload after yielding so the client already has the timeout result.
+                    if output_dir and dataset:
+                        await asyncio.to_thread(
+                            _upload_reports_sync, output_dir, request_id, dataset
+                        )
+                        if canonical_output_dir and output_dir != canonical_output_dir:
+                            await asyncio.to_thread(
+                                _copy_run_to_canonical, output_dir, canonical_output_dir
+                            )
+            except asyncio.CancelledError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+                duration_sec = round(time.monotonic() - run_start_time, 2)
+                logger.info(
+                    "run_finished request_id=%s success=False cancelled=True duration_sec=%s",
+                    request_id,
+                    duration_sec,
+                )
+                yield json.dumps({
+                    "t": "done",
+                    "success": False,
+                    "exit_code": -1,
+                    "output": "[INFO] Validation cancelled by user.\n",
+                    "cancelled": True,
+                    "run_id": request_id,
+                    "failure_code": "RUN_CANCELLED",
+                    "failure_step": None,
+                    "failure_message": "Validation cancelled by user.",
+                }) + "\n"
+            finally:
+                if timeout_task is not None:
+                    timeout_task.cancel()
+                    try:
+                        await timeout_task
+                    except asyncio.CancelledError:
+                        pass
+                if config_path and config_path.exists():
+                    config_path.unlink(missing_ok=True)
+                # Remove per-run and extra dirs after streaming ends (subprocess has exited).
+                # Runs on all exit paths: normal completion, timeout, and user cancellation.
+                # Wrapped in to_thread so shutil.rmtree does not block the event loop while
+                # Starlette is flushing the final HTTP chunk to the client.
+                await asyncio.to_thread(
+                    _cleanup_run_dirs, output_dir, canonical_output_dir, extra_cleanup_dirs, request_id
+                )
+
+        return StreamingResponse(
+            gen(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    # ── Non-streaming path ───────────────────────────────────────────────────────────
+    # setup_gen / args_fn are not used here; the caller is responsible for any pre-run
+    # setup when stream=False (GCS mode always uses the streaming endpoint in practice).
     proc = await asyncio.create_subprocess_exec(
         *args,
         cwd=str(app_root),
@@ -402,158 +620,6 @@ async def _run_validation_process_impl(
         env=env,
     )
     try:
-        if stream:
-            request_id = getattr(request.state, "request_id", "")
-            run_timed_out = False
-
-            async def gen():
-                nonlocal proc, run_timed_out
-                async def timeout_killer():
-                    nonlocal run_timed_out
-                    await asyncio.sleep(timeout_sec)
-                    if proc.returncode is None:
-                        run_timed_out = True
-                        try:
-                            proc.kill()
-                        except ProcessLookupError:
-                            pass
-                        logger.warning("validation run timed out after %s sec request_id=%s", timeout_sec, request_id)
-
-                timeout_task = asyncio.create_task(timeout_killer()) if timeout_sec > 0 else None
-                done_yielded = False
-                try:
-                    async for chunk in _stream_run_output(proc):
-                        needs_post_yield_upload = False
-                        try:
-                            obj = json.loads(chunk) if chunk.strip() else {}
-                            if obj.get("t") == "done":
-                                done_yielded = True
-                                if run_timed_out:
-                                    obj["timeout"] = True
-                                    obj["success"] = False
-                                    obj["exit_code"] = -1
-                                    obj["failure_code"] = "RUN_TIMEOUT"
-                                    obj["failure_step"] = None
-                                    obj["failure_message"] = "Validation run timed out."
-                                elif (
-                                    not obj.get("success")
-                                    and not obj.get("cancelled")
-                                    and not obj.get("failure_code")
-                                    and output_dir is not None
-                                    and not (output_dir / "validation_output.json").exists()
-                                ):
-                                    obj["failure_code"] = "OOM_SUSPECTED"
-                                    obj["failure_step"] = None
-                                    obj["failure_message"] = (
-                                        "Validation terminated unexpectedly. The dataset may be too large"
-                                        " for the current server memory limit."
-                                    )
-                                duration_sec = round(time.monotonic() - run_start_time, 2)
-                                logger.info(
-                                    "run_finished request_id=%s success=%s cancelled=%s duration_sec=%s",
-                                    request_id,
-                                    obj.get("success"),
-                                    obj.get("cancelled"),
-                                    duration_sec,
-                                )
-                                # Add run_id and any caller-supplied fields (e.g. baseline_id)
-                                obj["run_id"] = request_id
-                                if extra_done_fields:
-                                    obj.update(extra_done_fields)
-                                chunk = json.dumps(obj) + "\n"
-                                # GCS upload happens after yielding done so the client receives
-                                # the final result immediately, before the upload delay.
-                                needs_post_yield_upload = bool(output_dir and dataset)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                        yield chunk
-                        # Upload to GCS after yielding done so the client already has the result.
-                        # Runs only once (needs_post_yield_upload is only set on the done event).
-                        if needs_post_yield_upload:
-                            await asyncio.to_thread(
-                                _upload_reports_sync, output_dir, request_id, dataset
-                            )
-                            if canonical_output_dir and output_dir != canonical_output_dir:
-                                await asyncio.to_thread(
-                                    _copy_run_to_canonical, output_dir, canonical_output_dir
-                                )
-                    # If we timed out and the subprocess never sent "done", emit a synthetic done so UI gets structured failure
-                    if run_timed_out and not done_yielded:
-                        duration_sec = round(time.monotonic() - run_start_time, 2)
-                        logger.info(
-                            "run_finished request_id=%s success=False timeout=True duration_sec=%s",
-                            request_id,
-                            duration_sec,
-                        )
-                        synthetic = {
-                            "t": "done",
-                            "success": False,
-                            "exit_code": -1,
-                            "timeout": True,
-                            "run_id": request_id,
-                            "failure_code": "RUN_TIMEOUT",
-                            "failure_step": None,
-                            "failure_message": "Validation run timed out.",
-                        }
-                        yield json.dumps(synthetic) + "\n"
-                        # Upload after yielding so the client already has the timeout result.
-                        if output_dir and dataset:
-                            await asyncio.to_thread(
-                                _upload_reports_sync, output_dir, request_id, dataset
-                            )
-                            if canonical_output_dir and output_dir != canonical_output_dir:
-                                await asyncio.to_thread(
-                                    _copy_run_to_canonical, output_dir, canonical_output_dir
-                                )
-                except asyncio.CancelledError:
-                    try:
-                        proc.kill()
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
-                    duration_sec = round(time.monotonic() - run_start_time, 2)
-                    logger.info(
-                        "run_finished request_id=%s success=False cancelled=True duration_sec=%s",
-                        request_id,
-                        duration_sec,
-                    )
-                    yield json.dumps({
-                        "t": "done",
-                        "success": False,
-                        "exit_code": -1,
-                        "output": "[INFO] Validation cancelled by user.\n",
-                        "cancelled": True,
-                        "run_id": request_id,
-                        "failure_code": "RUN_CANCELLED",
-                        "failure_step": None,
-                        "failure_message": "Validation cancelled by user.",
-                    }) + "\n"
-                finally:
-                    if timeout_task is not None:
-                        timeout_task.cancel()
-                        try:
-                            await timeout_task
-                        except asyncio.CancelledError:
-                            pass
-                    if config_path and config_path.exists():
-                        config_path.unlink(missing_ok=True)
-                    # Remove per-run and extra dirs after streaming ends (subprocess has exited).
-                    # Runs on all exit paths: normal completion, timeout, and user cancellation.
-                    # Wrapped in to_thread so shutil.rmtree does not block the event loop while
-                    # Starlette is flushing the final HTTP chunk to the client.
-                    await asyncio.to_thread(
-                        _cleanup_run_dirs, output_dir, canonical_output_dir, extra_cleanup_dirs, request_id
-                    )
-
-            return StreamingResponse(
-                gen(),
-                media_type="application/x-ndjson",
-                headers={"Cache-Control": "no-cache"},
-            )
-
         async def wait_disconnect():
             while True:
                 msg = await request.receive()
@@ -693,9 +759,7 @@ async def _run_validation_process_impl(
                 )
         return result
     finally:
-        if not stream and config_path and config_path.exists():
+        # Non-streaming only: streaming cleanup is handled inside gen()'s finally block.
+        if config_path and config_path.exists():
             config_path.unlink(missing_ok=True)
-        # Non-streaming: subprocess has exited (we awaited it), safe to remove dirs.
-        # Streaming: the generator's finally handles cleanup instead (see above).
-        if not stream:
-            _cleanup_run_dirs(output_dir, canonical_output_dir, extra_cleanup_dirs, request_id)
+        _cleanup_run_dirs(output_dir, canonical_output_dir, extra_cleanup_dirs, request_id)

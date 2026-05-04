@@ -296,6 +296,44 @@ async def _stream_upload_to_file(
     await asyncio.to_thread(_copy)
 
 
+def _validate_gcs_uri(uri: str) -> str | None:
+    """Return an error message if uri is not a valid gs:// URI, else None."""
+    if not uri.startswith("gs://"):
+        return f"GCS path must start with gs://: {uri!r}"
+    without_scheme = uri[5:]
+    bucket, _, blob = without_scheme.partition("/")
+    if not bucket:
+        return f"GCS path is missing bucket name: {uri!r}"
+    if not blob:
+        return f"GCS path is missing object path: {uri!r}"
+    return None
+
+
+async def _download_gcs_uri(uri: str, dest: Path) -> None:
+    """Download a GCS object to dest. Raises HTTPException on permission or not-found errors."""
+    logger.info("gcs_download uri=%s", uri)
+
+    def _do() -> None:
+        try:
+            from google.cloud import storage
+        except ImportError as exc:
+            raise RuntimeError("google-cloud-storage is not installed") from exc
+        bucket_name, _, blob_path = uri[5:].partition("/")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        storage.Client().bucket(bucket_name).blob(blob_path).download_to_filename(str(dest))
+
+    try:
+        await asyncio.to_thread(_do)
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        name = type(exc).__name__
+        if name == "NotFound" or code == 404:
+            raise HTTPException(status_code=400, detail=f"GCS file not found: {uri}")
+        if name in ("Forbidden", "PermissionDenied") or code == 403:
+            raise HTTPException(status_code=400, detail=f"Permission denied accessing GCS file: {uri}")
+        raise HTTPException(status_code=500, detail=f"Failed to download {uri}: {exc}")
+
+
 def _validated_llm_model(model: str | None) -> str | None:
     """Return model if it is in the allowlist, else None (caller falls back to the script default).
     Prevents unvalidated user input from reaching the Gemini API as a model identifier.
@@ -616,15 +654,18 @@ async def _run_custom_validation_impl(
     existence_checks: str | None = None,
     session_id: str | None = None,
     custom_rules: list[dict] | None = None,
+    tmcf_gcs_path: str | None = None,
+    csv_gcs_paths: str | None = None,
+    stat_vars_mcf_gcs_path: str | None = None,
+    stat_vars_schema_mcf_gcs_path: str | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream.
 
-    Supports two file-delivery modes:
-    - Direct upload: tmcf and csv are UploadFile objects (existing behaviour).
-    - GCS session:   session_id is set; files are downloaded from GCS (Cloud Run
-                     large-file path — bypasses the 32 MB HTTP body limit).
-
-    Either session_id OR (tmcf + csv) must be supplied; never both.
+    Supports three file-delivery modes (mutually exclusive):
+    - Direct upload:  tmcf and csv are UploadFile objects (default).
+    - GCS session:    session_id is set; files downloaded from GCS signed-URL session.
+    - GCS input paths: tmcf_gcs_path / csv_gcs_paths provided; files downloaded
+                      directly from GCS using the service account (no upload needed).
     """
     script = SCRIPT_DIR / "run_e2e_test.sh"
     if not script.exists():
@@ -643,6 +684,9 @@ async def _run_custom_validation_impl(
 
     max_bytes = MAX_UPLOAD_BYTES
     _size_display = "100 GB"
+    # For GCS input path mode (streaming only): generator + lazy args builder defined below.
+    _gcs_setup_gen = None
+    _gcs_args_fn = None
 
     try:
         if session_id:
@@ -669,6 +713,93 @@ async def _run_custom_validation_impl(
             # Kick off background GCS session cleanup (non-blocking, best-effort).
             # The files have been copied to local disk so the session is no longer needed.
             asyncio.create_task(_safe_delete_session(session_id))
+
+        elif tmcf_gcs_path or csv_gcs_paths:
+            # ── GCS input path mode: download files from caller-supplied gs:// URIs ──
+            if tmcf or (csv and any(f.filename for f in csv)):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot mix file uploads and GCS input paths — use one mode only",
+                )
+
+            tmcf_gcs_path = (tmcf_gcs_path or "").strip()
+            csv_gcs_paths = (csv_gcs_paths or "").strip()
+            stat_vars_mcf_gcs_path = (stat_vars_mcf_gcs_path or "").strip() or None
+            stat_vars_schema_mcf_gcs_path = (stat_vars_schema_mcf_gcs_path or "").strip() or None
+
+            if not tmcf_gcs_path:
+                raise HTTPException(status_code=400, detail="tmcf_gcs_path is required")
+
+            # Split and reject empty entries (e.g. accidental double commas).
+            csv_uri_list = [u.strip() for u in csv_gcs_paths.split(",")]
+            empty_count = csv_uri_list.count("")
+            csv_uri_list = [u for u in csv_uri_list if u]
+            if not csv_uri_list:
+                raise HTTPException(status_code=400, detail="csv_gcs_paths is required (comma-separated gs:// URIs)")
+            if empty_count:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"csv_gcs_paths contains {empty_count} empty entr{'y' if empty_count == 1 else 'ies'} — check for accidental commas",
+                )
+
+            # Validate all URIs up front before any download attempt.
+            all_uris: list[str] = [tmcf_gcs_path] + csv_uri_list
+            if stat_vars_mcf_gcs_path:
+                all_uris.append(stat_vars_mcf_gcs_path)
+            if stat_vars_schema_mcf_gcs_path:
+                all_uris.append(stat_vars_schema_mcf_gcs_path)
+            for uri in all_uris:
+                err = _validate_gcs_uri(uri)
+                if err:
+                    raise HTTPException(status_code=400, detail=err)
+
+            if stream:
+                # Streaming: defer downloads into the generator so progress lines are emitted
+                # in real-time before the subprocess starts.
+                csv_paths: list[Path] = []
+
+                async def _gcs_download_gen():
+                    yield json.dumps({"t": "line", "v": "Downloading files from GCS..."}) + "\n"
+                    logger.info("gcs_input_download tmcf=%s request_id=%s", tmcf_gcs_path, request_id)
+                    yield json.dumps({"t": "line", "v": f"  {Path(tmcf_gcs_path).name}"}) + "\n"
+                    await _download_gcs_uri(tmcf_gcs_path, tmcf_path)
+                    for _i, _csv_uri in enumerate(csv_uri_list):
+                        _raw = Path(_csv_uri).name
+                        _safe = re.sub(r"[^A-Za-z0-9._-]", "_", _raw) if _raw else ""
+                        _dest = csvs_dir / (_safe if _safe.lower().endswith(".csv") else f"input_{_i:02d}.csv")
+                        logger.info("gcs_input_download csv[%d]=%s request_id=%s", _i, _csv_uri, request_id)
+                        yield json.dumps({"t": "line", "v": f"  {Path(_csv_uri).name}"}) + "\n"
+                        await _download_gcs_uri(_csv_uri, _dest)
+                        csv_paths.append(_dest)
+                    if stat_vars_mcf_gcs_path:
+                        logger.info("gcs_input_download stat_vars_mcf=%s request_id=%s", stat_vars_mcf_gcs_path, request_id)
+                        yield json.dumps({"t": "line", "v": f"  {Path(stat_vars_mcf_gcs_path).name} (StatVars MCF)"}) + "\n"
+                        await _download_gcs_uri(stat_vars_mcf_gcs_path, stat_vars_mcf_path)
+                    if stat_vars_schema_mcf_gcs_path:
+                        logger.info("gcs_input_download stat_vars_schema_mcf=%s request_id=%s", stat_vars_schema_mcf_gcs_path, request_id)
+                        yield json.dumps({"t": "line", "v": f"  {Path(stat_vars_schema_mcf_gcs_path).name} (StatVars Schema MCF)"}) + "\n"
+                        await _download_gcs_uri(stat_vars_schema_mcf_gcs_path, stat_vars_schema_mcf_path)
+                    yield json.dumps({"t": "line", "v": "Download complete. Starting validation..."}) + "\n"
+
+                _gcs_setup_gen = _gcs_download_gen
+            else:
+                # Non-streaming: download synchronously now (no progress feedback needed).
+                logger.info("gcs_input_download tmcf=%s request_id=%s", tmcf_gcs_path, request_id)
+                await _download_gcs_uri(tmcf_gcs_path, tmcf_path)
+                csv_paths = []
+                for i, csv_uri in enumerate(csv_uri_list):
+                    raw_name = Path(csv_uri).name
+                    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", raw_name) if raw_name else ""
+                    csv_save_path = csvs_dir / (safe_name if safe_name.lower().endswith(".csv") else f"input_{i:02d}.csv")
+                    logger.info("gcs_input_download csv[%d]=%s request_id=%s", i, csv_uri, request_id)
+                    await _download_gcs_uri(csv_uri, csv_save_path)
+                    csv_paths.append(csv_save_path)
+                if stat_vars_mcf_gcs_path:
+                    logger.info("gcs_input_download stat_vars_mcf=%s request_id=%s", stat_vars_mcf_gcs_path, request_id)
+                    await _download_gcs_uri(stat_vars_mcf_gcs_path, stat_vars_mcf_path)
+                if stat_vars_schema_mcf_gcs_path:
+                    logger.info("gcs_input_download stat_vars_schema_mcf=%s request_id=%s", stat_vars_schema_mcf_gcs_path, request_id)
+                    await _download_gcs_uri(stat_vars_schema_mcf_gcs_path, stat_vars_schema_mcf_path)
 
         else:
             # ── Direct upload path: stream UploadFile objects to disk ────────────────
@@ -748,30 +879,41 @@ async def _run_custom_validation_impl(
     )
 
     try:
-        args = ["bash", str(script), "custom", f"--tmcf={tmcf_path}"]
-        for _csv_path in csv_paths:
-            args.append(f"--csv={_csv_path}")
-        args.append(f"--baseline-name={baseline_name}")
-        if stat_vars_mcf_path.exists():
-            args.append(f"--stat-vars-mcf={stat_vars_mcf_path}")
-        if stat_vars_schema_mcf_path.exists():
-            args.append(f"--stat-vars-schema-mcf={stat_vars_schema_mcf_path}")
-        if config_path:
-            args.extend([f"--config={config_path}"])
         llm_enabled = _llm_review_enabled(llm_review)
-        if llm_enabled:
-            args.append("--llm-review")
-            validated_model = _validated_llm_model(llm_model)
-            if validated_model:
-                args.append(f"--model={validated_model}")
-        else:
-            args.append("--no-llm-review")
+        validated_model = _validated_llm_model(llm_model) if llm_enabled else None
+        if not llm_enabled:
             logger.info("LLM review disabled for this run")
+
+        def _build_args() -> list[str]:
+            _a = ["bash", str(script), "custom", f"--tmcf={tmcf_path}"]
+            for _csv_path in csv_paths:
+                _a.append(f"--csv={_csv_path}")
+            _a.append(f"--baseline-name={baseline_name}")
+            if stat_vars_mcf_path.exists():
+                _a.append(f"--stat-vars-mcf={stat_vars_mcf_path}")
+            if stat_vars_schema_mcf_path.exists():
+                _a.append(f"--stat-vars-schema-mcf={stat_vars_schema_mcf_path}")
+            if config_path:
+                _a.extend([f"--config={config_path}"])
+            if llm_enabled:
+                _a.append("--llm-review")
+                if validated_model:
+                    _a.append(f"--model={validated_model}")
+            else:
+                _a.append("--no-llm-review")
+            return _a
+
+        # For GCS streaming, args are built lazily after downloads complete inside the generator.
+        # For all other cases, build args immediately (csv_paths is already populated).
+        if _gcs_setup_gen is not None:
+            _gcs_args_fn = _build_args
+
         # request_id was already extracted for the upload dir above; reuse it here.
         output_dir = (OUTPUT_DIR / "custom" / request_id) if request_id else DATASET_OUTPUT_MAP["custom"]
         canonical_output_dir = DATASET_OUTPUT_MAP["custom"]
         return await _run_validation_process(
-            args, request, config_path, stream=stream, app_root=APP_ROOT,
+            [] if _gcs_args_fn is not None else _build_args(),
+            request, config_path, stream=stream, app_root=APP_ROOT,
             output_dir=output_dir, dataset="custom", canonical_output_dir=canonical_output_dir,
             # Pass run_upload_dir so the runner cleans it after the subprocess exits.
             # For streaming runs this happens in the generator's finally; for non-streaming
@@ -780,6 +922,8 @@ async def _run_custom_validation_impl(
             # baseline_id lets the UI call /api/accept-baseline/custom with the right dataset_id.
             extra_done_fields={"baseline_id": baseline_name},
             extra_env=extra_env,
+            setup_gen=_gcs_setup_gen,
+            args_fn=_gcs_args_fn,
         )
     except HTTPException:
         # Runner raised before or during startup (e.g. 429). Clean up locally since the
@@ -810,13 +954,17 @@ async def run_custom_validation_stream(
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
     custom_rules_json: str | None = Form(None),
+    tmcf_gcs_path: str | None = Form(None),
+    csv_gcs_paths: str | None = Form(None),
+    stat_vars_mcf_gcs_path: str | None = Form(None),
+    stat_vars_schema_mcf_gcs_path: str | None = Form(None),
 ):
     """Run validation with streaming output.
 
-    Supports two file-delivery modes:
-    - Direct upload: include tmcf and csv as multipart file fields (default).
-    - GCS session:   include session_id (from /api/prepare-upload) without file fields;
-                     the server downloads the files from GCS before running validation.
+    Supports three file-delivery modes (mutually exclusive):
+    - Direct upload:    tmcf and csv as multipart file fields (default).
+    - GCS session:      session_id from /api/prepare-upload.
+    - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -834,6 +982,9 @@ async def run_custom_validation_stream(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=True,
         dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
         custom_rules=custom_rules,
+        tmcf_gcs_path=tmcf_gcs_path, csv_gcs_paths=csv_gcs_paths,
+        stat_vars_mcf_gcs_path=stat_vars_mcf_gcs_path,
+        stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
     )
 
 
@@ -851,12 +1002,17 @@ async def run_custom_validation(
     dataset_name: str | None = Form(None),
     existence_checks: str | None = Form(None),
     custom_rules_json: str | None = Form(None),
+    tmcf_gcs_path: str | None = Form(None),
+    csv_gcs_paths: str | None = Form(None),
+    stat_vars_mcf_gcs_path: str | None = Form(None),
+    stat_vars_schema_mcf_gcs_path: str | None = Form(None),
 ):
     """Run validation (non-streaming).
 
-    Supports two file-delivery modes:
-    - Direct upload: include tmcf and csv as multipart file fields (default).
-    - GCS session:   include session_id (from /api/prepare-upload) without file fields.
+    Supports three file-delivery modes (mutually exclusive):
+    - Direct upload:    tmcf and csv as multipart file fields (default).
+    - GCS session:      session_id from /api/prepare-upload.
+    - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -874,6 +1030,9 @@ async def run_custom_validation(
         request, tmcf, csv, stat_vars_mcf, stat_vars_schema_mcf, rules, llm_review, llm_model, stream=False,
         dataset_name=dataset_name, existence_checks=existence_checks, session_id=session_id,
         custom_rules=custom_rules,
+        tmcf_gcs_path=tmcf_gcs_path, csv_gcs_paths=csv_gcs_paths,
+        stat_vars_mcf_gcs_path=stat_vars_mcf_gcs_path,
+        stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
     )
 
 
