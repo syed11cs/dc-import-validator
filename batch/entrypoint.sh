@@ -131,12 +131,16 @@ write_status() {
     local status="$3"
     local failure_code="${4:-}"
     local failure_message="${5:-}"
+    # failure_details_json: a JSON-encoded value (object, array, or literal null).
+    # Defaults to null so intermediate "running" writes are unaffected.
+    local failure_details_json="${6:-null}"
 
     STEP="$step" \
     STEP_LABEL="$step_label" \
     STATUS="$status" \
     FAILURE_CODE="$failure_code" \
     FAILURE_MESSAGE="$failure_message" \
+    FAILURE_DETAILS_JSON="$failure_details_json" \
     STARTED_AT="$STARTED_AT" \
     python3 -c "
 import json, os
@@ -145,6 +149,14 @@ from google.cloud import storage
 
 client = storage.Client()
 bucket = client.bucket(os.environ['GCS_REPORTS_BUCKET'])
+
+# Parse the pre-serialised details value back to a Python object so it is
+# stored as structured JSON (not a string) in status.json.
+_details_raw = os.environ.get('FAILURE_DETAILS_JSON', 'null')
+try:
+    failure_details = json.loads(_details_raw)
+except (json.JSONDecodeError, ValueError):
+    failure_details = None
 
 data = {
     'run_id':          os.environ['RUN_ID'],
@@ -158,6 +170,7 @@ data = {
     'updated_at':      datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     'failure_code':    os.environ['FAILURE_CODE'] or None,
     'failure_message': os.environ['FAILURE_MESSAGE'] or None,
+    'failure_details': failure_details,
 }
 
 blob = bucket.blob('jobs/' + os.environ['RUN_ID'] + '/status.json')
@@ -387,26 +400,26 @@ log "Pipeline exited with code ${PIPELINE_EXIT}"
 
 FAILURE_CODE=""
 FAILURE_MESSAGE=""
+FAILURE_DETAILS_JSON="null"   # JSON-encoded details object, or literal null
 
 if [[ $PIPELINE_EXIT -ne 0 ]]; then
     # Priority 1: structured failure event captured from pipeline stdout.
+    # Extract code, message, and details in a single Python call (one file read).
     if [[ -f "$FAILURE_EVENT_FILE" ]]; then
-        FAILURE_CODE="$(python3 -c "
+        _extracted="$(python3 -c "
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    print(d.get('code', ''))
+    code    = d.get('code', '')
+    message = d.get('message', '')
+    details = d.get('details')   # present for CSV_QUALITY_FAILED, PREFLIGHT_FAILED
+    # Print tab-separated so we can split on the shell side without ambiguity.
+    # details is re-serialised so newlines inside values don't break the split.
+    print(code + '\t' + message + '\t' + (json.dumps(details) if details is not None else 'null'))
 except Exception:
-    pass
-" "$FAILURE_EVENT_FILE" 2>/dev/null || true)"
-        FAILURE_MESSAGE="$(python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(d.get('message', ''))
-except Exception:
-    pass
-" "$FAILURE_EVENT_FILE" 2>/dev/null || true)"
+    print('\t\tnull')
+" "$FAILURE_EVENT_FILE" 2>/dev/null || printf '\t\tnull')"
+        IFS=$'\t' read -r FAILURE_CODE FAILURE_MESSAGE FAILURE_DETAILS_JSON <<< "$_extracted"
     fi
 
     # Priority 2: pipeline_failure.json written by ensure_failure_report() in
@@ -519,7 +532,7 @@ if [[ $PIPELINE_EXIT -eq 0 ]]; then
     write_status "4" "Results" "succeeded"
 else
     log "Validation failed: code=${FAILURE_CODE}"
-    write_status "4" "Results" "failed" "$FAILURE_CODE" "$FAILURE_MESSAGE"
+    write_status "4" "Results" "failed" "$FAILURE_CODE" "$FAILURE_MESSAGE" "$FAILURE_DETAILS_JSON"
 fi
 
 exit $PIPELINE_EXIT
