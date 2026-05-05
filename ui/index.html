@@ -1566,6 +1566,29 @@
           <label for="existence-checks-toggle">Enable Data Commons existence checks</label>
         </div>
         <p class="existence-checks-hint">Validates DCIDs against the Data Commons KG. Disabled by default for performance.</p>
+        <div style="margin-top: 10px;">
+          <label for="machine-type-select" style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Machine type</label>
+          <select id="machine-type-select" style="width: 100%; font-size: 0.82rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+            <option value="">Auto (based on file size)</option>
+            <option value="n2-highmem-16">n2-highmem-16 (16 vCPU, 128 GB) — &lt;5 GB</option>
+            <option value="n2-highmem-32">n2-highmem-32 (32 vCPU, 256 GB) — 5–20 GB</option>
+            <option value="n2-highmem-64">n2-highmem-64 (64 vCPU, 512 GB) — &gt;20 GB</option>
+          </select>
+        </div>
+        <div style="margin-top: 8px;">
+          <label for="processing-mode-select" style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Processing mode</label>
+          <select id="processing-mode-select" style="width: 100%; font-size: 0.82rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+            <option value="auto">Auto (50% of vCPUs)</option>
+            <option value="conservative">Conservative (30% of vCPUs)</option>
+            <option value="aggressive">Aggressive (75% of vCPUs)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div id="custom-threads-row" style="margin-top: 8px; display: none;">
+          <label for="java-threads-input" style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Java threads</label>
+          <input type="number" id="java-threads-input" min="1" max="64" value="8"
+            style="width: 80px; font-size: 0.82rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);" />
+        </div>
       </div>
       </div>
       <div class="sidebar-footer">
@@ -3303,6 +3326,22 @@
      * Throws DOMException('AbortError') when signal fires — triggers the
      * existing cancel UI path in runValidation's catch block.
      */
+    // Show/hide custom threads input based on selected processing mode.
+    document.getElementById('processing-mode-select')?.addEventListener('change', function () {
+      const row = document.getElementById('custom-threads-row');
+      if (row) row.style.display = this.value === 'custom' ? 'block' : 'none';
+    });
+
+    /** Read machine type / processing mode / java_threads from the Import Options UI. */
+    function _getPerfOpts() {
+      const machineType = document.getElementById('machine-type-select')?.value || '';
+      const processingMode = document.getElementById('processing-mode-select')?.value || 'auto';
+      const javaThreads = processingMode === 'custom'
+        ? (parseInt(document.getElementById('java-threads-input')?.value || '0', 10) || 0)
+        : 0;
+      return { machine_type_override: machineType, processing_mode: processingMode, java_threads: javaThreads };
+    }
+
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
       // Submit. Wrapped in try/catch so an abort that fires mid-submission still
       // cancels the server job: runId is generated locally and sent to the server
@@ -3334,6 +3373,9 @@
             import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
             existence_checks: opts.existence_checks || 'false',
             custom_rules: opts.custom_rules || [],
+            machine_type_override: opts.machine_type_override || '',
+            processing_mode: opts.processing_mode || 'auto',
+            java_threads: opts.java_threads || 0,
           }),
           signal,
         });
@@ -3585,6 +3627,7 @@
             import_resolution_mode: 'LOCAL',
             existence_checks: existenceChecks,
             custom_rules: selectedCustomRules,
+            ..._getPerfOpts(),
           }, runAbortController.signal);
         } else if (runDataset === 'custom') {
           if (!customTmcfFile || customCsvFiles.length === 0) {
@@ -3705,6 +3748,7 @@
               import_resolution_mode: 'LOCAL',
               existence_checks: existenceChecks,
               custom_rules: selectedCustomRules,
+              ..._getPerfOpts(),
             }, runAbortController.signal);
 
           } else {
@@ -3765,6 +3809,7 @@
             import_resolution_mode: 'LOCAL',
             existence_checks: existenceChecks,
             custom_rules: selectedCustomRules,
+            ..._getPerfOpts(),
           }, runAbortController.signal);
         }
         _activeStepStartMs = null;

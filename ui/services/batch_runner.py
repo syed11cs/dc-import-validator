@@ -52,6 +52,36 @@ _TIERS = [
 ]
 _DEFAULT_TIER = ("n2-highmem-16", 2 * 3600)  # fallback when size unknown
 
+# ---------------------------------------------------------------------------
+# Performance tuning tables
+# ---------------------------------------------------------------------------
+# vCPU counts per machine type — used to compute JAVA_THREADS.
+_VCPUS_BY_MACHINE: dict[str, int] = {
+    "n2-highmem-16": 16,
+    "n2-highmem-32": 32,
+    "n2-highmem-64": 64,
+}
+
+# JVM -Xmx per machine type: machine_RAM * 0.75, rounded to nearest GB.
+_JVM_XMX_BY_MACHINE: dict[str, str] = {
+    "n2-highmem-16": "96g",   # 128 GB * 0.75
+    "n2-highmem-32": "192g",  # 256 GB * 0.75
+    "n2-highmem-64": "384g",  # 512 GB * 0.75
+}
+
+# Thread fraction of total vCPUs per processing mode.
+# Capped at 0.75 — G1GC background threads claim ~vCPUs/4 concurrently.
+_THREAD_FRACTION_BY_MODE: dict[str, float] = {
+    "auto":         0.50,
+    "conservative": 0.30,
+    "aggressive":   0.75,
+}
+
+# Max run seconds by machine type — used when a machine is explicitly requested.
+_MAX_RUN_SECONDS_BY_MACHINE: dict[str, int] = {
+    mt: s for _, mt, s in _TIERS
+}
+
 
 @dataclass
 class InputFiles:
@@ -79,6 +109,9 @@ class InputFiles:
     baseline_name: str = ""
     import_resolution_mode: str = "LOCAL"
     import_existence_checks: str = "false"
+    # Performance tuning
+    processing_mode: str = "auto"   # "auto" | "conservative" | "aggressive" | "custom"
+    java_threads: int = 0           # 0 = compute from processing_mode; >0 = explicit override
     # GCS URI of a pre-merged validation config (gs://bucket/configs/{run_id}/...).
     # Set when custom SQL rules are present; the Batch VM downloads and passes --config=.
     merged_config_gcs_path: str = ""
@@ -131,7 +164,7 @@ def _batch_client(region: str) -> batch_v1.BatchServiceClient:
     return batch_v1.BatchServiceClient()
 
 
-def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles) -> dict:
+def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_type: str = "") -> dict:
     """Build the env var dict to inject into the Batch container."""
     env = {
         # Required by entrypoint.sh
@@ -180,10 +213,77 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles) -> dict:
     if input_files.merged_config_gcs_path:
         env["MERGED_CONFIG_GCS_PATH"] = input_files.merged_config_gcs_path
 
-    # Java concurrency
-    java_threads = os.environ.get("JAVA_THREADS", "")
-    if java_threads:
-        env["JAVA_THREADS"] = java_threads
+    # Java concurrency: derive JAVA_THREADS and JAVA_XMX.
+    #
+    # JAVA_XMX: always set from machine type when known so we never silently rely on the
+    # JVM default (25% of RAM). Falls back to Cloud Run env, then leaves unset (shell
+    # defaults to 96g — the n2-highmem-16 value).
+    if machine_type in _JVM_XMX_BY_MACHINE:
+        env["JAVA_XMX"] = _JVM_XMX_BY_MACHINE[machine_type]
+    elif xmx_env := os.environ.get("JAVA_XMX", ""):
+        env["JAVA_XMX"] = xmx_env
+    # else: leave unset — shell script JAVA_XMX="${JAVA_XMX:-96g}" provides the default
+    #
+    # JAVA_THREADS priority (highest to lowest):
+    #   1. JAVA_THREADS env var on Cloud Run (operator override — always wins)
+    #   2. input_files.java_threads > 0 (user-selected "custom" mode)
+    #   3. Computed from processing_mode fraction × machine vCPUs
+    #   4. Unset — shell script defaults to 2
+    _effective_mode = input_files.processing_mode or "auto"
+    if java_threads_env := os.environ.get("JAVA_THREADS", ""):
+        env["JAVA_THREADS"] = java_threads_env
+        # Warn when env is silently overriding a user-provided value so the UI choice
+        # is not misleadingly invisible in logs.
+        if input_files.java_threads > 0 and str(input_files.java_threads) != java_threads_env:
+            logger.warning(
+                "JAVA_THREADS env override (%s) is overriding user-provided value (%d) "
+                "[run_id=%s processing_mode=%s machine=%s]",
+                java_threads_env, input_files.java_threads, run_id, _effective_mode, machine_type,
+            )
+        elif input_files.java_threads == 0 and _effective_mode != "auto":
+            logger.info(
+                "JAVA_THREADS env override (%s) is overriding processing_mode=%s "
+                "[run_id=%s machine=%s]",
+                java_threads_env, _effective_mode, run_id, machine_type,
+            )
+        # Detect oversubscription — env override is not capped, but we warn when it
+        # exceeds the machine's vCPU count so operators can spot misconfiguration.
+        try:
+            _env_threads_int = int(java_threads_env)
+        except ValueError:
+            _env_threads_int = 0
+        if _env_threads_int > 0 and machine_type in _VCPUS_BY_MACHINE:
+            _vcpus = _VCPUS_BY_MACHINE[machine_type]
+            if _env_threads_int > _vcpus:
+                logger.warning(
+                    "JAVA_THREADS (%d) exceeds vCPU count (%d) for %s — "
+                    "this may cause CPU oversubscription [run_id=%s processing_mode=%s]",
+                    _env_threads_int, _vcpus, machine_type, run_id, _effective_mode,
+                )
+    elif input_files.java_threads > 0:
+        env["JAVA_THREADS"] = str(input_files.java_threads)
+    elif machine_type in _VCPUS_BY_MACHINE:
+        vcpus = _VCPUS_BY_MACHINE[machine_type]
+        if _effective_mode == "custom":
+            # processing_mode=custom but java_threads was 0 — fall back to auto.
+            logger.warning(
+                "processing_mode=custom but java_threads=0; falling back to auto mode "
+                "[run_id=%s machine=%s]",
+                run_id, machine_type,
+            )
+            _effective_mode = "auto"
+        fraction = _THREAD_FRACTION_BY_MODE.get(_effective_mode, _THREAD_FRACTION_BY_MODE["auto"])
+        threads = min(max(1, int(vcpus * fraction)), vcpus)
+        env["JAVA_THREADS"] = str(threads)
+
+    logger.info(
+        "genmcf env: machine=%s JAVA_THREADS=%s JAVA_XMX=%s processing_mode=%s [run_id=%s]",
+        machine_type or "unknown",
+        env.get("JAVA_THREADS", "unset(default=2)"),
+        env.get("JAVA_XMX", "unset(default=96g)"),
+        _effective_mode,
+        run_id,
+    )
 
     # Pass-through API keys (only if set on the server)
     for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "DC_API_KEY"):
@@ -215,13 +315,15 @@ def _resolve_image() -> str:
     return image
 
 
-def submit_job(run_id: str, dataset: str, input_files: InputFiles) -> str:
+def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_override: str = "") -> str:
     """Submit a Cloud Batch job for a validation run.
 
     Args:
-        run_id:      Unique run identifier (also used as job name seed).
-        dataset:     Dataset name (built-in name or "custom").
-        input_files: InputFiles describing uploaded files and pipeline options.
+        run_id:                Unique run identifier (also used as job name seed).
+        dataset:               Dataset name (built-in name or "custom").
+        input_files:           InputFiles describing uploaded files and pipeline options.
+        machine_type_override: If non-empty, bypass tier selection and use this machine type
+                               directly. Must be a key in _VCPUS_BY_MACHINE.
 
     Returns:
         Fully-qualified Batch job name (can be used with cancel_job / get_batch_state).
@@ -238,7 +340,11 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles) -> str:
         else batch_v1.AllocationPolicy.ProvisioningModel.STANDARD
     )
 
-    machine_type, max_run_seconds = _select_tier(input_files.csv_total_bytes)
+    if machine_type_override and machine_type_override in _VCPUS_BY_MACHINE:
+        machine_type = machine_type_override
+        max_run_seconds = _MAX_RUN_SECONDS_BY_MACHINE.get(machine_type, _DEFAULT_TIER[1])
+    else:
+        machine_type, max_run_seconds = _select_tier(input_files.csv_total_bytes)
     job_id   = _sanitize_job_id(run_id)
     job_name = _job_name(project, region, job_id)
 
@@ -249,7 +355,7 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles) -> str:
         input_files.csv_total_bytes, max_run_seconds, provisioning_model_name,
     )
 
-    env_vars = _build_env_vars(run_id, dataset, input_files)
+    env_vars = _build_env_vars(run_id, dataset, input_files, machine_type)
     env_vars["BATCH_JOB_NAME"] = job_name
     env_vars["VM_TYPE"]        = machine_type
 

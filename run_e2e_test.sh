@@ -50,6 +50,7 @@ export DATA_REPO
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 JAVA_THREADS="${JAVA_THREADS:-2}"
+JAVA_XMX="${JAVA_XMX:-96g}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -565,8 +566,13 @@ GENMCF_FILES=("$TMCF" "${CSVS[@]}")
 [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && GENMCF_FILES+=("$STAT_VARS_SCHEMA_MCF")
 GENMCF_LOG="$GENMCF_OUTPUT/genmcf.log"
 log_info "genmcf log file: $GENMCF_LOG"
+log_info "genmcf config: machine=${VM_TYPE:-unknown} JAVA_THREADS=${JAVA_THREADS} JAVA_XMX=${JAVA_XMX} csv_files=${#CSVS[@]} total_input_files=${#GENMCF_FILES[@]}"
+_CSV_COUNT=${#CSVS[@]}
+if (( _CSV_COUNT > 0 && JAVA_THREADS > _CSV_COUNT )); then
+  log_info "WARNING: JAVA_THREADS=${JAVA_THREADS} exceeds CSV file count (${_CSV_COUNT}); genmcf parallelizes per file, so extra threads will be idle"
+fi
 set +e
-java -XX:+UseG1GC \
+java -XX:+UseG1GC -Xmx"${JAVA_XMX}" \
   -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --num-threads="$JAVA_THREADS" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" \

@@ -3299,6 +3299,14 @@ class _SubmitJobRequest(BaseModel):
     existence_checks: str = "false"
     # Per-run custom SQL rules (not persisted; merged into the config for this run only).
     custom_rules: list[dict] = []
+    # Performance tuning (Batch only).
+    # machine_type_override: one of n2-highmem-16 / n2-highmem-32 / n2-highmem-64.
+    # Omit to let the server auto-select based on csv_total_bytes.
+    machine_type_override: str = ""
+    # processing_mode: auto | conservative | aggressive | custom.
+    processing_mode: str = "auto"
+    # java_threads: explicit thread count; required when processing_mode == "custom".
+    java_threads: int = 0
 
 
 @app.post("/api/jobs")
@@ -3355,6 +3363,48 @@ async def submit_batch_job(body: _SubmitJobRequest):
             if body.stat_vars_schema_mcf_gcs_path:
                 if err := _validate_gcs_uri(body.stat_vars_schema_mcf_gcs_path, "stat_vars_schema_mcf_gcs_path"):
                     raise HTTPException(status_code=400, detail=err)
+
+    # Performance tuning validation.
+    _ALLOWED_MACHINE_TYPES = set(_batch_runner._VCPUS_BY_MACHINE)
+    _ALLOWED_PROCESSING_MODES = {"auto", "conservative", "aggressive", "custom"}
+    if body.machine_type_override and body.machine_type_override not in _ALLOWED_MACHINE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid machine_type_override: {body.machine_type_override!r}. "
+                   f"Allowed: {sorted(_ALLOWED_MACHINE_TYPES)}",
+        )
+    if body.processing_mode not in _ALLOWED_PROCESSING_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid processing_mode: {body.processing_mode!r}. "
+                   f"Allowed: {sorted(_ALLOWED_PROCESSING_MODES)}",
+        )
+    if body.processing_mode == "custom":
+        if body.java_threads <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="java_threads must be > 0 when processing_mode is 'custom'",
+            )
+        # Upper-bound check: if machine_type_override is set, cap at that machine's vCPUs.
+        # Without an override, auto-tier selection runs at submission time — we don't know
+        # the actual machine here. Use the global maximum (largest supported machine) as the
+        # hard cap; _build_env_vars enforces the tighter per-machine cap at runtime.
+        if body.machine_type_override:
+            max_vcpus = _batch_runner._VCPUS_BY_MACHINE[body.machine_type_override]
+            if body.java_threads > max_vcpus:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"java_threads ({body.java_threads}) exceeds vCPU count for "
+                           f"{body.machine_type_override} ({max_vcpus})",
+                )
+        else:
+            global_max = max(_batch_runner._VCPUS_BY_MACHINE.values())  # 64
+            if body.java_threads > global_max:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"java_threads ({body.java_threads}) exceeds the maximum supported "
+                           f"vCPU count ({global_max})",
+                )
 
     if body.custom_rules:
         err = _validate_custom_rules(body.custom_rules)
@@ -3465,11 +3515,14 @@ async def submit_batch_job(body: _SubmitJobRequest):
         import_resolution_mode=body.import_resolution_mode,
         import_existence_checks=body.existence_checks,
         merged_config_gcs_path=merged_config_gcs_path,
+        processing_mode=body.processing_mode,
+        java_threads=body.java_threads,
     )
 
     try:
         job_name = await asyncio.to_thread(
-            _batch_runner.submit_job, run_id, dataset, input_files
+            _batch_runner.submit_job, run_id, dataset, input_files,
+            body.machine_type_override or "",
         )
     except KeyError as exc:
         # A required env var (BATCH_PROJECT_ID etc.) is not set.
