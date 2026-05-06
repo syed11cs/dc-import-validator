@@ -1385,9 +1385,13 @@
     .input-mode-btn { flex: 1; padding: 5px 10px; font-size: 0.75rem; font-family: inherit; background: transparent; border: none; color: var(--text-muted); cursor: pointer; transition: background var(--transition), color var(--transition); }
     .input-mode-btn.active { background: var(--accent); color: #fff; }
     .input-mode-btn:not(.active):hover { background: var(--surface); color: var(--text); }
-    .gcs-input-section input[type="text"] { width: 100%; box-sizing: border-box; font-size: 0.8rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; }
-    .gcs-input-section input[type="text"]::placeholder { color: var(--text-muted); opacity: 0.6; font-family: inherit; }
-    .gcs-input-section input[type="text"]:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
+    .gcs-input-section input[type="text"],
+    .gcs-input-section textarea { width: 100%; box-sizing: border-box; font-size: 0.8rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; }
+    .gcs-input-section input[type="text"]::placeholder,
+    .gcs-input-section textarea::placeholder { color: var(--text-muted); opacity: 0.6; font-family: inherit; }
+    .gcs-input-section input[type="text"]:focus,
+    .gcs-input-section textarea:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
+    .gcs-input-section textarea { resize: vertical; }
     .gcs-input-section label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; margin-top: 12px; }
     .gcs-input-section label:first-child { margin-top: 0; }
     .gcs-sa-hint { margin: 10px 0 0; font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
@@ -1549,7 +1553,7 @@
             <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
             <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" />
             <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
-            <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false" style="resize: vertical;"></textarea>
+            <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false"></textarea>
             <p class="field-hint">One path per line for multiple CSVs</p>
             <label>StatVars MCF <span style="font-size: 0.72rem; font-weight: 400;">(optional)</span></label>
             <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
