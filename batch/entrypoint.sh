@@ -72,6 +72,11 @@ VM_TYPE="${VM_TYPE:-}"
 export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 export JAVA_THREADS="${JAVA_THREADS:-2}"
+# CSV auto-split controls (passed through to run_e2e_test.sh; off by default).
+export CSV_SPLIT_ENABLED="${CSV_SPLIT_ENABLED:-false}"
+export CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-1000000}"
+export CSV_SPLIT_THRESHOLD_ROWS="${CSV_SPLIT_THRESHOLD_ROWS:-5000000}"
+export CSV_SPLIT_CLEANUP="${CSV_SPLIT_CLEANUP:-true}"
 
 # Never auto-update baselines from Batch: user accepts via the UI.
 export BASELINE_AUTO_UPDATE="false"

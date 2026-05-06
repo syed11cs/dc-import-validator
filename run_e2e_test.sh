@@ -51,6 +51,16 @@ export IMPORT_RESOLUTION_MODE="${IMPORT_RESOLUTION_MODE:-LOCAL}"
 export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 JAVA_THREADS="${JAVA_THREADS:-2}"
 JAVA_XMX="${JAVA_XMX:-96g}"
+# CSV auto-splitting: off by default; enable to split large single-CSV imports
+# into shards so genmcf --num-threads actually parallelizes (it is file-level only).
+# Expected improvement from splitting: roughly 2–5x on real-world datasets
+# (e.g. 30 min -> 6–15 min); actual gains depend on genmcf internals, disk I/O
+# bandwidth, and JVM GC behaviour and may be lower.
+CSV_SPLIT_ENABLED="${CSV_SPLIT_ENABLED:-false}"
+CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-1000000}"
+CSV_SPLIT_THRESHOLD_ROWS="${CSV_SPLIT_THRESHOLD_ROWS:-5000000}"
+# Set CSV_SPLIT_CLEANUP=false to preserve shards after Step 2 (useful for debugging).
+CSV_SPLIT_CLEANUP="${CSV_SPLIT_CLEANUP:-true}"
 BIN_DIR="$SCRIPT_DIR/bin"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 IMPORT_JAR_URL="https://github.com/datacommonsorg/import/releases/download/v0.3.0/datacommons-import-tool-0.3.0-jar-with-dependencies.jar"
@@ -519,6 +529,132 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
 fi
 
 # =============================================================================
+# Step 1.5: CSV Auto-Split (optional; off by default)
+# Splits a single large CSV into shards so genmcf --num-threads actually
+# parallelizes. genmcf thread-level parallelism is file-level: one thread per
+# CSV file. A single large CSV keeps all threads idle except one.
+#
+# Activate: CSV_SPLIT_ENABLED=true (env var; defaults to false)
+# Control:  CSV_SPLIT_ROWS=1000000         rows per shard
+#           CSV_SPLIT_THRESHOLD_ROWS=5000000  skip split if source < this
+#
+# Runs only when: enabled AND exactly 1 CSV input AND file is accessible.
+# Steps 0 and 1 (preflight, quality checks, LLM review) always run on the
+# original CSV before splitting.
+# After split: CSVS and CSV_ARGS are replaced with shard paths for Step 2+.
+# Shards live in $DATASET_OUTPUT/csv_shards/ and are cleaned up after Step 2.
+# =============================================================================
+_SHARD_DIR="$DATASET_OUTPUT/csv_shards"
+_SPLIT_MANIFEST="$_SHARD_DIR/manifest.json"
+_CSV_WAS_SPLIT=false
+
+if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
+  if [[ ${#CSVS[@]} -gt 1 ]]; then
+    log_info "CSV auto-split skipped: ${#CSVS[@]} CSV files already provided (splitting only applies to single-CSV inputs)"
+  elif [[ ${#CSVS[@]} -eq 0 || ! -f "${CSVS[0]}" ]]; then
+    log_info "CSV auto-split skipped: no accessible CSV file found"
+  else
+    log_info "CSV auto-split enabled (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)"
+    mkdir -p "$_SHARD_DIR"
+    set +e
+    $PYTHON "$SCRIPT_DIR/scripts/split_csv_for_genmcf.py" \
+      --input="${CSVS[0]}" \
+      --output-dir="$_SHARD_DIR" \
+      --rows-per-shard="$CSV_SPLIT_ROWS" \
+      --threshold-rows="$CSV_SPLIT_THRESHOLD_ROWS" \
+      --manifest="$_SPLIT_MANIFEST"
+    _SPLIT_EXIT=$?
+    set -e
+
+    if [[ $_SPLIT_EXIT -ne 0 ]]; then
+      log_error "CSV auto-split failed (exit $_SPLIT_EXIT)"
+      emit_failure "CSV_SPLIT_FAILED" 2 "CSV auto-splitting failed"
+      ensure_failure_report "CSV Split" "CSV auto-splitting failed"
+      exit 1
+    fi
+
+    if [[ ! -f "$_SPLIT_MANIFEST" ]]; then
+      log_warn "CSV split exited 0 but manifest not found — continuing without splitting"
+    else
+      _SPLIT_STATUS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('status','unknown'))" "$_SPLIT_MANIFEST" 2>/dev/null || echo "unknown")
+
+      if [[ "$_SPLIT_STATUS" == "done" ]]; then
+        _SHARD_COUNT=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('shard_count',0))" "$_SPLIT_MANIFEST")
+        _TOTAL_ROWS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('total_rows',0))" "$_SPLIT_MANIFEST")
+        _SPLIT_ELAPSED=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('elapsed_seconds',0))" "$_SPLIT_MANIFEST")
+        log_info "CSV auto-split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
+
+        if [[ $_SHARD_COUNT -eq 0 ]]; then
+          log_error "CSV split reported done but shard_count=0"
+          emit_failure "CSV_SPLIT_FAILED" 2 "CSV split produced no shards"
+          ensure_failure_report "CSV Split" "CSV split produced no shards"
+          exit 1
+        fi
+
+        # Replace CSVS array with shard paths.
+        # Preserve originals: future validation rules may need the full unsplit
+        # source (e.g. a rule that needs complete row ordering or cross-file
+        # deduplication). ORIGINAL_PRIMARY_CSV is also used for perf logging.
+        ORIGINAL_PRIMARY_CSV="${CSVS[0]}"
+        ORIGINAL_CSVS=("${CSVS[@]}")
+        CSVS=()
+        while IFS= read -r _shard_path; do
+          [[ -n "$_shard_path" ]] && CSVS+=("$_shard_path")
+        done < <($PYTHON -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print('\n'.join(d.get('shard_paths', [])))
+" "$_SPLIT_MANIFEST")
+
+        if [[ ${#CSVS[@]} -eq 0 ]]; then
+          log_error "Failed to read shard paths from manifest"
+          emit_failure "CSV_SPLIT_FAILED" 2 "Could not read shard paths"
+          ensure_failure_report "CSV Split" "Could not read shard paths from manifest"
+          exit 1
+        fi
+
+        # Rebuild CSV_ARGS for downstream scripts (Step 3 validation etc.)
+        CSV_ARGS=()
+        for _csv_arg in "${CSVS[@]}"; do
+          CSV_ARGS+=(--csv="$_csv_arg")
+        done
+
+        _CSV_WAS_SPLIT=true
+
+        # Compute size / shard stats for perf logging.
+        _ORIG_CSV_MB=$($PYTHON -c "
+import os, sys
+try:
+    print(int(os.path.getsize(sys.argv[1]) / (1024 * 1024)))
+except Exception:
+    print('unknown')
+" "$ORIGINAL_PRIMARY_CSV" 2>/dev/null || echo "unknown")
+        _AVG_ROWS_PER_SHARD=$(( _TOTAL_ROWS / ${#CSVS[@]} ))
+        if [[ "$_ORIG_CSV_MB" != "unknown" ]]; then
+          _AVG_MB_PER_SHARD=$(( _ORIG_CSV_MB / ${#CSVS[@]} ))
+        else
+          _AVG_MB_PER_SHARD="unknown"
+        fi
+
+        log_info "CSV split: original=$ORIGINAL_PRIMARY_CSV size=${_ORIG_CSV_MB}MB shards=${#CSVS[@]} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD} avg_mb_per_shard=${_AVG_MB_PER_SHARD}"
+
+        if (( JAVA_THREADS <= ${#CSVS[@]} )); then
+          log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (all threads can be utilized)"
+        else
+          log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (more shards than threads; some threads may process multiple shards sequentially)"
+        fi
+
+      elif [[ "$_SPLIT_STATUS" == "skipped" ]]; then
+        _SKIP_ROWS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('total_rows',0))" "$_SPLIT_MANIFEST" 2>/dev/null || echo "?")
+        log_info "CSV auto-split skipped: ${_SKIP_ROWS} rows < threshold $CSV_SPLIT_THRESHOLD_ROWS (no split needed)"
+      else
+        log_warn "CSV split returned unexpected status='$_SPLIT_STATUS' — continuing without splitting"
+      fi
+    fi
+  fi
+fi
+
+# =============================================================================
 # Step 2: Run dc-import genmcf
 # =============================================================================
 STEP2_START=$(date +%s)
@@ -568,6 +704,8 @@ GENMCF_LOG="$GENMCF_OUTPUT/genmcf.log"
 log_info "genmcf log file: $GENMCF_LOG"
 log_info "genmcf config: machine=${VM_TYPE:-unknown} JAVA_THREADS=${JAVA_THREADS} JAVA_XMX=${JAVA_XMX} csv_files=${#CSVS[@]} total_input_files=${#GENMCF_FILES[@]}"
 _CSV_COUNT=${#CSVS[@]}
+_EFFECTIVE_PARALLELISM=$(( _CSV_COUNT < JAVA_THREADS ? _CSV_COUNT : JAVA_THREADS ))
+log_info "genmcf execution mode: split=${_CSV_WAS_SPLIT} shards=${_CSV_COUNT} threads=${JAVA_THREADS} effective_parallelism=${_EFFECTIVE_PARALLELISM}"
 if (( _CSV_COUNT > 0 && JAVA_THREADS > _CSV_COUNT )); then
   log_info "WARNING: JAVA_THREADS=${JAVA_THREADS} exceeds CSV file count (${_CSV_COUNT}); genmcf parallelizes per file, so extra threads will be idle"
 fi
@@ -594,7 +732,81 @@ if [[ ! -f "$STATS_SUMMARY" ]]; then
 fi
 log_mem "step2_done"
 log_info "Generated: $STATS_SUMMARY, report.json"
-log_info "Step 2 completed in $(( $(date +%s) - STEP2_START ))s"
+_STEP2_SECONDS=$(( $(date +%s) - STEP2_START ))
+log_info "Step 2 completed in ${_STEP2_SECONDS}s"
+
+# Structured perf log — one line, key=value, for benchmark comparisons and
+# Cloud Logging queries. Emitted on every run (split and non-split) so the
+# two modes can be compared directly.
+#
+# rows_processed source:
+#   split run  — manifest total_rows (exact, pre-genmcf count)
+#   non-split  — sum of NumObservations from summary_report.csv (post-genmcf;
+#                excludes rows that failed to parse)
+_PERF_ROWS="unknown"
+if [[ "$_CSV_WAS_SPLIT" == "true" ]]; then
+  _PERF_ROWS="${_TOTAL_ROWS:-unknown}"
+elif [[ -f "$STATS_SUMMARY" ]]; then
+  _PERF_ROWS=$($PYTHON -c "
+import csv, sys
+try:
+    total = 0
+    with open(sys.argv[1]) as f:
+        for row in csv.DictReader(f):
+            n = (row.get('NumObservations') or row.get('numObservations') or '0').strip()
+            total += int(n) if n.isdigit() else 0
+    print(total)
+except Exception:
+    print('unknown')
+" "$STATS_SUMMARY" 2>/dev/null || echo "unknown")
+fi
+
+if [[ "$_PERF_ROWS" =~ ^[0-9]+$ && "$_STEP2_SECONDS" -gt 0 ]]; then
+  _PERF_RPS=$(( _PERF_ROWS / _STEP2_SECONDS ))
+else
+  _PERF_RPS="unknown"
+fi
+
+_PERF_RSS=$($PYTHON -c "
+try:
+    with open('/sys/fs/cgroup/memory.current') as f:
+        print(f'{int(f.read().strip()) / (1024**3):.1f}')
+except Exception:
+    try:
+        with open('/sys/fs/cgroup/memory/memory.usage_in_bytes') as f:
+            print(f'{int(f.read().strip()) / (1024**3):.1f}')
+    except Exception:
+        print('unknown')
+" 2>/dev/null || echo "unknown")
+
+# For non-split runs measure original CSV size here (for split runs it was
+# measured in Step 1.5 and stored in _ORIG_CSV_MB).
+if [[ -z "${_ORIG_CSV_MB:-}" ]]; then
+  _PERF_CSV_SRC="${ORIGINAL_PRIMARY_CSV:-}"
+  if [[ -z "$_PERF_CSV_SRC" && ${#CSVS[@]} -gt 0 ]]; then
+    _PERF_CSV_SRC="${CSVS[0]}"
+  fi
+  if [[ -n "$_PERF_CSV_SRC" && -f "$_PERF_CSV_SRC" ]]; then
+    _ORIG_CSV_MB=$($PYTHON -c "
+import os, sys
+try: print(int(os.path.getsize(sys.argv[1]) / (1024 * 1024)))
+except: print('unknown')
+" "$_PERF_CSV_SRC" 2>/dev/null || echo "unknown")
+  else
+    _ORIG_CSV_MB="unknown"
+  fi
+fi
+
+log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${CSV_SPLIT_ROWS} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} step2_seconds=${_STEP2_SECONDS} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS}"
+
+# Clean up CSV shards (set CSV_SPLIT_CLEANUP=false to preserve for debugging).
+# Guard requires _SHARD_DIR ends with /csv_shards — defends against an empty or
+# short _SHARD_DIR value somehow triggering a destructive rm -rf.
+if [[ "$_CSV_WAS_SPLIT" == "true" && "${CSV_SPLIT_CLEANUP}" == "true" \
+      && "$_SHARD_DIR" == */csv_shards && -d "$_SHARD_DIR" ]]; then
+  rm -rf "$_SHARD_DIR"
+  log_info "Cleaned up CSV shards: $_SHARD_DIR"
+fi
 
 # =============================================================================
 # Step 2.4: Differ (run only when a baseline exists for this dataset)

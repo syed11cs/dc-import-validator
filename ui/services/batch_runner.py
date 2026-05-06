@@ -291,6 +291,14 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
         if val:
             env[key] = val
 
+    # CSV auto-split controls: pass through from Cloud Run env so operators can
+    # enable splitting for benchmarking without code changes.
+    # Default is off; set CSV_SPLIT_ENABLED=true on the Cloud Run service to enable.
+    for key in ("CSV_SPLIT_ENABLED", "CSV_SPLIT_ROWS", "CSV_SPLIT_THRESHOLD_ROWS", "CSV_SPLIT_CLEANUP"):
+        val = os.environ.get(key, "")
+        if val:
+            env[key] = val
+
     # Logging
     log_level = os.environ.get("LOG_LEVEL", "")
     if log_level:

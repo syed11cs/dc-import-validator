@@ -165,10 +165,73 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
 | `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM; tune to available memory. Returns HTTP 429 when at capacity. |
-| `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `2`). Requires multiple CSV files to benefit; higher values increase peak JVM memory proportionally. |
+| `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `2`). Parallelism is file-level — requires multiple CSV files or CSV auto-splitting to benefit. Higher values increase peak JVM memory proportionally. |
+| `CSV_SPLIT_ENABLED` | No | Set to `true` to auto-split a single large CSV into shards before Step 2, enabling genmcf thread parallelism. Default: `false`. See [CSV Auto-Splitting](#csv-auto-splitting-for-large-imports). |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
 | `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks. The UI toggle (Import Options → Enable Data Commons existence checks) overrides this per-run; the toggle defaults to OFF for performance. Server-level default: `true` when running via CLI. |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
+
+#### CSV Auto-Splitting for Large Imports
+
+**Why it exists:** `genmcf --num-threads` parallelizes at the *file* level — one thread per CSV file. A single large CSV (e.g. 38 M rows, ~28 GB) keeps all threads idle except one, regardless of machine size. Splitting the CSV into same-schema shards lets genmcf process them in parallel and actually use the configured thread count.
+
+**How it works:** A Python splitter (`scripts/split_csv_for_genmcf.py`) runs between Step 1 (schema review) and Step 2 (genmcf). It partitions the single CSV into N shards — each has an identical header and `rows_per_shard` data rows. Step 0 and Step 1 always run on the original file. After genmcf completes, shards are deleted.
+
+**This is off by default.** Enable it only when you have a single large CSV and want to benchmark or improve throughput.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CSV_SPLIT_ENABLED` | `false` | Set to `true` to enable splitting |
+| `CSV_SPLIT_ROWS` | `1000000` | Data rows per shard |
+| `CSV_SPLIT_THRESHOLD_ROWS` | `5000000` | Skip split if source CSV has fewer rows than this |
+| `CSV_SPLIT_CLEANUP` | `true` | Set to `false` to preserve shards after Step 2 (debugging) |
+
+**CLI benchmark examples:**
+
+```bash
+# Baseline (no splitting)
+CSV_SPLIT_ENABLED=false JAVA_THREADS=32 \
+  ./run_e2e_test.sh custom --tmcf=data.tmcf --csv=large.csv --no-llm-review
+
+# Split into 1 M-row shards, 32 threads
+CSV_SPLIT_ENABLED=true CSV_SPLIT_ROWS=1000000 JAVA_THREADS=32 \
+  ./run_e2e_test.sh custom --tmcf=data.tmcf --csv=large.csv --no-llm-review
+
+# Preserve shards for inspection
+CSV_SPLIT_ENABLED=true CSV_SPLIT_CLEANUP=false JAVA_THREADS=32 \
+  ./run_e2e_test.sh custom --tmcf=data.tmcf --csv=large.csv --no-llm-review
+```
+
+**Cloud Batch:** Set `CSV_SPLIT_ENABLED=true` as an environment variable on the Cloud Run service. The value is passed through to each Batch job automatically.
+
+**PERF log fields** (one line per run, always emitted after Step 2 succeeds):
+
+```
+[PERF] split_enabled=true  split_rows=1000000  threshold_rows=5000000
+       original_csv_mb=27648  shard_count=38  avg_rows_per_shard=1000000  avg_mb_per_shard=727
+       csv_count=38  java_threads=32  java_xmx=192g
+       step2_seconds=1565  rows_processed=38000000  rows_per_second=24270
+       peak_rss_gb=28.3
+```
+
+| Field | Source | Notes |
+|---|---|---|
+| `split_enabled` | env var | `true` / `false` |
+| `split_rows` | env var | Target rows per shard |
+| `threshold_rows` | env var | Min rows required to trigger split |
+| `original_csv_mb` | `os.path.getsize` | Size of input CSV before splitting |
+| `shard_count` | split manifest | 0 when splitting disabled or skipped |
+| `avg_rows_per_shard` | manifest `total_rows / shard_count` | `na` when not split |
+| `avg_mb_per_shard` | `original_csv_mb / shard_count` | `na` when not split |
+| `csv_count` | `${#CSVS[@]}` at Step 2 | Equals shard count when split, else original count |
+| `java_threads` | env / computed | Threads passed to genmcf |
+| `java_xmx` | machine type / env | JVM heap ceiling |
+| `step2_seconds` | wall clock | genmcf wall time only |
+| `rows_processed` | manifest (split) or `NumObservations` sum (non-split) | Pre-genmcf for split; post-genmcf for non-split |
+| `rows_per_second` | `rows_processed / step2_seconds` | `unknown` if either value unavailable |
+| `peak_rss_gb` | cgroup `memory.current` | Container RSS at Step 2 exit; `unknown` on macOS |
+
+**Expected gains:** Roughly 2–5x improvement on real-world large datasets (e.g. 30 min → 6–15 min for Step 2). Actual gains depend on genmcf internal behaviour, disk I/O bandwidth, and JVM GC pressure, and may be lower. Benchmark with real data before relying on this feature.
 
 #### Health Check
 
