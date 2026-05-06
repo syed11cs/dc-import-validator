@@ -797,7 +797,7 @@ except: print('unknown')
   fi
 fi
 
-log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${CSV_SPLIT_ROWS} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} step2_seconds=${_STEP2_SECONDS} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS}"
+log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${CSV_SPLIT_ROWS} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS}"
 
 # Clean up CSV shards (set CSV_SPLIT_CLEANUP=false to preserve for debugging).
 # Guard requires _SHARD_DIR ends with /csv_shards — defends against an empty or
