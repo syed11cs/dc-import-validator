@@ -15,7 +15,20 @@ raise so callers can log or surface the error clearly instead of failing silentl
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+
+def _upload_mcf_file(mcf_path: Path, bucket_name: str, blob_path: str) -> None:
+    """Upload one MCF file to GCS.
+
+    Creates its own storage.Client so it is safe to call from multiple threads
+    concurrently — storage.Client (and its underlying requests.Session) is not
+    thread-safe when shared across threads.
+    """
+    from google.cloud import storage as _gcs
+    blob = _gcs.Client().bucket(bucket_name).blob(blob_path)
+    blob.upload_from_filename(str(mcf_path), content_type="text/plain")
 
 
 def _get_bucket():
@@ -161,10 +174,28 @@ def upload_reports_to_gcs(
     # Batch VMs write MCF files to the per-run output dir but the Cloud Run
     # instance serving accept-baseline never has local access to them, so they
     # must be in GCS for the baseline workflow to work.
-    for mcf_path in sorted(output_dir.glob("*.mcf")):
-        blob = bucket.blob(f"{prefix}/{mcf_path.name}")
-        blob.upload_from_filename(str(mcf_path), content_type="text/plain")
-        uploaded += 1
+    #
+    # Uploaded in parallel: large shard counts produce an equal number of MCF
+    # files (e.g. 1890 shards → 1890 MCF files), making sequential uploads the
+    # dominant wall-time cost (~18 min observed vs ~30 s with parallelism).
+    # Each worker creates its own storage.Client to avoid sharing the underlying
+    # requests.Session across threads.
+    mcf_paths = sorted(output_dir.glob("*.mcf"))
+    if mcf_paths:
+        n_workers = min(16, len(mcf_paths))
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _upload_mcf_file,
+                    p,
+                    bucket_name,
+                    f"{prefix}/{p.name}",
+                ): p
+                for p in mcf_paths
+            }
+            for future in as_completed(futures):
+                future.result()  # re-raises any upload exception immediately
+        uploaded += len(mcf_paths)
 
     return uploaded > 0
 

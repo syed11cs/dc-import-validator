@@ -57,7 +57,8 @@ JAVA_XMX="${JAVA_XMX:-96g}"
 # (e.g. 30 min -> 6–15 min); actual gains depend on genmcf internals, disk I/O
 # bandwidth, and JVM GC behaviour and may be lower.
 CSV_SPLIT_ENABLED="${CSV_SPLIT_ENABLED:-false}"
-CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-1000000}"
+CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-}"                    # empty = adaptive (default); set to integer to override
+CSV_SPLIT_TARGET_SHARDS_PER_THREAD="${CSV_SPLIT_TARGET_SHARDS_PER_THREAD:-2}"  # adaptive target shards = JAVA_THREADS × this; supports decimals (e.g. 1.5)
 CSV_SPLIT_THRESHOLD_ROWS="${CSV_SPLIT_THRESHOLD_ROWS:-5000000}"
 # Set CSV_SPLIT_CLEANUP=false to preserve shards after Step 2 (useful for debugging).
 CSV_SPLIT_CLEANUP="${CSV_SPLIT_CLEANUP:-true}"
@@ -553,7 +554,7 @@ fi
 # run the standalone splitter if split is enabled.
 #
 # Activate: CSV_SPLIT_ENABLED=true
-# Control:  CSV_SPLIT_ROWS=1000000           rows per shard
+# Control:  CSV_SPLIT_ROWS=<N>               rows per shard (empty = adaptive, default)
 #           CSV_SPLIT_THRESHOLD_ROWS=5000000  skip split if source < this
 #
 # After split: CSVS and CSV_ARGS are replaced with shard paths for Step 2+.
@@ -563,6 +564,38 @@ _SHARD_DIR="$DATASET_OUTPUT/csv_shards"
 _SPLIT_MANIFEST="$_SHARD_DIR/manifest.json"
 _CSV_WAS_SPLIT=false
 
+# ── Adaptive rows-per-shard ────────────────────────────────────────────────
+# CSV_SPLIT_ROWS (non-empty integer) → used directly (backward-compat override).
+# Empty (default) → derive from file size + JAVA_THREADS so genmcf receives
+# roughly CSV_SPLIT_TARGET_SHARDS_PER_THREAD×JAVA_THREADS shards,
+# clamped to [500 000, 5 000 000] rows/shard.
+# Assumes ~100 bytes/row for statistics CSVs (typical: 80–120 bytes/row).
+_EFFECTIVE_SPLIT_ROWS=""
+_TARGET_SHARDS=""
+if [[ -n "$CSV_SPLIT_ROWS" && "$CSV_SPLIT_ROWS" =~ ^[0-9]+$ && "$CSV_SPLIT_ROWS" -gt 0 ]]; then
+  _EFFECTIVE_SPLIT_ROWS="$CSV_SPLIT_ROWS"
+fi
+if [[ -z "$_EFFECTIVE_SPLIT_ROWS" && "$CSV_SPLIT_ENABLED" == "true" \
+      && ${#CSVS[@]} -eq 1 && -f "${CSVS[0]}" ]]; then
+  _CSV_SIZE_BYTES=$(stat -f%z "${CSVS[0]}" 2>/dev/null \
+                    || stat -c%s "${CSVS[0]}" 2>/dev/null \
+                    || echo 0)
+  # _TARGET_SHARDS computed via awk to support decimal multipliers (e.g. 1.5)
+  _TARGET_SHARDS=$(awk -v t="$JAVA_THREADS" -v m="$CSV_SPLIT_TARGET_SHARDS_PER_THREAD" \
+    'BEGIN { v = int(t * m); print (v > 4 ? v : 4) }')
+  _EFFECTIVE_SPLIT_ROWS=$(awk -v size="$_CSV_SIZE_BYTES" -v target="$_TARGET_SHARDS" 'BEGIN {
+    est_rows = size / 100
+    rps      = (target > 0) ? int(est_rows / target) : 2000000
+    if (rps < 500000)  rps = 500000
+    if (rps > 5000000) rps = 5000000
+    print rps
+  }')
+  log_info "CSV adaptive shard size: ${_EFFECTIVE_SPLIT_ROWS} rows/shard (file_bytes=${_CSV_SIZE_BYTES}, java_threads=${JAVA_THREADS}, multiplier=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD}, target_shards=${_TARGET_SHARDS})"
+fi
+if [[ -z "$_EFFECTIVE_SPLIT_ROWS" ]]; then
+  _EFFECTIVE_SPLIT_ROWS=2000000  # fallback: split disabled or file not accessible
+fi
+
 if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
   if [[ ${#CSVS[@]} -gt 1 ]]; then
     log_info "CSV auto-split skipped: ${#CSVS[@]} CSV files already provided (splitting only applies to single-CSV inputs)"
@@ -570,13 +603,13 @@ if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
     log_info "CSV auto-split skipped: no accessible CSV file found"
   elif [[ "$_USE_COMBINED_SCRIPT" == "true" ]]; then
     # ── Combined validate + split path (single streaming pass) ────────────
-    log_info "Combined validate+split (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
+    log_info "Combined validate+split (rows_per_shard=${_EFFECTIVE_SPLIT_ROWS}, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
     mkdir -p "$_SHARD_DIR"
     set +e
     $PYTHON "$VALIDATE_AND_SPLIT_SCRIPT" \
       --input="${CSVS[0]}" \
       --output-dir="$_SHARD_DIR" \
-      --rows-per-shard="$CSV_SPLIT_ROWS" \
+      --rows-per-shard="$_EFFECTIVE_SPLIT_ROWS" \
       --threshold-rows="$CSV_SPLIT_THRESHOLD_ROWS" \
       --manifest="$_SPLIT_MANIFEST" \
       --output-details="$CSV_QUALITY_DETAILS_JSON" \
@@ -701,13 +734,13 @@ except Exception:
 
   else
     # ── Standalone split path (fallback: validate_and_split.py not present) ─
-    log_info "CSV auto-split (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
+    log_info "CSV auto-split (rows_per_shard=${_EFFECTIVE_SPLIT_ROWS}, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
     mkdir -p "$_SHARD_DIR"
     set +e
     $PYTHON "$SCRIPT_DIR/scripts/split_csv_for_genmcf.py" \
       --input="${CSVS[0]}" \
       --output-dir="$_SHARD_DIR" \
-      --rows-per-shard="$CSV_SPLIT_ROWS" \
+      --rows-per-shard="$_EFFECTIVE_SPLIT_ROWS" \
       --threshold-rows="$CSV_SPLIT_THRESHOLD_ROWS" \
       --manifest="$_SPLIT_MANIFEST"
     _SPLIT_EXIT=$?
@@ -1005,7 +1038,7 @@ except: print('unknown')
   fi
 fi
 
-log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${CSV_SPLIT_ROWS} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS}"
+log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${_EFFECTIVE_SPLIT_ROWS} configured_split_rows=${CSV_SPLIT_ROWS:-adaptive} target_shards_per_thread=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD} target_shards=${_TARGET_SHARDS:-na} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS}"
 
 # Clean up CSV shards (set CSV_SPLIT_CLEANUP=false to preserve for debugging).
 # Guard requires _SHARD_DIR ends with /csv_shards — defends against an empty or
