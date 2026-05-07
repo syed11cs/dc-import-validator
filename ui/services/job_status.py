@@ -185,12 +185,13 @@ def get_job_status(
                 "run_id=%s: no status.json yet but Batch state=%s — returning synthetic 'starting'",
                 run_id, batch_state,
             )
-            # Map Batch state to a user-facing label so the UI can show something
-            # more informative than a generic "Preparing…" message.
+            # Map Batch state to a product-level label. The underlying infra
+            # state (QUEUED/SCHEDULED/RUNNING) is intentionally abstracted away
+            # from the user — it belongs in Cloud Logging, not the UI.
             _BATCH_STARTING_LABELS = {
-                "QUEUED":    "Waiting for VM\u2026",
-                "SCHEDULED": "VM provisioning\u2026",
-                "RUNNING":   "Container starting\u2026",
+                "QUEUED":    "Starting validation job\u2026",
+                "SCHEDULED": "Preparing validation environment\u2026",
+                "RUNNING":   "Initializing validation runtime\u2026",
             }
             return {
                 "run_id": run_id,
@@ -249,8 +250,9 @@ def get_job_status(
                 "failure_code": "STARTUP_FAILED",
                 "failure_message": (
                     "Validation failed to start. This can happen when a SPOT VM is "
-                    "preempted before the container launches, or if the container image "
-                    "could not be pulled. Retrying usually succeeds."
+                    "preempted, the container image could not be pulled, or the container "
+                    "failed to launch (e.g. OCI runtime error). Retrying usually succeeds. "
+                    "If the problem persists, check Cloud Logging for the batch job."
                 ),
             }
         # UNKNOWN (transient Batch API error or race between submission and registration)

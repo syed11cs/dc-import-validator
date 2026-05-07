@@ -196,7 +196,7 @@ print(
 # emits its first ::STEP:: marker. This prevents pill 0 from prematurely consuming
 # the step-0 transition with the label "Starting" before run_e2e_test.sh begins.
 
-write_status "0" "Preparing" "starting"
+write_status "0" "Preparing validation environment" "starting"
 
 # ─── 2. Validate inputs for custom datasets ───────────────────────────────────
 

@@ -3469,10 +3469,10 @@
         const stepNum = parseFloat(status.step ?? '0');
         const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
         if (status.status === 'starting') {
-          // Job is booting — show the server-provided label (Batch-state-aware:
-          // "Waiting for VM…", "VM provisioning…", "Container starting…", or
-          // "Preparing…" once entrypoint.sh has written its initial status).
-          // Do not advance progress pills; lastStepIdx remains -1.
+          // Job is booting — show the server-provided product-level label.
+          // Labels are sourced from job_status.py (_BATCH_STARTING_LABELS) before
+          // status.json exists, then from entrypoint.sh write_status once the
+          // container has started. Do not advance progress pills; lastStepIdx remains -1.
           _setActiveStep(status.step_label || 'Preparing validation environment\u2026');
           // Safety timeout: cancel and fail if still booting after 15 minutes.
           // 15 min covers worst-case SPOT queue waits + cold container image pulls
@@ -3483,10 +3483,10 @@
             fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
             return {
               success: false, cancelled: false, run_id: confirmedRunId,
-              output: 'The validation VM did not start within 15 minutes. This can happen when SPOT VM capacity is limited or the container image is being pulled for the first time. Please retry \u2014 subsequent runs are faster once the image is cached.',
+              output: 'The validation job did not complete startup within 15 minutes. Possible causes: SPOT VM capacity limits, a large container image pull, or a container launch failure that triggered a retry. Please retry \u2014 if the problem persists, check Cloud Logging for the batch job to see the specific error.',
               failure_code: 'STARTING_TIMEOUT',
               failure_step: 0,
-              failure_message: 'The validation VM did not start within 15 minutes. SPOT VM capacity may be limited \u2014 retrying usually succeeds.',
+              failure_message: 'Startup did not complete within 15 minutes. This can be caused by SPOT VM capacity limits, a slow container image pull, or a container launch failure. Retrying usually succeeds \u2014 if not, check Cloud Logging for details.',
               failure_details: null,
               baseline_id: null,
             };

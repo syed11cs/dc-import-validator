@@ -445,11 +445,59 @@ mkdir -p "$DATASET_OUTPUT"
 PREFLIGHT_ERRORS_JSON="$DATASET_OUTPUT/preflight_errors.json"
 CSV_QUALITY_DETAILS_JSON="$DATASET_OUTPUT/csv_quality_details.json"
 VALIDATE_FILES_SCRIPT="$SCRIPT_DIR/scripts/validate_import_files.py"
+VALIDATE_CSV_SCRIPT="$SCRIPT_DIR/scripts/validate_csv_quality.py"
+VALIDATE_AND_SPLIT_SCRIPT="$SCRIPT_DIR/scripts/validate_and_split.py"
+
+# ── Launch Step 1 (schema/LLM review) in the background ───────────────────
+# Step 1 only reads the TMCF and the CSV header — it does NOT need the full
+# CSV body, so it can run concurrently with Step 0's streaming CSV scan.
+# Output is captured to a temp file to prevent stdout interleaving.
+_STEP1_BG_PID=""
+_STEP1_BG_OUT=""
+_STEP1_BG_EXIT=0
+STEP1_START=$(date +%s)
+if [[ -n "$TMCF" && -f "$TMCF" ]]; then
+  LLM_REVIEW_SCRIPT="$SCRIPT_DIR/scripts/llm_schema_review.py"
+  SCHEMA_REVIEW_OUT="$DATASET_OUTPUT/schema_review.json"
+  if [[ -f "$LLM_REVIEW_SCRIPT" ]]; then
+    _STEP1_BG_OUT=$(mktemp)
+    LLM_EXTRA_ARGS=()
+    [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
+    [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
+    [[ ${#CSVS[@]} -gt 0 && -f "${CSVS[0]}" ]] && LLM_EXTRA_ARGS+=(--csv="${CSVS[0]}")
+    [[ "$LLM_REVIEW" == "true" ]] && LLM_EXTRA_ARGS+=(--llm-review)
+    log_mem "step1_gemini"
+    if [[ "$LLM_REVIEW" == "true" ]]; then
+      log_info "Step 1 (background): schema review + Gemini (model: $LLM_MODEL)..."
+    else
+      log_info "Step 1 (background): schema review (deterministic only)..."
+    fi
+    $PYTHON "$LLM_REVIEW_SCRIPT" --tmcf="$TMCF" --output="$SCHEMA_REVIEW_OUT" \
+      --model="$LLM_MODEL" "${LLM_EXTRA_ARGS[@]}" >"$_STEP1_BG_OUT" 2>&1 &
+    _STEP1_BG_PID=$!
+    log_info "Step 1 launched in background (PID $_STEP1_BG_PID)"
+  fi
+fi
+
+# Kill the Step 1 background process on early pipeline exit.
+_kill_step1_bg() {
+  if [[ -n "$_STEP1_BG_PID" ]]; then
+    kill "$_STEP1_BG_PID" 2>/dev/null || true
+    wait "$_STEP1_BG_PID" 2>/dev/null || true
+    _STEP1_BG_PID=""
+  fi
+  [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]] && rm -f "$_STEP1_BG_OUT"
+}
+# Ensure background process is cleaned up on any exit (including set -e failures).
+trap '_kill_step1_bg' EXIT
+
+# ── Preflight check ────────────────────────────────────────────────────────
 if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
   PREFLIGHT_ARGS=(--tmcf="$TMCF" "${CSV_ARGS[@]}" --output-errors="$PREFLIGHT_ERRORS_JSON")
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
   if ! $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" 2>/dev/null; then
+    _kill_step1_bg
     log_error "Preflight failed: required import files missing or wrong extension."
     emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed" "" "$PREFLIGHT_ERRORS_JSON"
     $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" || true
@@ -458,10 +506,19 @@ if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
   fi
 fi
 
-VALIDATE_CSV_SCRIPT="$SCRIPT_DIR/scripts/validate_csv_quality.py"
-if [[ -f "$VALIDATE_CSV_SCRIPT" && ${#CSVS[@]} -gt 0 ]]; then
+# ── CSV quality check ──────────────────────────────────────────────────────
+# Single CSV + split enabled: combined validate+split script handles quality
+# checking AND splitting together in Step 1.5 (one streaming pass).
+# All other cases (multi-CSV, split disabled): validate quality now.
+_USE_COMBINED_SCRIPT=false
+if [[ "$CSV_SPLIT_ENABLED" == "true" && ${#CSVS[@]} -eq 1 && -f "${CSVS[0]}" && -f "$VALIDATE_AND_SPLIT_SCRIPT" ]]; then
+  _USE_COMBINED_SCRIPT=true
+  log_info "Single CSV + split enabled: CSV quality check deferred to combined validate+split pass (Step 1.5)"
+elif [[ -f "$VALIDATE_CSV_SCRIPT" && ${#CSVS[@]} -gt 0 ]]; then
   CSV_QUALITY_EXTRA=(--allow-empty-columns)
-  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
+  if ! $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value \
+       --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
+    _kill_step1_bg
     log_error "CSV quality check failed."
     emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed" "" "$CSV_QUALITY_DETAILS_JSON"
     $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value "${CSV_QUALITY_EXTRA[@]}" || true
@@ -488,59 +545,17 @@ except Exception:
 fi
 
 # =============================================================================
-# Step 1: Schema review (deterministic checks always; LLM only when --llm-review)
-# =============================================================================
-if [[ -n "$TMCF" && -f "$TMCF" ]]; then
-  LLM_REVIEW_SCRIPT="$SCRIPT_DIR/scripts/llm_schema_review.py"
-  SCHEMA_REVIEW_OUT="$DATASET_OUTPUT/schema_review.json"
-  mkdir -p "$DATASET_OUTPUT"
-  if [[ -f "$LLM_REVIEW_SCRIPT" ]]; then
-    STEP1_START=$(date +%s)
-    log_mem "step1_gemini"
-    LLM_EXTRA_ARGS=()
-    [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
-    [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && LLM_EXTRA_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
-    [[ ${#CSVS[@]} -gt 0 && -f "${CSVS[0]}" ]] && LLM_EXTRA_ARGS+=(--csv="${CSVS[0]}")
-    [[ "$LLM_REVIEW" == "true" ]] && LLM_EXTRA_ARGS+=(--llm-review)
-    echo "::STEP::1:Gemini Review"
-    if [[ "$LLM_REVIEW" == "true" ]]; then
-      log_info "Step 1: Running schema review + Gemini review (model: $LLM_MODEL)..."
-    else
-      log_info "Step 1: Running schema review (deterministic checks only)..."
-    fi
-    if $PYTHON "$LLM_REVIEW_SCRIPT" --tmcf="$TMCF" --output="$SCHEMA_REVIEW_OUT" --model="$LLM_MODEL" "${LLM_EXTRA_ARGS[@]}"; then
-      log_info "Step 1 passed (no blocking issues)"
-    else
-      if [[ -f "$SCHEMA_REVIEW_OUT" ]]; then
-        log_warn "Step 1 found issues (advisory). See $SCHEMA_REVIEW_OUT — continuing pipeline."
-        $PYTHON -c "import json; d=json.load(open('$SCHEMA_REVIEW_OUT')); print('\n'.join(str(x) for x in d))" 2>/dev/null || cat "$SCHEMA_REVIEW_OUT"
-        # Gemini findings are always advisory; never block validation.
-      else
-        log_warn "Step 1 failed (script error or missing output)"
-        ensure_failure_report "Gemini Review" "Step 1 failed (script error or missing output)"
-        emit_failure "GEMINI_BLOCKING" 1 "Gemini review failed (script error)"
-        exit 1
-      fi
-    fi
-    log_info "Step 1 completed in $(( $(date +%s) - STEP1_START ))s"
-  else
-    log_warn "Schema review script not found: $LLM_REVIEW_SCRIPT"
-  fi
-fi
-
-# =============================================================================
-# Step 1.5: CSV Auto-Split (optional; off by default)
-# Splits a single large CSV into shards so genmcf --num-threads actually
-# parallelizes. genmcf thread-level parallelism is file-level: one thread per
-# CSV file. A single large CSV keeps all threads idle except one.
+# Step 1.5: CSV Validate + Split
+# When _USE_COMBINED_SCRIPT=true: validate_and_split.py performs CSV quality
+# validation AND shard splitting in a single streaming pass (saves one full
+# CSV read vs. the original sequential validate → split pipeline).
+# Otherwise (multi-CSV or split disabled): quality was already validated above;
+# run the standalone splitter if split is enabled.
 #
-# Activate: CSV_SPLIT_ENABLED=true (env var; defaults to false)
-# Control:  CSV_SPLIT_ROWS=1000000         rows per shard
+# Activate: CSV_SPLIT_ENABLED=true
+# Control:  CSV_SPLIT_ROWS=1000000           rows per shard
 #           CSV_SPLIT_THRESHOLD_ROWS=5000000  skip split if source < this
 #
-# Runs only when: enabled AND exactly 1 CSV input AND file is accessible.
-# Steps 0 and 1 (preflight, quality checks, LLM review) always run on the
-# original CSV before splitting.
 # After split: CSVS and CSV_ARGS are replaced with shard paths for Step 2+.
 # Shards live in $DATASET_OUTPUT/csv_shards/ and are cleaned up after Step 2.
 # =============================================================================
@@ -553,28 +568,60 @@ if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
     log_info "CSV auto-split skipped: ${#CSVS[@]} CSV files already provided (splitting only applies to single-CSV inputs)"
   elif [[ ${#CSVS[@]} -eq 0 || ! -f "${CSVS[0]}" ]]; then
     log_info "CSV auto-split skipped: no accessible CSV file found"
-  else
-    log_info "CSV auto-split enabled (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)"
+  elif [[ "$_USE_COMBINED_SCRIPT" == "true" ]]; then
+    # ── Combined validate + split path (single streaming pass) ────────────
+    log_info "Combined validate+split (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
     mkdir -p "$_SHARD_DIR"
     set +e
-    $PYTHON "$SCRIPT_DIR/scripts/split_csv_for_genmcf.py" \
+    $PYTHON "$VALIDATE_AND_SPLIT_SCRIPT" \
       --input="${CSVS[0]}" \
       --output-dir="$_SHARD_DIR" \
       --rows-per-shard="$CSV_SPLIT_ROWS" \
       --threshold-rows="$CSV_SPLIT_THRESHOLD_ROWS" \
-      --manifest="$_SPLIT_MANIFEST"
-    _SPLIT_EXIT=$?
+      --manifest="$_SPLIT_MANIFEST" \
+      --output-details="$CSV_QUALITY_DETAILS_JSON" \
+      --value-column=value \
+      --allow-empty-columns \
+      2>/dev/null
+    _COMBINED_EXIT=$?
     set -e
 
-    if [[ $_SPLIT_EXIT -ne 0 ]]; then
-      log_error "CSV auto-split failed (exit $_SPLIT_EXIT)"
-      emit_failure "CSV_SPLIT_FAILED" 2 "CSV auto-splitting failed"
-      ensure_failure_report "CSV Split" "CSV auto-splitting failed"
+    if [[ $_COMBINED_EXIT -ne 0 ]]; then
+      _kill_step1_bg
+      log_error "CSV quality check failed (combined validate+split, exit $_COMBINED_EXIT)"
+      # Re-run with errors printed to stderr so they appear in the log.
+      $PYTHON "$VALIDATE_AND_SPLIT_SCRIPT" \
+        --input="${CSVS[0]}" \
+        --no-split \
+        --output-details="$CSV_QUALITY_DETAILS_JSON" \
+        --value-column=value \
+        --allow-empty-columns || true
+      emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed" "" "$CSV_QUALITY_DETAILS_JSON"
+      ensure_failure_report "Pre-Import Checks" "CSV quality check failed"
       exit 1
     fi
 
+    # Warn when CSV has entirely empty column(s) (non-blocking)
+    if [[ -f "$CSV_QUALITY_DETAILS_JSON" ]]; then
+      EMPTY_COLS="$($PYTHON -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    cols = d.get('empty_columns') or []
+    if cols:
+        print(','.join(cols))
+except Exception:
+    pass
+" "$CSV_QUALITY_DETAILS_JSON" 2>/dev/null)"
+      if [[ -n "$EMPTY_COLS" ]]; then
+        log_warn "CSV has entirely empty column(s): $EMPTY_COLS (non-blocking; pipeline continues)"
+      fi
+    fi
+
+    # ── Parse manifest ─────────────────────────────────────────────────────
     if [[ ! -f "$_SPLIT_MANIFEST" ]]; then
-      log_warn "CSV split exited 0 but manifest not found — continuing without splitting"
+      log_warn "Combined script exited 0 but manifest not found — continuing without splitting"
     else
       _SPLIT_STATUS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('status','unknown'))" "$_SPLIT_MANIFEST" 2>/dev/null || echo "unknown")
 
@@ -582,19 +629,18 @@ if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
         _SHARD_COUNT=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('shard_count',0))" "$_SPLIT_MANIFEST")
         _TOTAL_ROWS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('total_rows',0))" "$_SPLIT_MANIFEST")
         _SPLIT_ELAPSED=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('elapsed_seconds',0))" "$_SPLIT_MANIFEST")
-        log_info "CSV auto-split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
+        log_info "Combined validate+split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
 
         if [[ $_SHARD_COUNT -eq 0 ]]; then
-          log_error "CSV split reported done but shard_count=0"
+          _kill_step1_bg
+          log_error "Combined script reported done but shard_count=0"
           emit_failure "CSV_SPLIT_FAILED" 2 "CSV split produced no shards"
           ensure_failure_report "CSV Split" "CSV split produced no shards"
           exit 1
         fi
 
         # Replace CSVS array with shard paths.
-        # Preserve originals: future validation rules may need the full unsplit
-        # source (e.g. a rule that needs complete row ordering or cross-file
-        # deduplication). ORIGINAL_PRIMARY_CSV is also used for perf logging.
+        # Preserve originals: ORIGINAL_PRIMARY_CSV is used for perf logging.
         ORIGINAL_PRIMARY_CSV="${CSVS[0]}"
         ORIGINAL_CSVS=("${CSVS[@]}")
         CSVS=()
@@ -607,6 +653,7 @@ print('\n'.join(d.get('shard_paths', [])))
 " "$_SPLIT_MANIFEST")
 
         if [[ ${#CSVS[@]} -eq 0 ]]; then
+          _kill_step1_bg
           log_error "Failed to read shard paths from manifest"
           emit_failure "CSV_SPLIT_FAILED" 2 "Could not read shard paths"
           ensure_failure_report "CSV Split" "Could not read shard paths from manifest"
@@ -641,6 +688,103 @@ except Exception:
         if (( JAVA_THREADS <= ${#CSVS[@]} )); then
           log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (all threads can be utilized)"
         else
+          log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (more threads than shards; some will be idle)"
+        fi
+
+      elif [[ "$_SPLIT_STATUS" == "skipped" ]]; then
+        _SKIP_ROWS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('total_rows',0))" "$_SPLIT_MANIFEST" 2>/dev/null || echo "?")
+        log_info "CSV auto-split skipped: ${_SKIP_ROWS} rows < threshold $CSV_SPLIT_THRESHOLD_ROWS (no split needed)"
+      else
+        log_warn "Combined script returned unexpected status='$_SPLIT_STATUS' — continuing without splitting"
+      fi
+    fi
+
+  else
+    # ── Standalone split path (fallback: validate_and_split.py not present) ─
+    log_info "CSV auto-split (CSV_SPLIT_ROWS=$CSV_SPLIT_ROWS, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
+    mkdir -p "$_SHARD_DIR"
+    set +e
+    $PYTHON "$SCRIPT_DIR/scripts/split_csv_for_genmcf.py" \
+      --input="${CSVS[0]}" \
+      --output-dir="$_SHARD_DIR" \
+      --rows-per-shard="$CSV_SPLIT_ROWS" \
+      --threshold-rows="$CSV_SPLIT_THRESHOLD_ROWS" \
+      --manifest="$_SPLIT_MANIFEST"
+    _SPLIT_EXIT=$?
+    set -e
+
+    if [[ $_SPLIT_EXIT -ne 0 ]]; then
+      _kill_step1_bg
+      log_error "CSV auto-split failed (exit $_SPLIT_EXIT)"
+      emit_failure "CSV_SPLIT_FAILED" 2 "CSV auto-splitting failed"
+      ensure_failure_report "CSV Split" "CSV auto-splitting failed"
+      exit 1
+    fi
+
+    if [[ ! -f "$_SPLIT_MANIFEST" ]]; then
+      log_warn "CSV split exited 0 but manifest not found — continuing without splitting"
+    else
+      _SPLIT_STATUS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('status','unknown'))" "$_SPLIT_MANIFEST" 2>/dev/null || echo "unknown")
+
+      if [[ "$_SPLIT_STATUS" == "done" ]]; then
+        _SHARD_COUNT=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('shard_count',0))" "$_SPLIT_MANIFEST")
+        _TOTAL_ROWS=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('total_rows',0))" "$_SPLIT_MANIFEST")
+        _SPLIT_ELAPSED=$($PYTHON -c "import json,sys; print(json.load(open(sys.argv[1])).get('elapsed_seconds',0))" "$_SPLIT_MANIFEST")
+        log_info "CSV auto-split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
+
+        if [[ $_SHARD_COUNT -eq 0 ]]; then
+          _kill_step1_bg
+          log_error "CSV split reported done but shard_count=0"
+          emit_failure "CSV_SPLIT_FAILED" 2 "CSV split produced no shards"
+          ensure_failure_report "CSV Split" "CSV split produced no shards"
+          exit 1
+        fi
+
+        ORIGINAL_PRIMARY_CSV="${CSVS[0]}"
+        ORIGINAL_CSVS=("${CSVS[@]}")
+        CSVS=()
+        while IFS= read -r _shard_path; do
+          [[ -n "$_shard_path" ]] && CSVS+=("$_shard_path")
+        done < <($PYTHON -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print('\n'.join(d.get('shard_paths', [])))
+" "$_SPLIT_MANIFEST")
+
+        if [[ ${#CSVS[@]} -eq 0 ]]; then
+          _kill_step1_bg
+          log_error "Failed to read shard paths from manifest"
+          emit_failure "CSV_SPLIT_FAILED" 2 "Could not read shard paths"
+          ensure_failure_report "CSV Split" "Could not read shard paths from manifest"
+          exit 1
+        fi
+
+        CSV_ARGS=()
+        for _csv_arg in "${CSVS[@]}"; do
+          CSV_ARGS+=(--csv="$_csv_arg")
+        done
+
+        _CSV_WAS_SPLIT=true
+
+        _ORIG_CSV_MB=$($PYTHON -c "
+import os, sys
+try:
+    print(int(os.path.getsize(sys.argv[1]) / (1024 * 1024)))
+except Exception:
+    print('unknown')
+" "$ORIGINAL_PRIMARY_CSV" 2>/dev/null || echo "unknown")
+        _AVG_ROWS_PER_SHARD=$(( _TOTAL_ROWS / ${#CSVS[@]} ))
+        if [[ "$_ORIG_CSV_MB" != "unknown" ]]; then
+          _AVG_MB_PER_SHARD=$(( _ORIG_CSV_MB / ${#CSVS[@]} ))
+        else
+          _AVG_MB_PER_SHARD="unknown"
+        fi
+
+        log_info "CSV split: original=$ORIGINAL_PRIMARY_CSV size=${_ORIG_CSV_MB}MB shards=${#CSVS[@]} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD} avg_mb_per_shard=${_AVG_MB_PER_SHARD}"
+
+        if (( JAVA_THREADS <= ${#CSVS[@]} )); then
+          log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (all threads can be utilized)"
+        else
           log_info "genmcf parallelism possible: threads=$JAVA_THREADS csvs=${#CSVS[@]} (more shards than threads; some threads may process multiple shards sequentially)"
         fi
 
@@ -651,6 +795,53 @@ except Exception:
         log_warn "CSV split returned unexpected status='$_SPLIT_STATUS' — continuing without splitting"
       fi
     fi
+  fi
+fi
+
+# =============================================================================
+# Step 1: Schema review — wait for background job and emit results
+# =============================================================================
+if [[ -n "$_STEP1_BG_PID" ]]; then
+  log_info "Waiting for Step 1 (schema/LLM review)..."
+  wait "$_STEP1_BG_PID" && _STEP1_BG_EXIT=0 || _STEP1_BG_EXIT=$?
+  _STEP1_BG_PID=""
+fi
+
+echo "::STEP::1:Gemini Review"
+
+# Replay Step 1 output (captured to avoid interleaving with Step 0 stdout).
+if [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]]; then
+  cat "$_STEP1_BG_OUT"
+  rm -f "$_STEP1_BG_OUT"
+  _STEP1_BG_OUT=""
+fi
+
+if [[ -n "$TMCF" && -f "$TMCF" ]]; then
+  LLM_REVIEW_SCRIPT="$SCRIPT_DIR/scripts/llm_schema_review.py"
+  SCHEMA_REVIEW_OUT="$DATASET_OUTPUT/schema_review.json"
+  if [[ -f "$LLM_REVIEW_SCRIPT" ]]; then
+    if [[ "$LLM_REVIEW" == "true" ]]; then
+      log_info "Step 1: schema review + Gemini (model: $LLM_MODEL)"
+    else
+      log_info "Step 1: schema review (deterministic only)"
+    fi
+    if [[ $_STEP1_BG_EXIT -eq 0 ]]; then
+      log_info "Step 1 passed (no blocking issues)"
+    else
+      if [[ -f "$SCHEMA_REVIEW_OUT" ]]; then
+        log_warn "Step 1 found issues (advisory). See $SCHEMA_REVIEW_OUT — continuing pipeline."
+        $PYTHON -c "import json; d=json.load(open('$SCHEMA_REVIEW_OUT')); print('\n'.join(str(x) for x in d))" 2>/dev/null || cat "$SCHEMA_REVIEW_OUT"
+        # Gemini findings are always advisory; never block validation.
+      else
+        log_warn "Step 1 failed (script error or missing output)"
+        ensure_failure_report "Gemini Review" "Step 1 failed (script error or missing output)"
+        emit_failure "GEMINI_BLOCKING" 1 "Gemini review failed (script error)"
+        exit 1
+      fi
+    fi
+    log_info "Step 1 completed in $(( $(date +%s) - STEP1_START ))s"
+  else
+    log_warn "Schema review script not found: $LLM_REVIEW_SCRIPT"
   fi
 fi
 
@@ -709,8 +900,25 @@ log_info "genmcf execution mode: split=${_CSV_WAS_SPLIT} shards=${_CSV_COUNT} th
 if (( _CSV_COUNT > 0 && JAVA_THREADS > _CSV_COUNT )); then
   log_info "WARNING: JAVA_THREADS=${JAVA_THREADS} exceeds CSV file count (${_CSV_COUNT}); genmcf parallelizes per file, so extra threads will be idle"
 fi
+
+# Optional JFR + GC profiling (set GENMCF_PROFILE=true to enable).
+# JFR is built into JDK 17 with ~1-5% overhead; useful for diagnosing CPU
+# hotspots and lock contention in genmcf's serial finalization phase.
+_JVM_PROFILE_FLAGS=()
+if [[ "${GENMCF_PROFILE:-false}" == "true" ]]; then
+  _JFR_OUTPUT="$GENMCF_OUTPUT/genmcf_profile.jfr"
+  _GC_LOG="$GENMCF_OUTPUT/gc.log"
+  _JVM_PROFILE_FLAGS=(
+    "-XX:StartFlightRecording=filename=${_JFR_OUTPUT},dumponexit=true,settings=profile"
+    "-Xlog:gc*:file=${_GC_LOG}:time,uptime:filecount=1"
+  )
+  log_info "JFR profiling enabled: $_JFR_OUTPUT"
+  log_info "GC logging enabled: $_GC_LOG"
+fi
+
 set +e
 java -XX:+UseG1GC -Xmx"${JAVA_XMX}" \
+  "${_JVM_PROFILE_FLAGS[@]}" \
   -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --num-threads="$JAVA_THREADS" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" \
