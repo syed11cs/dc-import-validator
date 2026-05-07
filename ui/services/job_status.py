@@ -1,9 +1,10 @@
 """Unified job status reader for Cloud Batch validation runs.
 
 Primary source: GCS status.json written by batch/entrypoint.sh.
-Fallback: Cloud Batch API (via batch_runner.get_batch_state) used when the
-GCS file shows "running" but has not been updated in over 5 minutes — which
-indicates the VM died or was preempted without writing a final status update.
+Fallback: Cloud Batch API (via batch_runner.get_batch_state) used when:
+  - status.json does not exist yet (job still provisioning — returns synthetic "starting")
+  - status.json shows "running" or "starting" but has not been updated in over
+    5 minutes, indicating the VM died without writing a final status update.
 
 Status JSON schema (written by batch/entrypoint.sh write_status()):
     {
@@ -13,7 +14,7 @@ Status JSON schema (written by batch/entrypoint.sh write_status()):
         "vm_type":         str,
         "step":            str,       # "0", "1", "2", "2.4", "3", "4"
         "step_label":      str,
-        "status":          str,       # "running" | "succeeded" | "failed"
+        "status":          str,       # "starting" | "running" | "succeeded" | "failed"
         "started_at":      str,       # ISO-8601 UTC
         "updated_at":      str,       # ISO-8601 UTC
         "failure_code":    str | null,
@@ -94,7 +95,11 @@ def _fetch_status_json(bucket_name: str, run_id: str) -> Optional[dict]:
 
 
 def _apply_batch_fallback(status: dict, batch_state: str) -> dict:
-    """Return an updated copy of status with the Batch-derived terminal state applied."""
+    """Return an updated copy of status with the Batch-derived terminal state applied.
+
+    Called when status.json exists (status is "running" or "starting") but has
+    gone stale, meaning the VM may have died without writing a final status.
+    """
     updated = dict(status)
     if batch_state in _BATCH_SUCCEEDED_STATES:
         logger.info(
@@ -110,9 +115,21 @@ def _apply_batch_fallback(status: dict, batch_state: str) -> dict:
         )
         updated["status"] = "failed"
         if not updated.get("failure_code"):
-            updated["failure_code"] = "BATCH_JOB_LOST"
+            # Use STARTUP_FAILED when the VM died before the pipeline started
+            # (original status was "starting"). BATCH_JOB_LOST is for mid-run death.
+            if status.get("status") == "starting":
+                updated["failure_code"] = "STARTUP_FAILED"
+            else:
+                updated["failure_code"] = "BATCH_JOB_LOST"
         if not updated.get("failure_message"):
-            updated["failure_message"] = "Validation stopped unexpectedly. Please retry."
+            if status.get("status") == "starting":
+                updated["failure_message"] = (
+                    "Validation failed to start. The VM may have been preempted or "
+                    "encountered an error before the pipeline launched. "
+                    "Retrying usually succeeds."
+                )
+            else:
+                updated["failure_message"] = "Validation stopped unexpectedly. Please retry."
     # If Batch still reports QUEUED/RUNNING/SCHEDULED we leave the GCS status
     # as-is — the VM is alive but just slow to write status updates.
     return updated
@@ -168,13 +185,21 @@ def get_job_status(
                 "run_id=%s: no status.json yet but Batch state=%s — returning synthetic 'starting'",
                 run_id, batch_state,
             )
+            # Map Batch state to a user-facing label so the UI can show something
+            # more informative than a generic "Preparing…" message.
+            _BATCH_STARTING_LABELS = {
+                "QUEUED":    "Waiting for VM\u2026",
+                "SCHEDULED": "VM provisioning\u2026",
+                "RUNNING":   "Container starting\u2026",
+            }
             return {
                 "run_id": run_id,
                 "batch_job_name": job_name,
                 "dataset": "",
                 "vm_type": "",
                 "step": "0",
-                "step_label": "Preparing validation environment\u2026",
+                "step_label": _BATCH_STARTING_LABELS.get(batch_state, "Preparing validation environment\u2026"),
+                "batch_state": batch_state,
                 "status": "starting",
                 "started_at": "",
                 "updated_at": "",
@@ -197,8 +222,15 @@ def get_job_status(
                 "failure_code": None,
                 "failure_message": None,
             }
-        elif batch_state in _BATCH_FAILED_STATES:
+        elif batch_state in {"FAILED", "DELETION_IN_PROGRESS"}:
             # Container failed before entrypoint.sh could write status.json.
+            # This includes SPOT preemption (VM killed before the container started)
+            # and image-pull or container-launch failures.
+            # Note: "UNKNOWN" is intentionally excluded here — get_batch_state() returns
+            # "UNKNOWN" on any API exception (network error, transient 503, or the brief
+            # race between job submission and Batch registration). Treating UNKNOWN as a
+            # hard failure would produce a false STARTUP_FAILED on every API hiccup.
+            # Instead, fall through to return None and let the UI retry via poll error counting.
             logger.info(
                 "run_id=%s: no status.json and Batch state=%s — returning synthetic 'failed'",
                 run_id, batch_state,
@@ -210,13 +242,19 @@ def get_job_status(
                 "vm_type": "",
                 "step": "0",
                 "step_label": "Startup",
+                "batch_state": batch_state,
                 "status": "failed",
                 "started_at": "",
                 "updated_at": "",
                 "failure_code": "STARTUP_FAILED",
-                "failure_message": "Validation failed before starting.",
+                "failure_message": (
+                    "Validation failed to start. This can happen when a SPOT VM is "
+                    "preempted before the container launches, or if the container image "
+                    "could not be pulled. Retrying usually succeeds."
+                ),
             }
-        # Unrecognised state — return None so the caller 404s and the UI retries.
+        # UNKNOWN (transient Batch API error or race between submission and registration)
+        # and any other unrecognised state: return None so the caller 404s and the UI retries.
         logger.info("run_id=%s: no status.json and Batch state=%s — returning None", run_id, batch_state)
         return None
 
@@ -224,7 +262,9 @@ def get_job_status(
     if status.get("status") in ("succeeded", "failed"):
         return status
 
-    # The status is "running" — check whether it has gone stale.
+    # The status is non-terminal ("running" or "starting") — check whether it has
+    # gone stale. A stale "starting" status means entrypoint.sh wrote its initial
+    # status but then the VM may have died without writing a failure update.
     updated_at = _parse_utc(status.get("updated_at", ""))
     age = _seconds_since(updated_at)
 
@@ -232,7 +272,7 @@ def get_job_status(
         # Recent heartbeat — trust GCS.
         return status
 
-    # Stale running status: probe Cloud Batch API to detect silent VM death.
+    # Stale status: probe Cloud Batch API to detect silent VM death.
     job_name = status.get("batch_job_name", "")
     if not job_name:
         logger.warning(

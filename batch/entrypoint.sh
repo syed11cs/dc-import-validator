@@ -190,8 +190,13 @@ print(
 }
 
 # ─── 1. Write initial status ──────────────────────────────────────────────────
+#
+# Use status="starting" (not "running") so the polling loop treats this as the
+# pre-pipeline boot phase. The "running" status is only written once the pipeline
+# emits its first ::STEP:: marker. This prevents pill 0 from prematurely consuming
+# the step-0 transition with the label "Starting" before run_e2e_test.sh begins.
 
-write_status "0" "Starting" "running"
+write_status "0" "Preparing" "starting"
 
 # ─── 2. Validate inputs for custom datasets ───────────────────────────────────
 

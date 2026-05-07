@@ -3400,8 +3400,10 @@
       _setActiveStep('Preparing validation environment\u2026');
 
       let lastStepIdx = -1;
-      // If the job stays in "starting" beyond this deadline we give up.
-      const _STARTING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      // If the job stays in "starting" beyond this deadline we cancel and surface
+      // an error. 15 minutes covers worst-case SPOT VM provisioning queues plus
+      // a cold container image pull on a large machine type (n2-highmem-32/64).
+      const _STARTING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
       const _startingDeadlineMs = Date.now() + _STARTING_TIMEOUT_MS;
       // Consecutive poll failures before we give up (covers 404s, 500s, network errors).
       const MAX_POLL_ERRORS = 10;
@@ -3467,18 +3469,24 @@
         const stepNum = parseFloat(status.step ?? '0');
         const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
         if (status.status === 'starting') {
-          // Job is booting — show activity label but do not advance pills.
+          // Job is booting — show the server-provided label (Batch-state-aware:
+          // "Waiting for VM…", "VM provisioning…", "Container starting…", or
+          // "Preparing…" once entrypoint.sh has written its initial status).
+          // Do not advance progress pills; lastStepIdx remains -1.
           _setActiveStep(status.step_label || 'Preparing validation environment\u2026');
-          // Safety timeout: cancel the job and fail if still starting after 5 minutes.
+          // Safety timeout: cancel and fail if still booting after 15 minutes.
+          // 15 min covers worst-case SPOT queue waits + cold container image pulls
+          // on large machine types. The job is explicitly cancelled to avoid
+          // leaving an orphaned Batch task consuming quota.
           if (Date.now() > _startingDeadlineMs) {
             _activeStepStartMs = null;
             fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
             return {
               success: false, cancelled: false, run_id: confirmedRunId,
-              output: 'Validation environment did not start within the expected time.',
+              output: 'The validation VM did not start within 15 minutes. This can happen when SPOT VM capacity is limited or the container image is being pulled for the first time. Please retry \u2014 subsequent runs are faster once the image is cached.',
               failure_code: 'STARTING_TIMEOUT',
               failure_step: 0,
-              failure_message: 'Validation environment did not start within the expected time.',
+              failure_message: 'The validation VM did not start within 15 minutes. SPOT VM capacity may be limited \u2014 retrying usually succeeds.',
               failure_details: null,
               baseline_id: null,
             };
