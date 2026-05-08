@@ -341,7 +341,7 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_
     image   = _resolve_image()
     sa      = os.environ["BATCH_SERVICE_ACCOUNT"]
 
-    provisioning_model_name = os.environ.get("BATCH_PROVISIONING_MODEL", "SPOT").upper()
+    provisioning_model_name = os.environ.get("BATCH_PROVISIONING_MODEL", "STANDARD").upper()
     provisioning_model = (
         batch_v1.AllocationPolicy.ProvisioningModel.SPOT
         if provisioning_model_name == "SPOT"
@@ -385,9 +385,9 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_
         runnables=[runnable],
         environment=batch_v1.Environment(variables=env_vars),
         max_run_duration=duration_pb2.Duration(seconds=max_run_seconds),
-        max_retry_count=1,  # one retry for infrastructure failures (SPOT preemption, OOM, etc.)
-        # Only retry on infrastructure exits (≥2 / signal-killed); exit code 1 means
-        # the validation pipeline itself failed — retrying would produce the same result.
+        max_retry_count=0,  # no retries during STANDARD stabilization; set to 1 + SPOT to re-enable
+        # lifecycle_policies guards exit code 1 (validation failure) from retrying even if
+        # max_retry_count is later raised — keeps the policy in place as defense-in-depth.
         lifecycle_policies=[
             batch_v1.LifecyclePolicy(
                 action=batch_v1.LifecyclePolicy.Action.FAIL_TASK,

@@ -3401,8 +3401,8 @@
 
       let lastStepIdx = -1;
       // If the job stays in "starting" beyond this deadline we cancel and surface
-      // an error. 15 minutes covers worst-case SPOT VM provisioning queues plus
-      // a cold container image pull on a large machine type (n2-highmem-32/64).
+      // an error. 15 minutes covers worst-case VM provisioning plus a cold
+      // container image pull on a large machine type (n2-highmem-32/64).
       const _STARTING_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
       const _startingDeadlineMs = Date.now() + _STARTING_TIMEOUT_MS;
       // Consecutive poll failures before we give up (covers 404s, 500s, network errors).
@@ -3477,7 +3477,7 @@
           const _retryPrefix = _attempt > 0 ? 'Retry ' + _attempt + ': ' : '';
           _setActiveStep(_retryPrefix + (status.step_label || 'Preparing validation environment\u2026'));
           // Safety timeout: cancel and fail if still booting after 15 minutes.
-          // 15 min covers worst-case SPOT queue waits + cold container image pulls
+          // 15 min covers worst-case VM provisioning + cold container image pulls
           // on large machine types. The job is explicitly cancelled to avoid
           // leaving an orphaned Batch task consuming quota.
           if (Date.now() > _startingDeadlineMs) {
@@ -3485,10 +3485,10 @@
             fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
             return {
               success: false, cancelled: false, run_id: confirmedRunId,
-              output: 'The validation job did not complete startup within 15 minutes. Possible causes: SPOT VM capacity limits, a large container image pull, or a container launch failure that triggered a retry. Please retry \u2014 if the problem persists, check Cloud Logging for the batch job to see the specific error.',
+              output: 'The validation job did not complete startup within 15 minutes. Possible causes: a large container image pull, a container launch failure, or a VM provisioning delay. Please retry \u2014 if the problem persists, check Cloud Logging for the batch job to see the specific error.',
               failure_code: 'STARTING_TIMEOUT',
               failure_step: 0,
-              failure_message: 'Startup did not complete within 15 minutes. This can be caused by SPOT VM capacity limits, a slow container image pull, or a container launch failure. Retrying usually succeeds \u2014 if not, check Cloud Logging for details.',
+              failure_message: 'Startup did not complete within 15 minutes. This can be caused by a slow container image pull or a container launch failure. Please retry \u2014 if not, check Cloud Logging for details.',
               failure_details: null,
               baseline_id: null,
             };

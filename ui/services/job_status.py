@@ -124,9 +124,8 @@ def _apply_batch_fallback(status: dict, batch_state: str) -> dict:
         if not updated.get("failure_message"):
             if status.get("status") == "starting":
                 updated["failure_message"] = (
-                    "Validation failed to start. The VM may have been preempted or "
-                    "encountered an error before the pipeline launched. "
-                    "Retrying usually succeeds."
+                    "Validation failed to start. The VM encountered an error before "
+                    "the pipeline launched. Please retry."
                 )
             else:
                 updated["failure_message"] = "Validation stopped unexpectedly. Please retry."
@@ -249,10 +248,9 @@ def get_job_status(
                 "updated_at": "",
                 "failure_code": "STARTUP_FAILED",
                 "failure_message": (
-                    "Validation failed to start. This can happen when a SPOT VM is "
-                    "preempted, the container image could not be pulled, or the container "
-                    "failed to launch (e.g. OCI runtime error). Retrying usually succeeds. "
-                    "If the problem persists, check Cloud Logging for the batch job."
+                    "Validation failed to start. The container image could not be pulled "
+                    "or the container failed to launch (e.g. OCI runtime error). "
+                    "Please retry. If the problem persists, check Cloud Logging for the batch job."
                 ),
             }
         # UNKNOWN (transient Batch API error or race between submission and registration)
