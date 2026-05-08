@@ -55,8 +55,11 @@ def apply_warn_only(
     return True, converted
 
 
+_BLOCKING_STATUSES = {"FAILED", "CONFIG_ERROR"}
+
+
 def has_blockers(validation_output_path: str) -> bool:
-    """Return True if any result is FAILED (blocker)."""
+    """Return True if any result has a blocking status (FAILED or CONFIG_ERROR)."""
     try:
         with open(validation_output_path, encoding="utf-8") as f:
             results = json.load(f)
@@ -64,7 +67,7 @@ def has_blockers(validation_output_path: str) -> bool:
         return True  # Assume fail on error
     if not isinstance(results, list):
         return True
-    return any(r.get("status") == "FAILED" for r in results if isinstance(r, dict))
+    return any(r.get("status") in _BLOCKING_STATUSES for r in results if isinstance(r, dict))
 
 
 def main():
@@ -81,7 +84,7 @@ def main():
     parser.add_argument(
         "--check_blockers",
         action="store_true",
-        help="Exit 1 if any FAILED remain (for pass/fail determination)",
+        help="Exit 1 if any FAILED or CONFIG_ERROR remain (for pass/fail determination)",
     )
     args = parser.parse_args()
 

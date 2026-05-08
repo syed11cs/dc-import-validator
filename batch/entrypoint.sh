@@ -74,7 +74,8 @@ export IMPORT_EXISTENCE_CHECKS="${IMPORT_EXISTENCE_CHECKS:-true}"
 export JAVA_THREADS="${JAVA_THREADS:-2}"
 # CSV auto-split controls (passed through to run_e2e_test.sh; off by default).
 export CSV_SPLIT_ENABLED="${CSV_SPLIT_ENABLED:-false}"
-export CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-1000000}"
+export CSV_SPLIT_ROWS="${CSV_SPLIT_ROWS:-}"                              # empty = adaptive sizing in run_e2e_test.sh
+export CSV_SPLIT_TARGET_SHARDS_PER_THREAD="${CSV_SPLIT_TARGET_SHARDS_PER_THREAD:-2}"
 export CSV_SPLIT_THRESHOLD_ROWS="${CSV_SPLIT_THRESHOLD_ROWS:-5000000}"
 export CSV_SPLIT_CLEANUP="${CSV_SPLIT_CLEANUP:-true}"
 
@@ -168,6 +169,7 @@ data = {
     'batch_job_name':  os.environ.get('BATCH_JOB_NAME', ''),
     'dataset':         os.environ['DATASET'],
     'vm_type':         os.environ.get('VM_TYPE', ''),
+    'attempt':         int(os.environ.get('BATCH_TASK_ATTEMPT', '0') or '0'),
     'step':            os.environ['STEP'],
     'step_label':      os.environ['STEP_LABEL'],
     'status':          os.environ['STATUS'],

@@ -3473,7 +3473,9 @@
           // Labels are sourced from job_status.py (_BATCH_STARTING_LABELS) before
           // status.json exists, then from entrypoint.sh write_status once the
           // container has started. Do not advance progress pills; lastStepIdx remains -1.
-          _setActiveStep(status.step_label || 'Preparing validation environment\u2026');
+          const _attempt = status.attempt || 0;
+          const _retryPrefix = _attempt > 0 ? 'Retry ' + _attempt + ': ' : '';
+          _setActiveStep(_retryPrefix + (status.step_label || 'Preparing validation environment\u2026'));
           // Safety timeout: cancel and fail if still booting after 15 minutes.
           // 15 min covers worst-case SPOT queue waits + cold container image pulls
           // on large machine types. The job is explicitly cancelled to avoid

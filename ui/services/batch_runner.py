@@ -294,7 +294,7 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
     # CSV auto-split controls: pass through from Cloud Run env so operators can
     # enable splitting for benchmarking without code changes.
     # Default is off; set CSV_SPLIT_ENABLED=true on the Cloud Run service to enable.
-    for key in ("CSV_SPLIT_ENABLED", "CSV_SPLIT_ROWS", "CSV_SPLIT_THRESHOLD_ROWS", "CSV_SPLIT_CLEANUP"):
+    for key in ("CSV_SPLIT_ENABLED", "CSV_SPLIT_ROWS", "CSV_SPLIT_TARGET_SHARDS_PER_THREAD", "CSV_SPLIT_THRESHOLD_ROWS", "CSV_SPLIT_CLEANUP"):
         val = os.environ.get(key, "")
         if val:
             env[key] = val
@@ -385,7 +385,17 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_
         runnables=[runnable],
         environment=batch_v1.Environment(variables=env_vars),
         max_run_duration=duration_pb2.Duration(seconds=max_run_seconds),
-        max_retry_count=1,  # one retry on SPOT preemption
+        max_retry_count=1,  # one retry for infrastructure failures (SPOT preemption, OOM, etc.)
+        # Only retry on infrastructure exits (≥2 / signal-killed); exit code 1 means
+        # the validation pipeline itself failed — retrying would produce the same result.
+        lifecycle_policies=[
+            batch_v1.LifecyclePolicy(
+                action=batch_v1.LifecyclePolicy.Action.FAIL_TASK,
+                action_condition=batch_v1.LifecyclePolicy.ActionCondition(
+                    exit_codes=[1],
+                ),
+            )
+        ],
     )
 
     task_group = batch_v1.TaskGroup(
