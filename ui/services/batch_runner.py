@@ -299,6 +299,11 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
         if val:
             env[key] = val
 
+    # JFR/GC profiling: set GENMCF_PROFILE=true on the Cloud Run service to enable
+    # for the next Batch job without a code change. Default is false (off).
+    if os.environ.get("GENMCF_PROFILE", ""):
+        env["GENMCF_PROFILE"] = os.environ["GENMCF_PROFILE"]
+
     # Logging
     log_level = os.environ.get("LOG_LEVEL", "")
     if log_level:

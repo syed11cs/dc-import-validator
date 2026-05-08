@@ -487,7 +487,12 @@ _kill_step1_bg() {
     wait "$_STEP1_BG_PID" 2>/dev/null || true
     _STEP1_BG_PID=""
   fi
-  [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]] && rm -f "$_STEP1_BG_OUT"
+  if [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]]; then
+    rm -f "$_STEP1_BG_OUT"
+  fi
+  # Ensure the trap never exits non-zero — a non-zero EXIT trap exit code
+  # overrides the script's exit code in bash, even after an explicit exit 0.
+  return 0
 }
 # Ensure background process is cleaned up on any exit (including set -e failures).
 trap '_kill_step1_bg' EXIT
