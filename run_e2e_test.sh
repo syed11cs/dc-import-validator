@@ -591,6 +591,7 @@ _CSV_WAS_SPLIT=false
 # Assumes ~100 bytes/row for statistics CSVs (typical: 80–120 bytes/row).
 _EFFECTIVE_SPLIT_ROWS=""
 _TARGET_SHARDS=""
+_CSV_SIZE_BYTES=""
 if [[ -n "$CSV_SPLIT_ROWS" && "$CSV_SPLIT_ROWS" =~ ^[0-9]+$ && "$CSV_SPLIT_ROWS" -gt 0 ]]; then
   _EFFECTIVE_SPLIT_ROWS="$CSV_SPLIT_ROWS"
 fi
