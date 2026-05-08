@@ -456,6 +456,10 @@ VALIDATE_AND_SPLIT_SCRIPT="$SCRIPT_DIR/scripts/validate_and_split.py"
 _STEP1_BG_PID=""
 _STEP1_BG_OUT=""
 _STEP1_BG_EXIT=0
+# Differ background vars — declared here (before EXIT trap) so the trap function
+# can safely reference them with set -u active, even on early pipeline failure.
+_DIFFER_BG_PID=""
+_DIFFER_BG_LOG=""
 STEP1_START=$(date +%s)
 if [[ -n "$TMCF" && -f "$TMCF" ]]; then
   LLM_REVIEW_SCRIPT="$SCRIPT_DIR/scripts/llm_schema_review.py"
@@ -480,8 +484,9 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
   fi
 fi
 
-# Kill the Step 1 background process on early pipeline exit.
-_kill_step1_bg() {
+# Kill all background processes launched by this script on early pipeline exit.
+# Handles both the Step 1 LLM background process and the Step 2.4 differ background process.
+_kill_bg_processes() {
   if [[ -n "$_STEP1_BG_PID" ]]; then
     kill "$_STEP1_BG_PID" 2>/dev/null || true
     wait "$_STEP1_BG_PID" 2>/dev/null || true
@@ -490,12 +495,21 @@ _kill_step1_bg() {
   if [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]]; then
     rm -f "$_STEP1_BG_OUT"
   fi
+  if [[ -n "$_DIFFER_BG_PID" ]]; then
+    kill "$_DIFFER_BG_PID" 2>/dev/null || true
+    wait "$_DIFFER_BG_PID" 2>/dev/null || true
+    _DIFFER_BG_PID=""
+  fi
+  if [[ -n "$_DIFFER_BG_LOG" && -f "$_DIFFER_BG_LOG" ]]; then
+    rm -f "$_DIFFER_BG_LOG"
+    _DIFFER_BG_LOG=""
+  fi
   # Ensure the trap never exits non-zero — a non-zero EXIT trap exit code
   # overrides the script's exit code in bash, even after an explicit exit 0.
   return 0
 }
-# Ensure background process is cleaned up on any exit (including set -e failures).
-trap '_kill_step1_bg' EXIT
+# Ensure background processes are cleaned up on any exit (including set -e failures).
+trap '_kill_bg_processes' EXIT
 
 # ── Preflight check ────────────────────────────────────────────────────────
 if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
@@ -503,7 +517,7 @@ if [[ -f "$VALIDATE_FILES_SCRIPT" && -n "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
   [[ -n "$STAT_VARS_MCF" && -f "$STAT_VARS_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-mcf="$STAT_VARS_MCF")
   [[ -n "$STAT_VARS_SCHEMA_MCF" && -f "$STAT_VARS_SCHEMA_MCF" ]] && PREFLIGHT_ARGS+=(--stat-vars-schema-mcf="$STAT_VARS_SCHEMA_MCF")
   if ! $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" 2>/dev/null; then
-    _kill_step1_bg
+    _kill_bg_processes
     log_error "Preflight failed: required import files missing or wrong extension."
     emit_failure "PREFLIGHT_FAILED" 0 "Preflight failed" "" "$PREFLIGHT_ERRORS_JSON"
     $PYTHON "$VALIDATE_FILES_SCRIPT" "${PREFLIGHT_ARGS[@]}" || true
@@ -524,7 +538,7 @@ elif [[ -f "$VALIDATE_CSV_SCRIPT" && ${#CSVS[@]} -gt 0 ]]; then
   CSV_QUALITY_EXTRA=(--allow-empty-columns)
   if ! $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value \
        --output-details="$CSV_QUALITY_DETAILS_JSON" "${CSV_QUALITY_EXTRA[@]}" 2>/dev/null; then
-    _kill_step1_bg
+    _kill_bg_processes
     log_error "CSV quality check failed."
     emit_failure "CSV_QUALITY_FAILED" 0 "CSV quality check failed" "" "$CSV_QUALITY_DETAILS_JSON"
     $PYTHON "$VALIDATE_CSV_SCRIPT" "${CSV_ARGS[@]}" --value-column=value "${CSV_QUALITY_EXTRA[@]}" || true
@@ -601,6 +615,50 @@ if [[ -z "$_EFFECTIVE_SPLIT_ROWS" ]]; then
   _EFFECTIVE_SPLIT_ROWS=2000000  # fallback: split disabled or file not accessible
 fi
 
+# ── CSV_DUP_CHECK policy ───────────────────────────────────────────────────
+# Resolves CSV_DUP_CHECK (auto|true|false) to a concrete flag for validate_and_split.py.
+# auto (default): disable dup check only when the CSV is estimated to exceed
+#   CSV_SPLIT_THRESHOLD_ROWS rows (default 5M). Uses file size / 100 as a row-count
+#   estimate (typical statistics CSV: 80-120 bytes/row). Preserves integrity checks
+#   for smaller imports where the ~165s hashing cost is not justified.
+# true:  always enable (useful when data integrity > throughput, e.g. production gate).
+# false: always disable (useful for benchmarking or datasets known to be de-duped).
+_DUP_CHECK_POLICY="${CSV_DUP_CHECK:-auto}"
+_DUP_CHECK_ACTIVE="true"
+_DUP_CHECK_FLAG=""
+_DUP_CHECK_REASON=""
+if [[ "$_DUP_CHECK_POLICY" == "false" ]]; then
+  _DUP_CHECK_ACTIVE="false"
+  _DUP_CHECK_FLAG="--no-dup-check"
+  _DUP_CHECK_REASON="policy=false (always disabled)"
+elif [[ "$_DUP_CHECK_POLICY" == "true" ]]; then
+  _DUP_CHECK_REASON="policy=true (always enabled)"
+elif [[ "$_DUP_CHECK_POLICY" == "auto" && "$CSV_SPLIT_ENABLED" == "true" \
+        && ${#CSVS[@]} -eq 1 && -f "${CSVS[0]}" ]]; then
+  # auto + single CSV on the split path: check estimated row count via file size.
+  # Hashing costs ~165s for 38M rows; disable only when the file is large enough
+  # that the threshold would trigger a split (i.e., estimated rows >= threshold).
+  _DUP_THRESHOLD_ROWS="${CSV_SPLIT_THRESHOLD_ROWS:-5000000}"
+  _DUP_THRESHOLD_BYTES=$(( _DUP_THRESHOLD_ROWS * 100 ))
+  # _CSV_SIZE_BYTES was already computed for adaptive shard sizing above; fall back
+  # to a fresh stat call if it was not set (e.g., split path not taken above).
+  if [[ -z "$_CSV_SIZE_BYTES" ]]; then
+    _CSV_SIZE_BYTES=$(stat -f%z "${CSVS[0]}" 2>/dev/null \
+                      || stat -c%s "${CSVS[0]}" 2>/dev/null \
+                      || echo 0)
+  fi
+  if [[ "$_CSV_SIZE_BYTES" -ge "$_DUP_THRESHOLD_BYTES" ]]; then
+    _DUP_CHECK_ACTIVE="false"
+    _DUP_CHECK_FLAG="--no-dup-check"
+    _DUP_CHECK_REASON="auto: file_bytes=${_CSV_SIZE_BYTES} >= threshold_bytes=${_DUP_THRESHOLD_BYTES} (est. rows >= ${_DUP_THRESHOLD_ROWS})"
+  else
+    _DUP_CHECK_REASON="auto: file_bytes=${_CSV_SIZE_BYTES} < threshold_bytes=${_DUP_THRESHOLD_BYTES} (small file — check enabled)"
+  fi
+else
+  _DUP_CHECK_REASON="auto: not on single-CSV split path"
+fi
+log_info "CSV dup check policy: ${_DUP_CHECK_POLICY} → active=${_DUP_CHECK_ACTIVE} (${_DUP_CHECK_REASON})"
+
 if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
   if [[ ${#CSVS[@]} -gt 1 ]]; then
     log_info "CSV auto-split skipped: ${#CSVS[@]} CSV files already provided (splitting only applies to single-CSV inputs)"
@@ -608,7 +666,7 @@ if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
     log_info "CSV auto-split skipped: no accessible CSV file found"
   elif [[ "$_USE_COMBINED_SCRIPT" == "true" ]]; then
     # ── Combined validate + split path (single streaming pass) ────────────
-    log_info "Combined validate+split (rows_per_shard=${_EFFECTIVE_SPLIT_ROWS}, threshold=$CSV_SPLIT_THRESHOLD_ROWS)..."
+    log_info "Combined validate+split (rows_per_shard=${_EFFECTIVE_SPLIT_ROWS}, threshold=$CSV_SPLIT_THRESHOLD_ROWS, dup_check=${_DUP_CHECK_ACTIVE})..."
     mkdir -p "$_SHARD_DIR"
     set +e
     $PYTHON "$VALIDATE_AND_SPLIT_SCRIPT" \
@@ -620,12 +678,13 @@ if [[ "$CSV_SPLIT_ENABLED" == "true" ]]; then
       --output-details="$CSV_QUALITY_DETAILS_JSON" \
       --value-column=value \
       --allow-empty-columns \
+      ${_DUP_CHECK_FLAG:+"$_DUP_CHECK_FLAG"} \
       2>/dev/null
     _COMBINED_EXIT=$?
     set -e
 
     if [[ $_COMBINED_EXIT -ne 0 ]]; then
-      _kill_step1_bg
+      _kill_bg_processes
       log_error "CSV quality check failed (combined validate+split, exit $_COMBINED_EXIT)"
       # Re-run with errors printed to stderr so they appear in the log.
       $PYTHON "$VALIDATE_AND_SPLIT_SCRIPT" \
@@ -670,7 +729,7 @@ except Exception:
         log_info "Combined validate+split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
 
         if [[ $_SHARD_COUNT -eq 0 ]]; then
-          _kill_step1_bg
+          _kill_bg_processes
           log_error "Combined script reported done but shard_count=0"
           emit_failure "CSV_SPLIT_FAILED" 2 "CSV split produced no shards"
           ensure_failure_report "CSV Split" "CSV split produced no shards"
@@ -691,7 +750,7 @@ print('\n'.join(d.get('shard_paths', [])))
 " "$_SPLIT_MANIFEST")
 
         if [[ ${#CSVS[@]} -eq 0 ]]; then
-          _kill_step1_bg
+          _kill_bg_processes
           log_error "Failed to read shard paths from manifest"
           emit_failure "CSV_SPLIT_FAILED" 2 "Could not read shard paths"
           ensure_failure_report "CSV Split" "Could not read shard paths from manifest"
@@ -752,7 +811,7 @@ except Exception:
     set -e
 
     if [[ $_SPLIT_EXIT -ne 0 ]]; then
-      _kill_step1_bg
+      _kill_bg_processes
       log_error "CSV auto-split failed (exit $_SPLIT_EXIT)"
       emit_failure "CSV_SPLIT_FAILED" 2 "CSV auto-splitting failed"
       ensure_failure_report "CSV Split" "CSV auto-splitting failed"
@@ -771,7 +830,7 @@ except Exception:
         log_info "CSV auto-split: 1 file -> ${_SHARD_COUNT} shards (${_TOTAL_ROWS} rows, ${_SPLIT_ELAPSED}s)"
 
         if [[ $_SHARD_COUNT -eq 0 ]]; then
-          _kill_step1_bg
+          _kill_bg_processes
           log_error "CSV split reported done but shard_count=0"
           emit_failure "CSV_SPLIT_FAILED" 2 "CSV split produced no shards"
           ensure_failure_report "CSV Split" "CSV split produced no shards"
@@ -790,7 +849,7 @@ print('\n'.join(d.get('shard_paths', [])))
 " "$_SPLIT_MANIFEST")
 
         if [[ ${#CSVS[@]} -eq 0 ]]; then
-          _kill_step1_bg
+          _kill_bg_processes
           log_error "Failed to read shard paths from manifest"
           emit_failure "CSV_SPLIT_FAILED" 2 "Could not read shard paths"
           ensure_failure_report "CSV Split" "Could not read shard paths from manifest"
@@ -1043,7 +1102,7 @@ except: print('unknown')
   fi
 fi
 
-log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${_EFFECTIVE_SPLIT_ROWS} configured_split_rows=${CSV_SPLIT_ROWS:-adaptive} target_shards_per_thread=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD} target_shards=${_TARGET_SHARDS:-na} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS} batch_provisioning_model=${BATCH_PROVISIONING_MODEL:-STANDARD}"
+log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${_EFFECTIVE_SPLIT_ROWS} configured_split_rows=${CSV_SPLIT_ROWS:-adaptive} target_shards_per_thread=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD} target_shards=${_TARGET_SHARDS:-na} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_threads_source=${JAVA_THREADS_SOURCE:-default} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS} batch_provisioning_model=${BATCH_PROVISIONING_MODEL:-STANDARD} dup_check_policy=${_DUP_CHECK_POLICY:-auto} dup_check_active=${_DUP_CHECK_ACTIVE:-true}"
 
 # Clean up CSV shards (set CSV_SPLIT_CLEANUP=false to preserve for debugging).
 # Guard requires _SHARD_DIR ends with /csv_shards — defends against an empty or
@@ -1068,22 +1127,23 @@ if [[ -z "$_DIFFER_DATASET_ID" && "$DATASET" != "custom" ]]; then
 fi
 
 DIFFER_OUTPUT=""
+_DIFFER_BG_START=""
 if [[ -n "$_DIFFER_DATASET_ID" ]]; then
   echo "::STEP::2.4:Differ"
   DIFFER_OUT_DIR="$GENMCF_OUTPUT/differ_output"
-  _DIFFER_EXIT=0
+  _DIFFER_BG_LOG=$(mktemp /tmp/differ_bg_XXXXXX.log)
+  _DIFFER_BG_START=$(date +%s)
+  # Launch differ in the background so config validation and Step 3 setup work can
+  # overlap with differ's GCS baseline fetch + diff computation.
+  # The wait is deferred to just before VALIDATION_ARGS building (which needs DIFFER_OUTPUT).
+  # Overlap window: config template check + ::STEP:: marker + mkdir + Python import time.
+  # Critical-path reduction: differ_wall_time - overlap_window_seconds (typically 5-15s).
   $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
     --current_mcf_dir="$GENMCF_OUTPUT" \
     --dataset_id="$_DIFFER_DATASET_ID" \
-    --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
-  if [[ $_DIFFER_EXIT -eq 0 ]]; then
-    DIFFER_OUTPUT="$DIFFER_OUT_DIR"
-    log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT"
-  elif [[ $_DIFFER_EXIT -eq 1 ]]; then
-    log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped (first run)"
-  else
-    log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output"
-  fi
+    --output_dir="$DIFFER_OUT_DIR" >"$_DIFFER_BG_LOG" 2>&1 &
+  _DIFFER_BG_PID=$!
+  log_info "Step 2.4: Differ launched in background (pid=${_DIFFER_BG_PID}, started_at=$(date +%H:%M:%S))"
 else
   log_info "Step 2.4: Differ skipped — no dataset_id (use --baseline-name for custom datasets)"
 fi
@@ -1110,6 +1170,34 @@ log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CON
 # Validation output goes inside dataset folder for consistency
 mkdir -p "$DATASET_OUTPUT"
 VALIDATION_OUTPUT="$DATASET_OUTPUT/validation_output.json"
+
+# Wait for background differ (launched in Step 2.4) before resolving DIFFER_OUTPUT.
+# differ output is needed to build --differ_output= in VALIDATION_ARGS below.
+if [[ -n "$_DIFFER_BG_PID" ]]; then
+  _DIFFER_WAIT_START=$(date +%s)
+  log_info "Step 2.4: Waiting for background differ (pid=${_DIFFER_BG_PID}, waiting_at=$(date +%H:%M:%S))..."
+  _DIFFER_EXIT=0
+  wait "$_DIFFER_BG_PID" || _DIFFER_EXIT=$?
+  _DIFFER_BG_PID=""
+  _DIFFER_TOTAL_ELAPSED=$(( $(date +%s) - _DIFFER_BG_START ))
+  _DIFFER_WAIT_ELAPSED=$(( $(date +%s) - _DIFFER_WAIT_START ))
+  # Overlap = total differ wall time minus the time we actually blocked on it.
+  # Positive overlap means Step 3 setup proceeded while differ was running.
+  _DIFFER_OVERLAP=$(( _DIFFER_TOTAL_ELAPSED - _DIFFER_WAIT_ELAPSED ))
+  if [[ -n "$_DIFFER_BG_LOG" ]]; then
+    cat "$_DIFFER_BG_LOG" || true
+    rm -f "$_DIFFER_BG_LOG"
+    _DIFFER_BG_LOG=""
+  fi
+  if [[ $_DIFFER_EXIT -eq 0 ]]; then
+    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
+    log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s, overlap_saved=${_DIFFER_OVERLAP}s)"
+  elif [[ $_DIFFER_EXIT -eq 1 ]]; then
+    log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s, overlap_saved=${_DIFFER_OVERLAP}s)"
+  else
+    log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s)"
+  fi
+fi
 
 # Build validation args - stats_summary, lint_report, differ_output may be optional per config
 VALIDATION_ARGS=(

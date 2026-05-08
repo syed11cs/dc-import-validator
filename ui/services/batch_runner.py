@@ -230,18 +230,24 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
     #   3. Computed from processing_mode fraction × machine vCPUs
     #   4. Unset — shell script defaults to 2
     _effective_mode = input_files.processing_mode or "auto"
+    _thread_source = "default"
     if java_threads_env := os.environ.get("JAVA_THREADS", ""):
         env["JAVA_THREADS"] = java_threads_env
-        # Warn when env is silently overriding a user-provided value so the UI choice
-        # is not misleadingly invisible in logs.
+        _thread_source = "env_override"
+        # HIGH-VISIBILITY: env var is silently overriding the user's UI selection.
         if input_files.java_threads > 0 and str(input_files.java_threads) != java_threads_env:
             logger.warning(
-                "JAVA_THREADS env override (%s) is overriding user-provided value (%d) "
-                "[run_id=%s processing_mode=%s machine=%s]",
-                java_threads_env, input_files.java_threads, run_id, _effective_mode, machine_type,
+                "!!!! JAVA_THREADS ENV OVERRIDE !!!!\n"
+                "  JAVA_THREADS env var (%s) is overriding the user-selected value (%d).\n"
+                "  The job will run with %s threads, not %d.\n"
+                "  To use the user-selected value, remove JAVA_THREADS from the Cloud Run service env.\n"
+                "  [run_id=%s processing_mode=%s machine=%s]",
+                java_threads_env, input_files.java_threads,
+                java_threads_env, input_files.java_threads,
+                run_id, _effective_mode, machine_type,
             )
         elif input_files.java_threads == 0 and _effective_mode != "auto":
-            logger.info(
+            logger.warning(
                 "JAVA_THREADS env override (%s) is overriding processing_mode=%s "
                 "[run_id=%s machine=%s]",
                 java_threads_env, _effective_mode, run_id, machine_type,
@@ -262,6 +268,7 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
                 )
     elif input_files.java_threads > 0:
         env["JAVA_THREADS"] = str(input_files.java_threads)
+        _thread_source = "ui_custom"
     elif machine_type in _VCPUS_BY_MACHINE:
         vcpus = _VCPUS_BY_MACHINE[machine_type]
         if _effective_mode == "custom":
@@ -275,14 +282,23 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
         fraction = _THREAD_FRACTION_BY_MODE.get(_effective_mode, _THREAD_FRACTION_BY_MODE["auto"])
         threads = min(max(1, int(vcpus * fraction)), vcpus)
         env["JAVA_THREADS"] = str(threads)
+        _thread_source = f"mode_auto({_effective_mode})"
 
+    # Propagate thread source into the container so entrypoint.sh can include it
+    # in the [PERF] log line without re-deriving the priority logic in bash.
+    env["JAVA_THREADS_SOURCE"] = _thread_source
+
+    # Canonical thread-config log line — one grep-able line with all resolved values.
     logger.info(
-        "genmcf env: machine=%s JAVA_THREADS=%s JAVA_XMX=%s processing_mode=%s [run_id=%s]",
-        machine_type or "unknown",
-        env.get("JAVA_THREADS", "unset(default=2)"),
-        env.get("JAVA_XMX", "unset(default=96g)"),
-        _effective_mode,
+        "[THREAD_CONFIG] run_id=%s machine=%s processing_mode=%s "
+        "requested_java_threads=%s effective_java_threads=%s thread_source=%s JAVA_XMX=%s",
         run_id,
+        machine_type or "unknown",
+        _effective_mode,
+        input_files.java_threads if input_files.java_threads > 0 else "auto",
+        env.get("JAVA_THREADS", "default(2)"),
+        _thread_source,
+        env.get("JAVA_XMX", "default(96g)"),
     )
 
     # Pass-through API keys (only if set on the server)
@@ -294,7 +310,10 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
     # CSV auto-split controls: pass through from Cloud Run env so operators can
     # enable splitting for benchmarking without code changes.
     # Default is off; set CSV_SPLIT_ENABLED=true on the Cloud Run service to enable.
-    for key in ("CSV_SPLIT_ENABLED", "CSV_SPLIT_ROWS", "CSV_SPLIT_TARGET_SHARDS_PER_THREAD", "CSV_SPLIT_THRESHOLD_ROWS", "CSV_SPLIT_CLEANUP"):
+    # CSV_DUP_CHECK: auto (default) | true | false. Controls duplicate row hashing in
+    # validate_and_split.py. In auto mode the shell script disables checking for large
+    # single-CSV split runs (>5M row threshold) to save ~165s on 38M-row datasets.
+    for key in ("CSV_SPLIT_ENABLED", "CSV_SPLIT_ROWS", "CSV_SPLIT_TARGET_SHARDS_PER_THREAD", "CSV_SPLIT_THRESHOLD_ROWS", "CSV_SPLIT_CLEANUP", "CSV_DUP_CHECK"):
         val = os.environ.get(key, "")
         if val:
             env[key] = val

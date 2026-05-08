@@ -34,10 +34,12 @@ Usage:
   python validate_and_split.py --input FILE --output-dir DIR \\
       [--rows-per-shard N] [--threshold-rows N] [--manifest PATH] \\
       [--output-details PATH] [--value-column COL] [--allow-empty-columns]
+      [--no-dup-check]
 
   # Validate only (split disabled)
   python validate_and_split.py --input FILE --no-split \\
       [--output-details PATH] [--value-column COL] [--allow-empty-columns]
+      [--no-dup-check]
 """
 
 from __future__ import annotations
@@ -140,6 +142,7 @@ def run(
     value_column: str | None,
     allow_empty_columns: bool,
     no_split: bool,
+    no_dup_check: bool = False,
 ) -> int:
     """Combined validate + split. Returns 0 on success, 1 on failure."""
     t_start = time.monotonic()
@@ -147,6 +150,9 @@ def run(
     basename = os.path.splitext(os.path.basename(input_path))[0]
 
     splitting = not no_split and output_dir is not None
+
+    if no_dup_check:
+        _log("Duplicate row check: disabled (--no-dup-check)")
 
     if splitting:
         os.makedirs(output_dir, exist_ok=True)
@@ -232,7 +238,7 @@ def run(
 
                 # 2. Duplicate row detection (fail-fast; hash set stops growing
                 #    after the first duplicate is found)
-                if first_dup_row is None:
+                if not no_dup_check and first_dup_row is None:
                     key = tuple(
                         row[idx].strip() if idx < len(row) else ""
                         for _, idx in key_col_pairs
@@ -362,7 +368,8 @@ def run(
                     elapsed=elapsed,
                 )
 
-    _log(f"Validation passed: {total_rows:,} rows in {elapsed:.1f}s")
+    dup_check_state = "disabled" if no_dup_check else "enabled"
+    _log(f"Validation passed: {total_rows:,} rows in {elapsed:.1f}s (dup_check={dup_check_state})")
     return 0
 
 
@@ -425,6 +432,15 @@ def main() -> int:
         action="store_true",
         help="Treat entirely empty columns as non-fatal: record in details but do not fail.",
     )
+    parser.add_argument(
+        "--no-dup-check",
+        action="store_true",
+        help=(
+            "Skip the duplicate row check. Saves ~165s on very large CSVs (38M+ rows) "
+            "at the cost of not detecting duplicate rows. Set CSV_DUP_CHECK=false to "
+            "enable this via the shell wrapper."
+        ),
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.input):
@@ -456,6 +472,7 @@ def main() -> int:
         value_column=value_col,
         allow_empty_columns=args.allow_empty_columns,
         no_split=args.no_split,
+        no_dup_check=args.no_dup_check,
     )
 
 

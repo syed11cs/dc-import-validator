@@ -1789,6 +1789,11 @@
     let lastRunCustomDatasetName = null;
     /** 'success' | 'failed' | 'cancelled' | null — outcome of the most recent run for the current session. */
     let lastRunStatus = null;
+    /** True when all deferred GCS artifacts (MCF files etc.) are uploaded for the last run.
+     *  False while Phase 2 upload is still in progress — Accept Baseline is disabled until true. */
+    let _artifactsReady = true;
+    /** Interval ID for the background artifacts-ready poll. Cleared when artifacts become ready or on timeout. */
+    let _artifactsPollInterval = null;
     /** Datasets that completed a run in this page session; used to suppress the restore notice for fresh results. */
     const _sessionRunDatasets = new Set();
     /** Per-run custom SQL rules defined by the user in this session. Not persisted. */
@@ -2034,6 +2039,8 @@
       lastRunDataset = null;
       lastRunStatus = null;
       lastRunSummary = null;
+      _artifactsReady = true;
+      if (_artifactsPollInterval) { clearInterval(_artifactsPollInterval); _artifactsPollInterval = null; }
       lastRunReportGenerated = false;
       lastRunHadAiReview = false;
       lastRunCustomDatasetName = null;
@@ -3347,6 +3354,12 @@
     }
 
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
+      // Reset artifact-readiness state from any prior run so the new run starts clean.
+      // Must happen before polling begins — prevents the poll from a previous run
+      // from racing with the new run's success handler.
+      _artifactsReady = true;
+      if (_artifactsPollInterval) { clearInterval(_artifactsPollInterval); _artifactsPollInterval = null; }
+
       // Submit. Wrapped in try/catch so an abort that fires mid-submission still
       // cancels the server job: runId is generated locally and sent to the server
       // unchanged, so the cancel endpoint can find it via compute_job_name() even
@@ -3511,6 +3524,7 @@
             output: 'Validation completed.',
             failure_code: null, failure_step: null, failure_message: null, failure_details: null,
             baseline_id: dataset !== 'custom' ? dataset : (opts.baseline_name || null),
+            artifacts_ready: status.artifacts_ready !== false,
           };
         }
         if (status.status === 'failed') {
@@ -4041,6 +4055,21 @@
           };
           setSummaryCard(summaryDataToShow);
           await Promise.all([reportPromise, validationPromise]);
+
+          // ── Artifact-readiness tracking ───────────────────────────────────
+          // artifacts_ready=false means Phase 1 (UI reports) uploaded but Phase 2
+          // (MCF files) is still in progress. Disable Accept Baseline and show a
+          // "Finalizing artifacts…" indicator until the deferred upload completes.
+          //
+          // Guard: only apply state if lastRunReportId still matches this run.
+          // A very fast second submission could change lastRunReportId before we
+          // reach this point; in that case, silently discard the stale result.
+          if (lastRunReportId === (data.run_id || null)) {
+            _artifactsReady = data.artifacts_ready !== false;
+            if (!_artifactsReady && data.run_id) {
+              _startArtifactsReadyPoll(data.run_id, runDataset);
+            }
+          }
         } else if (data.cancelled) {
           lastRunStatus = 'cancelled';
           _sessionRunDatasets.add(runDataset);
@@ -4604,9 +4633,96 @@
       return total === 0 ? 'success' : 'warning';
     }
 
+    function _startArtifactsReadyPoll(runId, dataset) {
+      if (_artifactsPollInterval) clearInterval(_artifactsPollInterval);
+
+      // Phase 1: fast polling (3s interval) for up to 5 minutes.
+      // Phase 2: slow polling (30s interval) after 5 minutes — never auto-enables.
+      // The button is ONLY enabled when the server explicitly confirms artifacts_ready=true.
+      // We never enable on timeout to avoid creating broken baseline state from incomplete uploads.
+      const FAST_POLL_MS  = 3_000;
+      const SLOW_POLL_MS  = 30_000;
+      const FAST_PHASE_MS = 5 * 60 * 1000;
+      const startMs = Date.now();
+      let _timedOut = false;
+
+      const BANNER_ID = 'artifacts-finalizing-banner';
+      const BTN_ID = 'accept-baseline-btn';
+
+      function _getOrCreateBanner(text) {
+        let el = document.getElementById(BANNER_ID);
+        if (!el) {
+          const btn = document.getElementById(BTN_ID);
+          if (btn) {
+            el = document.createElement('p');
+            el.id = BANNER_ID;
+            el.className = 'differ-no-changes-note';
+            el.style.color = 'var(--text-secondary, #6b7280)';
+            el.style.fontSize = '0.85em';
+            const row = btn.closest('.differ-accept-row') || btn.parentNode;
+            if (row) row.insertAdjacentElement('afterend', el);
+          }
+        }
+        if (el && text) el.textContent = text;
+        return el;
+      }
+
+      function _updateBtn(ready) {
+        const b = document.getElementById(BTN_ID);
+        if (!b) return;
+        if (ready) {
+          b.disabled = false;
+          b.title = '';
+        } else {
+          b.disabled = true;
+          b.title = 'Accept Baseline is unavailable until artifact uploads complete.';
+        }
+      }
+      function _removeBanner() {
+        const el = document.getElementById(BANNER_ID);
+        if (el) el.remove();
+      }
+
+      // Initial state — button exists in DOM because we're called after Promise.all
+      _updateBtn(false);
+      _getOrCreateBanner('Finalizing artifacts\u2026 Accept Baseline will be enabled when all files finish uploading.');
+
+      async function _poll() {
+        const elapsed = Date.now() - startMs;
+        if (!_timedOut && elapsed > FAST_PHASE_MS) {
+          // Transition to slow polling and update banner.
+          _timedOut = true;
+          clearInterval(_artifactsPollInterval);
+          _getOrCreateBanner(
+            'Artifact upload is taking longer than expected. Accept Baseline is unavailable until uploads complete. Checking periodically\u2026'
+          );
+          _artifactsPollInterval = setInterval(_poll, SLOW_POLL_MS);
+          return;
+        }
+        try {
+          const r = await fetch(API + `/api/jobs/${encodeURIComponent(runId)}/status`);
+          if (!r.ok) return;
+          const st = await r.json();
+          if (st && st.artifacts_ready === true) {
+            clearInterval(_artifactsPollInterval);
+            _artifactsPollInterval = null;
+            _artifactsReady = true;
+            _updateBtn(true);
+            _removeBanner();
+          }
+        } catch (_) { /* ignore transient errors — will retry on next tick */ }
+      }
+
+      _artifactsPollInterval = setInterval(_poll, FAST_POLL_MS);
+    }
+
     function acceptBaseline() {
       const btn = document.getElementById('accept-baseline-btn');
       if (!btn || btn.disabled) return;
+      if (!_artifactsReady) {
+        showToast('Artifacts are still uploading. Accept Baseline will be available shortly.', 4000);
+        return;
+      }
       // Detect bootstrap (first-time creation) vs normal accept based on current container state.
       const container = document.getElementById('differ-container');
       const isBootstrap = container && container.querySelector('.differ-no-baseline-msg') !== null;

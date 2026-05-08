@@ -140,6 +140,11 @@ write_status() {
     # failure_details_json: a JSON-encoded value (object, array, or literal null).
     # Defaults to null so intermediate "running" writes are unaffected.
     local failure_details_json="${6:-null}"
+    # artifacts_ready: "true" | "false" | "" (omit field).
+    # "false" = Phase 1 (UI-critical) uploads done; MCF/deferred still uploading.
+    # "true"  = All deferred artifacts uploaded; Accept Baseline is now safe.
+    # ""      = Field omitted (backward compat — treated as true by UI/job_status.py).
+    local artifacts_ready="${7:-}"
 
     STEP="$step" \
     STEP_LABEL="$step_label" \
@@ -147,6 +152,7 @@ write_status() {
     FAILURE_CODE="$failure_code" \
     FAILURE_MESSAGE="$failure_message" \
     FAILURE_DETAILS_JSON="$failure_details_json" \
+    ARTIFACTS_READY="$artifacts_ready" \
     STARTED_AT="$STARTED_AT" \
     python3 -c "
 import json, os
@@ -180,12 +186,19 @@ data = {
     'failure_details': failure_details,
 }
 
+# artifacts_ready is optional: only written when explicitly set to 'true' or 'false'.
+# Omitting the field preserves backward compatibility (UI treats missing as true).
+_ar = os.environ.get('ARTIFACTS_READY', '')
+if _ar in ('true', 'false'):
+    data['artifacts_ready'] = (_ar == 'true')
+
 blob = bucket.blob('jobs/' + os.environ['RUN_ID'] + '/status.json')
 blob.upload_from_string(json.dumps(data, indent=2), content_type='application/json')
 print(
     '[status] step=' + data['step'] +
     ' status=' + data['status'] +
-    ' label=' + data['step_label'],
+    ' label=' + data['step_label'] +
+    (' artifacts_ready=' + str(data['artifacts_ready']).lower() if 'artifacts_ready' in data else ''),
     flush=True,
 )
 " 2>&1 || log "WARNING: write_status failed (step=${step} status=${status}) — continuing"
@@ -502,49 +515,110 @@ except Exception:
     log "Failure detail: code=${FAILURE_CODE} message=${FAILURE_MESSAGE}"
 fi
 
-# ─── 7. Upload reports to GCS ─────────────────────────────────────────────────
+# ─── 7. Two-phase upload to GCS ───────────────────────────────────────────────
 #
-# Runs on both success and failure paths so that partial reports (e.g. a failed
-# genmcf run that still produced validation_report.html via ensure_failure_report)
-# are available for the user to inspect in the UI.
+# Phase 1 (critical path, both success and failure): UI-critical artifacts in parallel.
+#   Covers: validation_report.html, summary_report.html, validation_output.json,
+#           report.json, schema_review.json, differ_output/.
+#   Completes in ~3-8s (parallel ThreadPoolExecutor).
 #
-# Uses upload_reports_to_gcs() from ui/gcs_reports.py, which already covers:
-# validation_report.html, summary_report.html, validation_output.json, report.json,
-# schema_review.json, validation_warnings_and_advisories.csv, input.csv, differ_output/.
+# Phase 2 (deferred):
+#   Success path: MCF files, input.csv, advisories CSV, JFR/gc.log.
+#     After these complete, artifacts_ready=true enables Accept Baseline.
+#   Failure path: JFR/gc.log and advisories CSV for debugging.
+#     MCF files and input.csv are skipped (baseline workflow is not relevant).
+#     No second write_status — failure is already a terminal state.
 
-log "Uploading reports from ${PIPELINE_OUTPUT}/"
+_PHASE1_START=$(date +%s)
+log "Phase 1: Uploading critical reports from ${PIPELINE_OUTPUT}/"
 
 PIPELINE_OUTPUT="$PIPELINE_OUTPUT" python3 -c "
 import os, sys
 from pathlib import Path
 sys.path.insert(0, '/app/dc-import-validator')
-from ui.gcs_reports import upload_reports_to_gcs
+from ui.gcs_reports import upload_critical_reports_to_gcs
 
 output_dir = Path(os.environ['PIPELINE_OUTPUT'])
 if not output_dir.exists():
     print(
-        '[upload] Output directory not found: ' + str(output_dir) +
-        ' — nothing to upload',
+        '[upload] Output directory not found: ' + str(output_dir) + ' — nothing to upload',
         flush=True,
     )
     sys.exit(0)
 
-uploaded = upload_reports_to_gcs(
+uploaded = upload_critical_reports_to_gcs(
     output_dir,
     os.environ['RUN_ID'],
     os.environ['DATASET'],
 )
-print('[upload] Reports uploaded: ' + str(uploaded), flush=True)
-" 2>&1 || log "WARNING: Report upload failed — results may not be visible in the UI"
+print('[upload] Phase 1: ' + str(uploaded) + ' critical reports uploaded', flush=True)
+" 2>&1 || log "WARNING: Phase 1 upload failed — results may not be visible in the UI"
+_PHASE1_ELAPSED=$(( $(date +%s) - _PHASE1_START ))
+log "Phase 1 upload complete in ${_PHASE1_ELAPSED}s"
 
-# ─── 8. Write final status ────────────────────────────────────────────────────
+# ─── 8. Write terminal status ─────────────────────────────────────────────────
+#
+# Failure: write final failure status now; Phase 2 still runs for debug artifacts
+#   but writes no further status (failure is terminal, Accept Baseline never shown).
+# Success: write intermediate status with artifacts_ready=false so the UI renders
+#   the report immediately; Phase 2 will update to artifacts_ready=true when done.
+
+if [[ $PIPELINE_EXIT -ne 0 ]]; then
+    log "Validation failed: code=${FAILURE_CODE} — writing final failure status"
+    write_status "4" "Results" "failed" "$FAILURE_CODE" "$FAILURE_MESSAGE" "$FAILURE_DETAILS_JSON"
+else
+    log "Validation succeeded — writing intermediate status (artifacts_ready=false)"
+    write_status "4" "Results" "succeeded" "" "" "null" "false"
+fi
+
+# ─── 9. Phase 2: Upload deferred artifacts ────────────────────────────────────
+#
+# Success: MCF files (required for Accept Baseline), input.csv (rule enrichment),
+#          advisories CSV, JFR/gc.log.
+# Failure: JFR/gc.log and advisories CSV for post-mortem debugging. MCF files and
+#          input.csv are not uploaded (baseline workflow is irrelevant on failure).
+
+_PHASE2_START=$(date +%s)
+if [[ $PIPELINE_EXIT -eq 0 ]]; then
+    log "Phase 2: Uploading deferred artifacts (MCF + debug) from ${PIPELINE_OUTPUT}/"
+else
+    log "Phase 2: Uploading debug artifacts (JFR/gc.log/advisories) from ${PIPELINE_OUTPUT}/"
+fi
+
+_PHASE2_OK=true
+PIPELINE_EXIT="$PIPELINE_EXIT" PIPELINE_OUTPUT="$PIPELINE_OUTPUT" python3 -c "
+import os, sys
+from pathlib import Path
+sys.path.insert(0, '/app/dc-import-validator')
+
+output_dir = Path(os.environ['PIPELINE_OUTPUT'])
+if not output_dir.exists():
+    sys.exit(0)
+
+run_id  = os.environ['RUN_ID']
+dataset = os.environ['DATASET']
+is_success = os.environ.get('PIPELINE_EXIT', '1') == '0'
+
+from ui.gcs_reports import upload_deferred_artifacts_to_gcs
+uploaded = upload_deferred_artifacts_to_gcs(output_dir, run_id, dataset)
+label = 'deferred' if is_success else 'debug'
+print('[upload] Phase 2 (' + label + '): ' + str(uploaded) + ' artifacts uploaded', flush=True)
+" 2>&1 || { log "WARNING: Phase 2 upload failed — some artifacts may be missing from GCS"; _PHASE2_OK=false; }
+_PHASE2_ELAPSED=$(( $(date +%s) - _PHASE2_START ))
+log "Phase 2 upload complete in ${_PHASE2_ELAPSED}s (ok=${_PHASE2_OK})"
+
+# ─── 10. Write artifacts_ready=true (success + Phase 2 OK only) ───────────────
+# Only written when Phase 2 upload succeeded. If Phase 2 failed, artifacts_ready
+# stays false — Accept Baseline remains disabled to prevent broken baseline state
+# from incomplete MCF uploads.
 
 if [[ $PIPELINE_EXIT -eq 0 ]]; then
-    log "Validation succeeded"
-    write_status "4" "Results" "succeeded"
-else
-    log "Validation failed: code=${FAILURE_CODE}"
-    write_status "4" "Results" "failed" "$FAILURE_CODE" "$FAILURE_MESSAGE" "$FAILURE_DETAILS_JSON"
+    if [[ "$_PHASE2_OK" == "true" ]]; then
+        log "Writing final status: artifacts_ready=true (Phase 2 upload complete in ${_PHASE2_ELAPSED}s)"
+        write_status "4" "Results" "succeeded" "" "" "null" "true"
+    else
+        log "WARNING: Phase 2 upload failed — artifacts_ready remains false; Accept Baseline is not available for this run"
+    fi
 fi
 
 exit $PIPELINE_EXIT
