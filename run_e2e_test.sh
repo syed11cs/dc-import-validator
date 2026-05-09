@@ -1128,23 +1128,24 @@ if [[ -z "$_DIFFER_DATASET_ID" && "$DATASET" != "custom" ]]; then
 fi
 
 DIFFER_OUTPUT=""
-_DIFFER_BG_START=""
 if [[ -n "$_DIFFER_DATASET_ID" ]]; then
   echo "::STEP::2.4:Differ"
   DIFFER_OUT_DIR="$GENMCF_OUTPUT/differ_output"
-  _DIFFER_BG_LOG=$(mktemp /tmp/differ_bg_XXXXXX.log)
-  _DIFFER_BG_START=$(date +%s)
-  # Launch differ in the background so config validation and Step 3 setup work can
-  # overlap with differ's GCS baseline fetch + diff computation.
-  # The wait is deferred to just before VALIDATION_ARGS building (which needs DIFFER_OUTPUT).
-  # Overlap window: config template check + ::STEP:: marker + mkdir + Python import time.
-  # Critical-path reduction: differ_wall_time - overlap_window_seconds (typically 5-15s).
+  _DIFFER_START=$(date +%s)
+  _DIFFER_EXIT=0
   $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
     --current_mcf_dir="$GENMCF_OUTPUT" \
     --dataset_id="$_DIFFER_DATASET_ID" \
-    --output_dir="$DIFFER_OUT_DIR" >"$_DIFFER_BG_LOG" 2>&1 &
-  _DIFFER_BG_PID=$!
-  log_info "Step 2.4: Differ launched in background (pid=${_DIFFER_BG_PID}, started_at=$(date +%H:%M:%S))"
+    --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
+  _DIFFER_ELAPSED=$(( $(date +%s) - _DIFFER_START ))
+  if [[ $_DIFFER_EXIT -eq 0 ]]; then
+    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
+    log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT (elapsed=${_DIFFER_ELAPSED}s)"
+  elif [[ $_DIFFER_EXIT -eq 1 ]]; then
+    log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (elapsed=${_DIFFER_ELAPSED}s)"
+  else
+    log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
+  fi
 else
   log_info "Step 2.4: Differ skipped — no dataset_id (use --baseline-name for custom datasets)"
 fi
@@ -1171,34 +1172,6 @@ log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CON
 # Validation output goes inside dataset folder for consistency
 mkdir -p "$DATASET_OUTPUT"
 VALIDATION_OUTPUT="$DATASET_OUTPUT/validation_output.json"
-
-# Wait for background differ (launched in Step 2.4) before resolving DIFFER_OUTPUT.
-# differ output is needed to build --differ_output= in VALIDATION_ARGS below.
-if [[ -n "$_DIFFER_BG_PID" ]]; then
-  _DIFFER_WAIT_START=$(date +%s)
-  log_info "Step 2.4: Waiting for background differ (pid=${_DIFFER_BG_PID}, waiting_at=$(date +%H:%M:%S))..."
-  _DIFFER_EXIT=0
-  wait "$_DIFFER_BG_PID" || _DIFFER_EXIT=$?
-  _DIFFER_BG_PID=""
-  _DIFFER_TOTAL_ELAPSED=$(( $(date +%s) - _DIFFER_BG_START ))
-  _DIFFER_WAIT_ELAPSED=$(( $(date +%s) - _DIFFER_WAIT_START ))
-  # Overlap = total differ wall time minus the time we actually blocked on it.
-  # Positive overlap means Step 3 setup proceeded while differ was running.
-  _DIFFER_OVERLAP=$(( _DIFFER_TOTAL_ELAPSED - _DIFFER_WAIT_ELAPSED ))
-  if [[ -n "$_DIFFER_BG_LOG" ]]; then
-    cat "$_DIFFER_BG_LOG" || true
-    rm -f "$_DIFFER_BG_LOG"
-    _DIFFER_BG_LOG=""
-  fi
-  if [[ $_DIFFER_EXIT -eq 0 ]]; then
-    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
-    log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s, overlap_saved=${_DIFFER_OVERLAP}s)"
-  elif [[ $_DIFFER_EXIT -eq 1 ]]; then
-    log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s, overlap_saved=${_DIFFER_OVERLAP}s)"
-  else
-    log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output (total=${_DIFFER_TOTAL_ELAPSED}s, blocked=${_DIFFER_WAIT_ELAPSED}s)"
-  fi
-fi
 
 # Build validation args - stats_summary, lint_report, differ_output may be optional per config
 VALIDATION_ARGS=(
