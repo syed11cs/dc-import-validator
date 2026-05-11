@@ -98,8 +98,8 @@
     .form-group label {
       display: block;
       font-size: 0.8125rem;
-      font-weight: 500;
-      color: var(--text-muted);
+      font-weight: 600;
+      color: var(--text);
       margin-bottom: 8px;
     }
     select {
@@ -994,8 +994,8 @@
     .csv-size-warning-severe { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.35); color: var(--fail); }
     .existence-checks-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     .existence-checks-row input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
-    .existence-checks-row label { font-size: 0.8rem; color: var(--text); cursor: pointer; margin: 0; }
-    .existence-checks-hint { margin: 5px 0 0; font-size: 0.7rem; color: var(--text-muted); line-height: 1.4; }
+    .existence-checks-row label { font-size: 0.8rem; font-weight: 400; color: var(--text); cursor: pointer; margin: 0; }
+    .existence-checks-hint { margin: 4px 0 0; font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; }
     .summary-card-metrics { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 16px; font-size: 0.72rem; }
     .summary-card-metrics .metric-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
     .summary-card-metrics .metric-chip--blocking { background: rgba(244,63,94,0.2); color: var(--fail); }
@@ -1380,7 +1380,7 @@
     .dataset-desc.has-fail { font-weight: 500; color: var(--text); }
     .dataset-desc.has-fail::before { content: ''; display: inline-block; width: 6px; height: 6px; background: var(--fail); border-radius: 50%; margin-right: 6px; vertical-align: middle; }
     .custom-upload { margin-top: 16px; }
-    .custom-upload label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    .custom-upload label { font-size: 0.8rem; font-weight: 500; color: var(--text); display: block; margin-bottom: 4px; }
     .input-mode-toggle { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; width: 100%; }
     .input-mode-btn { flex: 1; padding: 5px 10px; font-size: 0.75rem; font-family: inherit; background: transparent; border: none; color: var(--text-muted); cursor: pointer; transition: background var(--transition), color var(--transition); }
     .input-mode-btn.active { background: var(--accent); color: #fff; }
@@ -1392,12 +1392,12 @@
     .gcs-input-section input[type="text"]:focus,
     .gcs-input-section textarea:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
     .gcs-input-section textarea { resize: vertical; }
-    .gcs-input-section label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; margin-top: 12px; }
+    .gcs-input-section label { font-size: 0.8rem; font-weight: 500; color: var(--text); display: block; margin-bottom: 4px; margin-top: 12px; }
     .gcs-input-section label:first-child { margin-top: 0; }
-    .gcs-sa-hint { margin: 10px 0 0; font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
-    .custom-upload-baseline-note { margin: 10px 0 0; font-size: 0.73rem; color: var(--text-muted); line-height: 1.4; }
+    .gcs-sa-hint { margin: 10px 0 0; font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; }
+    .custom-upload-baseline-note { margin: 4px 0 0; font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; }
     .custom-dataset-name-row { margin-top: 14px; }
-    .custom-dataset-name-row label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    .custom-dataset-name-row label { font-size: 0.8rem; font-weight: 500; color: var(--text); display: block; margin-bottom: 4px; }
     #custom-dataset-name { width: 100%; max-width: 320px; font-size: 0.82rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
     #custom-dataset-name::placeholder { color: var(--text-muted); opacity: 0.7; }
     #custom-dataset-name:focus { outline: none; box-shadow: 0 0 0 1px var(--accent, #6366f1); }
@@ -1409,8 +1409,10 @@
     .custom-upload-optional-fields { margin-top: 14px; padding-left: 0; }
     .custom-upload-optional-fields > label { margin-top: 14px; display: block; }
     .custom-upload-optional-fields > label:first-child { margin-top: 0; }
-    .field-hint { font-size: 0.72rem; color: var(--text-muted); margin: 2px 0 0; line-height: 1.4; }
+    .field-hint { font-size: 0.75rem; color: var(--text-muted); margin: 3px 0 10px; line-height: 1.5; }
     .required-asterisk { color: var(--fail); font-weight: 500; }
+    .label-optional { font-size: 0.72rem; font-weight: 400; color: var(--text-muted); margin-left: 3px; }
+    .form-group-section { padding-top: 14px; border-top: 1px solid var(--border); margin-top: 0; }
     .file-input-row {
       display: flex;
       align-items: center;
@@ -1531,7 +1533,7 @@
             </div>
             <div id="csv-size-warning" style="display: none;"></div>
             <div class="custom-upload-optional-fields">
-              <label>StatVars MCF <span style="font-size: 0.72rem; font-weight: 400; color: var(--text-muted);">(optional)</span></label>
+              <label>StatVars MCF <span class="label-optional">(optional)</span></label>
               <div class="file-input-row">
                 <input type="file" id="stat-vars-mcf-file" accept=".mcf" />
                 <button type="button" id="stat-vars-mcf-choose-btn" class="file-choose-btn">Choose File</button>
@@ -1539,7 +1541,7 @@
                 <button type="button" id="stat-vars-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
               </div>
               <p class="field-hint">For defining new StatVars not in the KG.</p>
-              <label>StatVars Schema MCF <span style="font-size: 0.72rem; font-weight: 400; color: var(--text-muted);">(optional)</span></label>
+              <label>StatVars Schema MCF <span class="label-optional">(optional)</span></label>
               <div class="file-input-row">
                 <input type="file" id="stat-vars-schema-mcf-file" accept=".mcf" />
                 <button type="button" id="stat-vars-schema-mcf-choose-btn" class="file-choose-btn">Choose File</button>
@@ -1555,28 +1557,26 @@
             <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
             <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false"></textarea>
             <p class="field-hint">One path per line for multiple CSVs</p>
-            <label>StatVars MCF <span style="font-size: 0.72rem; font-weight: 400;">(optional)</span></label>
+            <label>StatVars MCF <span class="label-optional">(optional)</span></label>
             <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
-            <label>StatVars Schema MCF <span style="font-size: 0.72rem; font-weight: 400;">(optional)</span></label>
+            <label>StatVars Schema MCF <span class="label-optional">(optional)</span></label>
             <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
             <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
           </div>
         </div>
       </div>
-      <div class="form-group" style="margin-bottom: 14px;">
-        <label style="font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; display: block;">Import Options</label>
+      <div class="form-group form-group-section" style="margin-bottom: 14px;">
+        <label>Import Options</label>
         <div class="existence-checks-row">
           <input type="checkbox" id="existence-checks-toggle" />
           <label for="existence-checks-toggle">Enable Data Commons existence checks</label>
         </div>
         <p class="existence-checks-hint">Validates DCIDs against the Data Commons KG. Disabled by default for performance.</p>
-        <div style="margin-top: 10px;">
-          <div class="existence-checks-row">
-            <input type="checkbox" id="large-machine-toggle" />
-            <label for="large-machine-toggle">Use larger machine for this import</label>
-          </div>
-          <p class="existence-checks-hint">Recommended only for unusually complex or slow imports.</p>
+        <div class="existence-checks-row" style="margin-top: 12px;">
+          <input type="checkbox" id="large-machine-toggle" />
+          <label for="large-machine-toggle">Use larger machine for this import</label>
         </div>
+        <p class="existence-checks-hint">Recommended only for unusually complex or slow imports.</p>
       </div>
       </div>
       <div class="sidebar-footer">
