@@ -3379,6 +3379,14 @@ async def submit_batch_job(body: _SubmitJobRequest):
             detail=f"Invalid processing_mode: {body.processing_mode!r}. "
                    f"Allowed: {sorted(_ALLOWED_PROCESSING_MODES)}",
         )
+    # Warn when aggressive mode is requested (via API/direct calls). Benchmark evidence
+    # shows aggressive (75% vCPUs) degrades vs auto (50% vCPUs) at typical shard counts.
+    if body.processing_mode == "aggressive":
+        logger.warning(
+            "submit_batch_job: processing_mode=aggressive requested — benchmark evidence "
+            "shows this degrades vs auto at typical shard counts [run_id=%s]",
+            run_id,
+        )
     if body.processing_mode == "custom":
         if body.java_threads <= 0:
             raise HTTPException(
@@ -3497,6 +3505,36 @@ async def submit_batch_job(body: _SubmitJobRequest):
             )
             csv_total_bytes = _LARGEST_TIER_BYTES
 
+    # Auto-upgrade undersized machine overrides.
+    # If the user explicitly picked a machine tier that is too small for the actual
+    # file size, bump it to the correct tier rather than hard-failing. This protects
+    # against accidental misconfiguration (e.g. selecting Small for a 15 GB file)
+    # without breaking the API contract. The upgrade is logged as a warning so
+    # operators can see when it fires.
+    effective_machine_override = body.machine_type_override or ""
+    if effective_machine_override and csv_total_bytes > 0:
+        _tier_max_bytes: dict[str, int] = {
+            "n2-highmem-16": 5  * 1024**3,
+            "n2-highmem-32": 20 * 1024**3,
+            "n2-highmem-64": 0,  # largest tier — no upper bound
+        }
+        _override_max = _tier_max_bytes.get(effective_machine_override, 0)
+        # >= mirrors _select_tier's strict-less-than boundary: _select_tier picks
+        # n2-highmem-16 only when csv_total_bytes < 5 GiB, so we upgrade on equality
+        # too (a 5 GiB file is not valid for n2-highmem-16 in either path).
+        if _override_max > 0 and csv_total_bytes >= _override_max:
+            _recommended, _ = _batch_runner._select_tier(csv_total_bytes)
+            logger.warning(
+                "submit_batch_job: machine_type_override=%s is undersized for "
+                "csv_total_bytes=%d (%.1f GB); auto-upgrading to %s [run_id=%s]",
+                effective_machine_override,
+                csv_total_bytes,
+                csv_total_bytes / 1024**3,
+                _recommended,
+                run_id,
+            )
+            effective_machine_override = _recommended
+
     input_files = _InputFiles(
         gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
         tmcf_filename=body.tmcf_filename,
@@ -3522,7 +3560,7 @@ async def submit_batch_job(body: _SubmitJobRequest):
     try:
         job_name = await asyncio.to_thread(
             _batch_runner.submit_job, run_id, dataset, input_files,
-            body.machine_type_override or "",
+            effective_machine_override,
         )
     except KeyError as exc:
         # A required env var (BATCH_PROJECT_ID etc.) is not set.

@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -49,6 +50,7 @@ def _invoke_import_differ(
     previous_data: str,
     output_location: str,
     data_repo: str,
+    timeout_sec: int = 240,
 ) -> bool:
     """Run import_differ as a module (same pattern as run_validation.py invokes the runner).
 
@@ -56,6 +58,8 @@ def _invoke_import_differ(
       cd DATA_REPO && python -m tools.import_differ.import_differ --runner_mode=local ...
 
     Returns True on exit 0, False otherwise.
+    Times out after timeout_sec (default 240s) — shorter than the bash-layer
+    DIFFER_TIMEOUT_SEC (300s) so the inner timeout fires first with a clear message.
     """
     cmd = [
         sys.executable,
@@ -66,7 +70,16 @@ def _invoke_import_differ(
         "--file_format=mcf",
         "--runner_mode=local",
     ]
-    result = subprocess.run(cmd, cwd=data_repo, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, cwd=data_repo, capture_output=True, text=True, timeout=timeout_sec
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"Warning: import_differ subprocess timed out after {timeout_sec}s",
+            file=sys.stderr, flush=True,
+        )
+        return False
     if result.stdout:
         print(result.stdout, flush=True)
     if result.stderr:
@@ -162,7 +175,16 @@ def run_diff(args: argparse.Namespace) -> int:
 
     baseline_dir = tempfile.mkdtemp(prefix="dc_baseline_")
     try:
-        if not gcs_baselines.download_baseline(args.dataset_id, Path(baseline_dir)):
+        _dl_start = time.monotonic()
+        download_ok = gcs_baselines.download_baseline(args.dataset_id, Path(baseline_dir))
+        _dl_elapsed = time.monotonic() - _dl_start
+        _mcf_count = len(glob.glob(os.path.join(baseline_dir, "*.mcf")))
+        print(
+            f"Baseline download: elapsed={_dl_elapsed:.1f}s "
+            f"mcf_files={_mcf_count} dataset_id={args.dataset_id}",
+            flush=True,
+        )
+        if not download_ok:
             print(
                 f"Warning: baseline download failed for '{args.dataset_id}'",
                 file=sys.stderr,

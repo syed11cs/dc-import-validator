@@ -901,7 +901,27 @@ fi
 # =============================================================================
 if [[ -n "$_STEP1_BG_PID" ]]; then
   log_info "Waiting for Step 1 (schema/LLM review)..."
-  wait "$_STEP1_BG_PID" && _STEP1_BG_EXIT=0 || _STEP1_BG_EXIT=$?
+  # Poll with a bounded wall-clock wait. Wrapping `wait` with `timeout` is unreliable
+  # because `wait` is a shell builtin. Polling avoids that issue while still allowing
+  # us to kill a stuck Gemini API call cleanly.
+  _STEP1_TIMEOUT_SEC="${LLM_TIMEOUT_SEC:-120}"
+  _STEP1_WAIT_START=$(date +%s)
+  _STEP1_TIMED_OUT=false
+  while kill -0 "$_STEP1_BG_PID" 2>/dev/null; do
+    sleep 1
+    _STEP1_WAITED=$(( $(date +%s) - _STEP1_WAIT_START ))
+    if [[ $_STEP1_WAITED -ge $_STEP1_TIMEOUT_SEC ]]; then
+      log_warn "Step 1: LLM/schema review timed out after ${_STEP1_TIMEOUT_SEC}s — killing process (pid=${_STEP1_BG_PID})"
+      kill "$_STEP1_BG_PID" 2>/dev/null || true
+      _STEP1_TIMED_OUT=true
+      break
+    fi
+  done
+  # Reap the process to avoid a zombie and capture its exit code.
+  wait "$_STEP1_BG_PID" 2>/dev/null && _STEP1_BG_EXIT=0 || _STEP1_BG_EXIT=$?
+  if [[ "$_STEP1_TIMED_OUT" == "true" ]]; then
+    _STEP1_BG_EXIT=0  # treat timeout as non-fatal advisory pass
+  fi
   _STEP1_BG_PID=""
 fi
 
@@ -923,7 +943,9 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
     else
       log_info "Step 1: schema review (deterministic only)"
     fi
-    if [[ $_STEP1_BG_EXIT -eq 0 ]]; then
+    if [[ "${_STEP1_TIMED_OUT:-false}" == "true" ]]; then
+      log_warn "Step 1: timed out after ${_STEP1_TIMEOUT_SEC}s — schema review skipped (pipeline continues)"
+    elif [[ $_STEP1_BG_EXIT -eq 0 ]]; then
       log_info "Step 1 passed (no blocking issues)"
     else
       if [[ -f "$SCHEMA_REVIEW_OUT" ]]; then
@@ -1103,7 +1125,30 @@ except: print('unknown')
   fi
 fi
 
-log_info "[PERF] split_enabled=${CSV_SPLIT_ENABLED} split_rows=${_EFFECTIVE_SPLIT_ROWS} configured_split_rows=${CSV_SPLIT_ROWS:-adaptive} target_shards_per_thread=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD} target_shards=${_TARGET_SHARDS:-na} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_threads_source=${JAVA_THREADS_SOURCE:-default} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS} batch_provisioning_model=${BATCH_PROVISIONING_MODEL:-STANDARD} dup_check_policy=${_DUP_CHECK_POLICY:-auto} dup_check_active=${_DUP_CHECK_ACTIVE:-true}"
+# Ensure _CSV_SIZE_BYTES covers all run modes:
+#   split runs:           already set during adaptive shard sizing
+#   single-CSV non-split: already set by dup-check threshold logic
+#   multi-CSV non-split:  sum all CSV sizes here (only path where it can still be empty)
+if [[ -z "${_CSV_SIZE_BYTES}" && ${#CSVS[@]} -gt 0 ]]; then
+  _CSV_SIZE_BYTES=0
+  for _perf_f in "${CSVS[@]}"; do
+    _perf_sz=$(stat -f%z "$_perf_f" 2>/dev/null \
+               || stat -c%s "$_perf_f" 2>/dev/null \
+               || echo 0)
+    _CSV_SIZE_BYTES=$(( _CSV_SIZE_BYTES + _perf_sz ))
+  done
+fi
+
+# bytes_per_row: original CSV bytes / rows_processed.
+# Key diagnostic: values >150 indicate wide CSVs where the 100 bytes/row
+# heuristic underestimates row count, causing shard starvation.
+_BYTES_PER_ROW="na"
+if [[ "${_PERF_ROWS}" =~ ^[0-9]+$ && "${_PERF_ROWS}" -gt 0 \
+      && "${_CSV_SIZE_BYTES}" =~ ^[0-9]+$ && "${_CSV_SIZE_BYTES}" -gt 0 ]]; then
+  _BYTES_PER_ROW=$(( _CSV_SIZE_BYTES / _PERF_ROWS ))
+fi
+
+log_info "[PERF] machine_type=${VM_TYPE:-unknown} split_enabled=${CSV_SPLIT_ENABLED} split_rows=${_EFFECTIVE_SPLIT_ROWS} configured_split_rows=${CSV_SPLIT_ROWS:-adaptive} target_shards_per_thread=${CSV_SPLIT_TARGET_SHARDS_PER_THREAD} target_shards=${_TARGET_SHARDS:-na} threshold_rows=${CSV_SPLIT_THRESHOLD_ROWS} original_csv_mb=${_ORIG_CSV_MB:-unknown} shard_count=${_SHARD_COUNT:-0} avg_rows_per_shard=${_AVG_ROWS_PER_SHARD:-na} avg_mb_per_shard=${_AVG_MB_PER_SHARD:-na} csv_count=${_CSV_COUNT:-${#CSVS[@]}} java_threads=${JAVA_THREADS} java_threads_source=${JAVA_THREADS_SOURCE:-default} java_xmx=${JAVA_XMX} split_seconds=${_SPLIT_ELAPSED:-0} step2_seconds=${_STEP2_SECONDS} effective_parallelism=${_EFFECTIVE_PARALLELISM:-na} bytes_per_row=${_BYTES_PER_ROW} rows_processed=${_PERF_ROWS} rows_per_second=${_PERF_RPS} peak_rss_gb=${_PERF_RSS} batch_provisioning_model=${BATCH_PROVISIONING_MODEL:-STANDARD} dup_check_policy=${_DUP_CHECK_POLICY:-auto} dup_check_active=${_DUP_CHECK_ACTIVE:-true}"
 
 # Clean up CSV shards (set CSV_SPLIT_CLEANUP=false to preserve for debugging).
 # Guard requires _SHARD_DIR ends with /csv_shards — defends against an empty or
@@ -1133,16 +1178,29 @@ if [[ -n "$_DIFFER_DATASET_ID" ]]; then
   DIFFER_OUT_DIR="$GENMCF_OUTPUT/differ_output"
   _DIFFER_START=$(date +%s)
   _DIFFER_EXIT=0
-  $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
-    --current_mcf_dir="$GENMCF_OUTPUT" \
-    --dataset_id="$_DIFFER_DATASET_ID" \
-    --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
+  # Bound differ execution time. DIFFER_TIMEOUT_SEC controls both GCS baseline
+  # download and the differ subprocess itself. Exit 124 = timed out (non-fatal).
+  _DIFFER_TIMEOUT_SEC="${DIFFER_TIMEOUT_SEC:-300}"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${_DIFFER_TIMEOUT_SEC}" $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
+      --current_mcf_dir="$GENMCF_OUTPUT" \
+      --dataset_id="$_DIFFER_DATASET_ID" \
+      --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
+  else
+    # timeout not available (macOS without GNU coreutils) — run unbounded.
+    $PYTHON "$SCRIPT_DIR/scripts/run_differ.py" \
+      --current_mcf_dir="$GENMCF_OUTPUT" \
+      --dataset_id="$_DIFFER_DATASET_ID" \
+      --output_dir="$DIFFER_OUT_DIR" || _DIFFER_EXIT=$?
+  fi
   _DIFFER_ELAPSED=$(( $(date +%s) - _DIFFER_START ))
   if [[ $_DIFFER_EXIT -eq 0 ]]; then
     DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT (elapsed=${_DIFFER_ELAPSED}s)"
   elif [[ $_DIFFER_EXIT -eq 1 ]]; then
     log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (elapsed=${_DIFFER_ELAPSED}s)"
+  elif [[ $_DIFFER_EXIT -eq 124 ]]; then
+    log_warn "Step 2.4: Differ timed out after ${_DIFFER_TIMEOUT_SEC}s — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
   else
     log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
   fi
