@@ -1621,13 +1621,13 @@
           <div class="rule-item" style="color: var(--text-muted);">Select a dataset to view rules</div>
         </div>
         <div id="custom-sql-section">
-          <div id="custom-sql-section-label">Custom SQL Rules</div>
+          <div id="custom-sql-section-label">Custom Validation Rules</div>
           <div id="custom-rules-list"></div>
           <div id="sql-rule-editor">
             <div id="sql-rule-desc-row">
               <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
                 <label for="sql-rule-desc" style="font-size:0.72rem;color:var(--text-muted);">Rule description</label>
-                <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'values should be greater than 0')"></textarea>
+                <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'no negative values', 'dates after 2020')"></textarea>
                 <div id="sql-rule-vague-hint">Try being more specific (e.g. "after 2020", "greater than 0")</div>
               </div>
               <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate Rule</button>
@@ -2096,8 +2096,8 @@
       const label = document.getElementById('custom-sql-section-label');
       if (label) {
         label.textContent = customRulesList.length > 0
-          ? 'Custom SQL Rules (' + customRulesList.length + ')'
-          : 'Custom SQL Rules';
+          ? 'Custom Validation Rules (' + customRulesList.length + ')'
+          : 'Custom Validation Rules';
       }
       if (customRulesList.length === 0) {
         container.innerHTML = '';

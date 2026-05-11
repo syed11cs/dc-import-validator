@@ -1992,8 +1992,14 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         )
         or _re_vague.search(r"[<>]=?", prompt_text)
     )
+    # Short phrases that express a clear binary/negation constraint need no numeric signal.
+    # e.g. "no negative values", "no empty units", "non-empty units"
+    _HAS_CLEAR_NEGATION = bool(_re_vague.search(
+        r"\bno\s+\w+|non[- ]empty|not\s+(empty|null|blank)|must\s+(exist|have|be\s+non)",
+        prompt_text, _re_vague.IGNORECASE,
+    ))
     _word_count = len(prompt_text.split())
-    if not _HAS_NUMERIC_SIGNAL:
+    if not _HAS_NUMERIC_SIGNAL and not _HAS_CLEAR_NEGATION:
         if _word_count < 4:
             raise HTTPException(
                 status_code=400,
