@@ -1440,8 +1440,9 @@
     }
     .file-choose-btn:hover { color: var(--text); border-color: var(--accent); }
     .file-choose-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .file-name { font-size: 0.8rem; color: var(--text-muted); }
+    .file-name { font-size: 0.8rem; color: var(--text-muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .file-name.has-file { color: var(--text); }
+    .file-name[style*="pre-line"] { white-space: pre-line; text-overflow: clip; max-width: 100%; }
     .file-clear-btn {
       display: inline-flex;
       align-items: center;
@@ -2972,7 +2973,7 @@
         if (customInputMode === 'gcs') {
           const _tmcfGcs = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
           const _csvGcs = (document.getElementById('csv-gcs-paths')?.value || '').trim();
-          const _csvEntries = _csvGcs.split(',').map(p => p.trim());
+          const _csvEntries = _csvGcs.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
           const _gcsOk = _tmcfGcs.startsWith('gs://') &&
             _csvEntries.length > 0 &&
             _csvEntries.every(p => p.length > 0 && p.startsWith('gs://'));
