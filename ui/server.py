@@ -444,7 +444,10 @@ def app_version():
 
 _DEFAULT_SQL_SUGGESTIONS = [
     "every StatVar should have at least one observation",
-    "no StatVar should have negative values",
+    "no StatVar should have negative minimum values",
+    "every StatVar should have non-empty units",
+    "observation dates should be after 2010",
+    "minimum value should not exceed maximum value",
 ]
 
 
@@ -1794,22 +1797,32 @@ def _explain_sql_condition(condition: str) -> str | None:
     c = condition.strip()
 
     if re.search(r"\bMinValue\s*>\s*0\b", c, re.IGNORECASE):
-        return "MinValue > 0 means the smallest observed value is positive, so every value in the dataset is positive."
+        return "Ensures every StatVar has strictly positive values."
     if re.search(r"\bMinValue\s*>=\s*0\b", c, re.IGNORECASE):
-        return "MinValue >= 0 means the smallest observed value is non-negative, so no negative values exist."
+        return "Ensures no StatVar contains negative values."
     if re.search(r"\bMaxValue\s*<\s*0\b", c, re.IGNORECASE):
-        return "MaxValue < 0 means the largest observed value is negative, so every value in the dataset is negative."
+        return "Ensures every StatVar has exclusively negative values."
     if re.search(r"\bMaxValue\s*<=\s*0\b", c, re.IGNORECASE):
-        return "MaxValue <= 0 means the largest observed value is non-positive, so no positive values exist."
+        return "Ensures no StatVar contains positive values."
     if re.search(r"\bMinValue\s*<=\s*MaxValue\b", c, re.IGNORECASE):
-        return "MinValue <= MaxValue confirms the summary statistics are internally consistent."
+        return "Ensures minimum and maximum values are internally consistent."
+    if re.search(r"\bNumObservations\s*>=\s*1\b", c, re.IGNORECASE):
+        return "Ensures every StatVar has at least one observation."
+    if re.search(r"\bUnits\s*!=\s*'\[\]'", c, re.IGNORECASE):
+        return "Ensures every StatVar has a unit specified."
 
     m = re.search(r"\bMaxValue\s*<=\s*(\d+(?:\.\d+)?)\b", c, re.IGNORECASE)
     if m:
-        return f"MaxValue <= {m.group(1)}: the largest value in the dataset does not exceed {m.group(1)}."
+        return f"Ensures no StatVar has maximum values above {m.group(1)}."
     m = re.search(r"\bMinValue\s*>=\s*(\d+(?:\.\d+)?)\b", c, re.IGNORECASE)
     if m:
-        return f"MinValue >= {m.group(1)}: every value in the dataset is at least {m.group(1)}."
+        return f"Ensures every StatVar has values of at least {m.group(1)}."
+    m = re.search(r"\bMinDate\s*>=\s*'(\d{4})", c, re.IGNORECASE)
+    if m:
+        return f"Ensures all observations are from {m.group(1)} or later."
+    m = re.search(r"\bMaxDate\s*>=\s*'(\d{4})", c, re.IGNORECASE)
+    if m:
+        return f"Ensures all data has observations up to {m.group(1)} or later."
 
     return None
 
@@ -2544,19 +2557,21 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         "         {\"label\": \"Check date consistency instead\", \"refined\": \"observation dates should be consistent across StatVars\"}\n"
         "       ]}\n\n"
         "## Explanation rules\n"
-        "Every SQL response MUST include \"explanation\": a plain-English description that states:\n"
-        "  1. Which column is checked (e.g. MinValue, MaxDate, NumObservations, Units).\n"
-        "  2. What condition is applied and what it means in plain terms.\n"
-        "  3. Any assumption made (e.g. ILIKE scope, inferred threshold).\n\n"
-        "Explanation must be precise and directly tied to the generated SQL. No generic filler.\n"
-        "Examples:\n"
-        "  condition 'MinValue >= 0'   → \"Checks MinValue for each StatVar; passes when the smallest observed value is non-negative (no StatVar has a negative value).\"\n"
-        "  condition 'MaxValue <= 100' → \"Checks MaxValue for each StatVar; passes when the largest observed value does not exceed 100.\"\n"
-        "  condition 'NumObservations >= 1' → \"Checks NumObservations; passes when every StatVar has at least one observation.\"\n"
-        "  condition 'Units != '[]''  → \"Checks Units for each StatVar; passes when the unit field is non-empty (not an empty list).\"\n"
-        "  condition 'MaxDate >= ...' → \"Checks MaxDate; passes when the most recent observation date meets the specified cutoff. Threshold was inferred from the description.\"\n\n"
-        "If a concept cannot be reliably mapped to a column, prefer rules on generic columns:\n"
-        "MinValue, MaxValue, NumObservations, Units — these apply to all StatVars without ILIKE.\n\n"
+        "Every SQL response MUST include \"explanation\": one sentence in plain English.\n"
+        "Write for a non-technical audience. Rules:\n"
+        "  - Open with \"Ensures\".\n"
+        "  - No SQL syntax, no internal column names (MinValue, MaxDate, etc.), no 'passes when'.\n"
+        "  - Describe the data-quality constraint, not the implementation.\n"
+        "  - If a threshold or scope was inferred, append a brief parenthetical note.\n\n"
+        "Examples (study the phrasing — no column names, no SQL):\n"
+        "  MinValue >= 0          → \"Ensures no StatVar contains negative values.\"\n"
+        "  MaxValue <= 100        → \"Ensures no StatVar has maximum values above 100.\"\n"
+        "  NumObservations >= 1   → \"Ensures every StatVar has at least one observation.\"\n"
+        "  Units != '[]'          → \"Ensures every StatVar has a unit specified.\"\n"
+        "  MinDate >= '2010-01-01' → \"Ensures all observations are from 2010 or later.\"\n"
+        "  MinValue <= MaxValue   → \"Ensures minimum and maximum values are internally consistent.\"\n"
+        "  MaxDate >= '2020-01-01' (inferred) → \"Ensures all data is recent (observations after 2020).\"\n"
+        "  MaxValue <= 100 WHERE Units LIKE '%Percent%' → \"Ensures percent-type StatVars do not exceed 100.\"\n\n"
         "## Output format (STRICT)\n"
         "Output ONLY a JSON object. Exactly one of these three shapes:\n"
         "  SQL:           {\"query\": \"...\", \"condition\": \"...\", \"explanation\": \"...\"}\n"
@@ -2631,14 +2646,54 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
         lines = [ln for ln in text.splitlines() if not ln.startswith("```")]
         text = "\n".join(lines).strip()
 
+    # Three-tier JSON recovery:
+    #   1. Direct parse (fast path).
+    #   2. Bracket extraction — strips leading/trailing prose the model occasionally adds.
+    #   3. Single LLM retry with a nudge prompt (covers rare markdown-wrapped responses).
+    result: dict | None = None
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
-        logger.warning("generate_sql_rule invalid_json response=%s", text[:300])
-        raise HTTPException(
-            status_code=400,
-            detail=f"LLM returned invalid JSON. Response: {text[:200]}",
-        )
+        _start = text.find("{")
+        _end = text.rfind("}")
+        if _start != -1 and _end > _start:
+            try:
+                result = json.loads(text[_start : _end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    if result is None:
+        logger.warning("generate_sql_rule invalid_json attempt=1 response=%s", text[:300])
+        try:
+            # Retry with the original full prompt so the model has its constraints
+            # and dataset context intact. The correction is appended at the end so
+            # it takes precedence without losing any prior grounding.
+            _nudge = (
+                full_prompt
+                + "\n\n[CORRECTION REQUIRED] Your previous response was not valid JSON. "
+                "Return ONLY the JSON object — no markdown, no prose, no code fences. "
+                "Output must start with '{' and end with '}'."
+            )
+            async with _GENERATE_SQL_RULE_SEMAPHORE:
+                _retry_client = genai.Client(api_key=api_key)
+                _retry_resp = await asyncio.to_thread(
+                    _retry_client.models.generate_content,
+                    model="gemini-2.5-flash",
+                    contents=_nudge,
+                )
+            _retry_text = (getattr(_retry_resp, "text", None) or "").strip()
+            if _retry_text.startswith("```"):
+                _retry_text = "\n".join(
+                    ln for ln in _retry_text.splitlines() if not ln.startswith("```")
+                ).strip()
+            result = json.loads(_retry_text)
+            logger.info("generate_sql_rule invalid_json recovered via retry")
+        except Exception as _retry_exc:
+            logger.warning("generate_sql_rule invalid_json attempt=2: %s", _retry_exc)
+            raise HTTPException(
+                status_code=400,
+                detail="LLM returned invalid JSON after retry. Try rephrasing your description.",
+            )
 
     # Route by response shape — return HTTP 200 for all structured responses.
     if "clarify" in result and "query" not in result and "error" not in result:

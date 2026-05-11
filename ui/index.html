@@ -287,9 +287,9 @@
     /* Keep the button visually styled even when disabled=true (set for accessibility during loading) */
     #sql-generate-btn.btn-loading,
     #sql-generate-btn.btn-loading:disabled { background: var(--accent); color: #fff; border: 1px solid var(--accent); opacity: 1; cursor: progress; pointer-events: none; box-shadow: 0 0 0 1px rgba(99,102,241,0.4), 0 0 6px rgba(99,102,241,0.35); }
-    #sql-rule-add-btn { background: none; border: 1px solid var(--border); color: var(--text); opacity: 0.85; font-size: 0.73rem; padding: 3px 10px; align-self: flex-end; cursor: pointer; transition: all 0.15s ease; }
-    #sql-rule-add-btn:not(:disabled):hover { opacity: 1; border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.08); }
-    #sql-rule-add-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    #sql-rule-add-btn { background: rgba(99,102,241,0.12); border: 1px solid var(--accent); color: var(--accent); font-size: 0.78rem; font-weight: 500; padding: 5px 16px; cursor: pointer; transition: all 0.15s ease; border-radius: var(--radius); margin-top: 10px; }
+    #sql-rule-add-btn:not(:disabled):hover { background: var(--accent); color: #fff; }
+    #sql-rule-add-btn:disabled { opacity: 0.3; cursor: not-allowed; background: none; border-color: var(--border); color: var(--text-muted); }
     #sql-rule-error { font-size: 0.75rem; color: var(--fail); display: none; }
     #sql-rule-vague-hint { font-size: 0.72rem; color: var(--text-muted); display: none; margin-top: 2px; }
     #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
@@ -1626,7 +1626,7 @@
             <div id="sql-rule-desc-row">
               <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
                 <label for="sql-rule-desc" style="font-size:0.72rem;color:var(--text-muted);">Rule description</label>
-                <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'no negative values')"></textarea>
+                <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'values should be greater than 0')"></textarea>
                 <div id="sql-rule-vague-hint">Try being more specific (e.g. "after 2020", "greater than 0")</div>
               </div>
               <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate Rule</button>
@@ -1634,9 +1634,9 @@
             <div id="sql-rule-error"></div>
             <div id="sql-suggestions-label"></div>
             <div id="sql-rule-suggestions"></div>
+            <div id="sql-rule-explanation"></div>
             <details id="sql-rule-logic" style="display:none;">
-              <summary style="font-size:0.75rem;color:var(--text-muted);cursor:pointer;user-select:none;margin-bottom:6px;">How this rule works</summary>
-              <div id="sql-rule-explanation"></div>
+              <summary style="font-size:0.75rem;color:var(--text-muted);cursor:pointer;user-select:none;margin-bottom:6px;">Edit SQL / Advanced ▾</summary>
               <div>
                 <label for="sql-rule-query">SQL Query</label>
                 <textarea id="sql-rule-query" rows="3" placeholder=""></textarea>
@@ -2133,6 +2133,10 @@
           if (idx !== -1) {
             customRulesList.splice(idx, 1);
             renderCustomRules();
+            // Re-render suggestion chips so the deleted rule's chip can reappear.
+            if (typeof showSuggestions === 'function' && typeof defaultSuggestions !== 'undefined' && defaultSuggestions.length) {
+              showSuggestions(defaultSuggestions, 'Try one of these:');
+            }
           }
         });
       });
@@ -4770,6 +4774,18 @@
     (function () {
       let defaultSuggestions = [];
 
+      // Debug mode: ?debug=1 enables the SQL/Advanced section and persists via localStorage.
+      // ?debug=0 clears the persisted flag. Subsequent visits with no URL param use localStorage.
+      const _sqlDebugMode = (() => {
+        const p = new URLSearchParams(window.location.search);
+        if (p.has('debug')) {
+          if (p.get('debug') === '0') { localStorage.removeItem('_sql_debug'); return false; }
+          localStorage.setItem('_sql_debug', '1');
+          return true;
+        }
+        return localStorage.getItem('_sql_debug') === '1';
+      })();
+
       const generateBtn    = document.getElementById('sql-generate-btn');
       const descEl         = document.getElementById('sql-rule-desc');
       const errorEl        = document.getElementById('sql-rule-error');
@@ -4793,11 +4809,19 @@
         errorEl.style.display = msg ? 'block' : 'none';
       }
 
+      const _norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
       function showSuggestions(suggestions, label) {
         suggestionsEl.innerHTML = '';
         suggestLabelEl.textContent = '';
         suggestLabelEl.style.display = 'none';
         if (!suggestions || !suggestions.length) {
+          suggestionsEl.style.display = 'none';
+          return;
+        }
+        const existingNorms = new Set(customRulesList.map(r => _norm(r.description)));
+        suggestions = suggestions.filter(s => !existingNorms.has(_norm(s)));
+        if (!suggestions.length) {
           suggestionsEl.style.display = 'none';
           return;
         }
@@ -4823,8 +4847,11 @@
       // Tracks whether the current generate call is a clarification follow-up (round 1).
       // Reset to 0 after every request so normal retries start fresh.
       let clarificationRound = 0;
-      // Last prompt sent to the API. Prevents re-sending the same prompt when clicking
-      // a suggestion that would return the identical error again (infinite loop guard).
+      // Tracks the last prompt dispatched to the API.
+      // Purpose: prevents suggestion chips from cycling back into the same structural
+      // error (the backend returns suggestions as alternatives, not the same prompt).
+      // Transient failures (502, network) reset this to null so the same prompt can
+      // be retried without the user having to retype it.
       let lastPrompt = null;
 
       function showClarifyOptions(question, options) {
@@ -4854,9 +4881,10 @@
       function clearResult() {
         queryEl.value = '';
         conditionEl.value = '';
+        explanationEl.textContent = '';
         explanationEl.style.display = 'none';
         const logicEl = document.getElementById('sql-rule-logic');
-        if (logicEl) logicEl.style.display = 'none';
+        if (logicEl) { logicEl.style.display = 'none'; logicEl.open = false; }
         addBtn.style.display = 'none';
         addBtn.disabled = true;
         if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
@@ -4961,8 +4989,11 @@
           // Infrastructure errors only (LLM unavailable etc.) — not structured responses.
           if (!res.ok) {
             if (res.status === 503) {
+              // API key not configured — retrying the same prompt won't help; keep lastPrompt set.
               showError('SQL generation requires a Gemini API key (GEMINI_API_KEY not set).');
             } else if (res.status === 502) {
+              // Transient LLM backend failure — allow the same prompt to be retried.
+              lastPrompt = null;
               showError('LLM request failed. Please try again.');
             } else {
               showError((data && data.detail) || 'Generation failed. Try rephrasing your description.');
@@ -4979,12 +5010,13 @@
               explanationEl.style.display = 'block';
             }
             const logicEl = document.getElementById('sql-rule-logic');
-            if (logicEl) { logicEl.style.display = ''; logicEl.open = true; }
+            // In debug mode show the SQL editor open; in normal mode keep it hidden entirely.
+            if (logicEl) { logicEl.style.display = _sqlDebugMode ? '' : 'none'; logicEl.open = _sqlDebugMode; }
             lastPrompt = null;
             addBtn.style.display = '';
             generateBtn.dataset.pendingRuleId = data.rule_id;
             syncAddBtn();
-            queryEl.focus();
+            addBtn.focus();
           } else if (data.error) {
             // Error + suggestions
             showError(data.error);
@@ -4996,6 +5028,8 @@
             showError('Unexpected response. Try rephrasing your description.');
           }
         } catch (e) {
+          // Network/fetch error — transient; allow the same prompt to be retried.
+          lastPrompt = null;
           showError('Request failed. Check your connection and try again.');
         } finally {
           clarificationRound = 0;
@@ -5031,6 +5065,8 @@
         if (logicEl) { logicEl.style.display = 'none'; logicEl.open = false; }
         addBtn.style.display = 'none';
         syncAddBtn();
+        // Re-render suggestion chips so the just-added rule's chip is removed.
+        if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
         // Brief success confirmation.
         successEl.style.display = 'block';
         setTimeout(() => { successEl.style.display = 'none'; }, 2000);
@@ -5059,7 +5095,10 @@
         } catch {
           defaultSuggestions = [
             'every StatVar should have at least one observation',
-            'no StatVar should have negative values',
+            'no StatVar should have negative minimum values',
+            'every StatVar should have non-empty units',
+            'observation dates should be after 2010',
+            'minimum value should not exceed maximum value',
           ];
         } finally {
           clearResult();
