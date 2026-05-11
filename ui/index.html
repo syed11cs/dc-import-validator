@@ -1571,25 +1571,11 @@
         </div>
         <p class="existence-checks-hint">Validates DCIDs against the Data Commons KG. Disabled by default for performance.</p>
         <div style="margin-top: 10px;">
-          <button type="button" id="advanced-opts-toggle"
-            style="background: none; border: none; color: var(--text-muted); font-size: 0.78rem; cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px;">
-            Advanced settings ▾
-          </button>
-          <div id="advanced-opts-panel" style="display: none; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px;">
-            <label for="machine-type-select" style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 4px;">
-              Dataset size
-              <span style="font-size: 0.72rem; font-weight: 400; margin-left: 2px;">(auto-selected from file size)</span>
-            </label>
-            <select id="machine-type-select" style="width: 100%; font-size: 0.82rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
-              <option value="">Auto (recommended)</option>
-              <option value="n2-highmem-16">Small dataset (&lt;5 GB)</option>
-              <option value="n2-highmem-32">Medium dataset (5–20 GB)</option>
-              <option value="n2-highmem-64">Large dataset (&gt;20 GB)</option>
-            </select>
-            <p id="machine-override-notice" style="display: none; font-size: 0.72rem; color: var(--text-muted); margin: 4px 0 0;">
-              Auto is recommended. Manual selection overrides automatic tier selection based on file size.
-            </p>
+          <div class="existence-checks-row">
+            <input type="checkbox" id="large-machine-toggle" />
+            <label for="large-machine-toggle">Use larger machine for this import</label>
           </div>
+          <p class="existence-checks-hint">Recommended only for unusually complex or slow imports.</p>
         </div>
       </div>
       </div>
@@ -3335,25 +3321,18 @@
      * Throws DOMException('AbortError') when signal fires — triggers the
      * existing cancel UI path in runValidation's catch block.
      */
-    // Toggle advanced options panel and wire machine-override notice.
-    document.getElementById('advanced-opts-toggle')?.addEventListener('click', function () {
-      const panel = document.getElementById('advanced-opts-panel');
-      if (!panel) return;
-      const open = panel.style.display !== 'none';
-      panel.style.display = open ? 'none' : 'block';
-      this.textContent = open ? 'Advanced settings ▾' : 'Advanced settings ▴';
-    });
-    document.getElementById('machine-type-select')?.addEventListener('change', function () {
-      const notice = document.getElementById('machine-override-notice');
-      if (notice) notice.style.display = this.value ? 'block' : 'none';
-    });
-
-    /** Read machine type override from the Advanced Settings panel.
-     *  Processing mode is always 'auto' and java_threads always 0 — the backend
-     *  selects optimal thread counts from benchmark evidence. */
+    /** Read machine type override from the Import Options panel.
+     *  When the "Use larger machine" checkbox is checked, forces n2-highmem-64
+     *  (the largest available tier). Otherwise sends an empty string so the
+     *  backend auto-selects the correct tier from file size.
+     *  Processing mode is always 'auto' and java_threads always 0. */
     function _getPerfOpts() {
-      const machineType = document.getElementById('machine-type-select')?.value || '';
-      return { machine_type_override: machineType, processing_mode: 'auto', java_threads: 0 };
+      const largeMachine = document.getElementById('large-machine-toggle')?.checked || false;
+      return {
+        machine_type_override: largeMachine ? 'n2-highmem-64' : '',
+        processing_mode: 'auto',
+        java_threads: 0,
+      };
     }
 
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
