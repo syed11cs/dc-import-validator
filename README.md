@@ -84,7 +84,7 @@ The web interface makes validation accessible to everyone:
 | Interactive Rules | Select which validation rules to run with checkbox interface |
 | Live Logs | Real-time terminal output with syntax highlighting and copy support |
 | Rich Reports | Combined view of blockers, warnings, StatVar summaries, and schema errors |
-| Gemini Integration | AI review runs when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set; select model: `gemini-2.5-flash` (default), `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
+| Gemini Integration | AI review runs when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set; uses `gemini-2.5-pro` by default (automatic fallback to `gemini-2.5-flash` on quota/availability errors); override with `--model` |
 | Run Management | Cancel long-running validations, view history |
 
 #### Upload Custom Files
@@ -132,7 +132,7 @@ Perfect for automation, CI/CD, or power users:
 | `--skip-rules ID1,ID2` | Skip these rules |
 | `--llm-review` | Enable Gemini Review (requires API key) |
 | `--no-llm-review` | Disable Gemini Review |
-| `--model ID` | Gemini model — allowed values: `gemini-2.5-flash` (default), `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
+| `--model ID` | Gemini model — default: `gemini-2.5-pro` (falls back to `gemini-2.5-flash` on quota/availability errors); allowed: `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
 | `--baseline-name NAME` | Name used to identify the differ baseline for custom datasets |
 | `--help` | Show help |
 ### ☁️ Deployment

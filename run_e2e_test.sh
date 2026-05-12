@@ -28,7 +28,7 @@
 #   --skip-rules ID1  Skip these rules (comma-separated)
 #   --llm-review      Run Gemini review (schema/typo) on TMCF before validation (requires GEMINI_API_KEY). Default: on.
 #   --no-llm-review   Disable Gemini review for this run.
-#   --model ID        Gemini model for Gemini review (default: gemini-2.5-flash)
+#   --model ID        Gemini model for Gemini review (default: gemini-2.5-pro, falls back to gemini-2.5-flash on quota/availability errors)
 #   --help            Show this help
 #
 # Examples:
@@ -78,7 +78,7 @@ CUSTOM_CSVS=()
 CUSTOM_STAT_VARS_MCF=""
 CUSTOM_STAT_VARS_SCHEMA_MCF=""
 LLM_REVIEW=true
-LLM_MODEL="gemini-2.5-flash"
+LLM_MODEL="gemini-2.5-pro"
 BASELINE_NAME=""
 # Optional env-var overrides — default to empty so set -u does not abort when unset.
 IMPORT_JAR_PATH="${IMPORT_JAR_PATH:-}"
