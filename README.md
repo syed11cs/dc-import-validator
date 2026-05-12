@@ -18,6 +18,8 @@ Prevent bad imports from reaching production by catching schema issues, data inc
 | 📊 Rich Reports | HTML reports with blockers/warnings, StatVar summaries, schema errors, and import tool integration |
 | 🚀 Multiple Run Modes | Docker (zero setup), CLI (development), or Cloud Run (production) |
 | ☁️ Cloud Ready | Deploy to Cloud Run with automatic GCS report storage and CI/CD via GitHub Actions |
+| ⚡ Cloud Batch | Large validations automatically dispatched to Cloud Batch VMs (up to 64 vCPUs) when GCS is configured |
+| 🔧 Custom Validation Rules | Add natural-language validation rules in the UI — converted to SQL by Gemini and run against your data |
 
 ### 🚀 Quick Start (Recommended: Docker)
 
@@ -94,7 +96,7 @@ The web interface makes validation accessible to everyone:
 3. (Optional) Add StatVars MCF for enhanced schema validation.
 4. Click **Run Validation**.
 
-File limit: 50 GB total per validation session. Multiple CSV files can be uploaded.
+File limit: 100 GB per file. Multiple CSV files can be uploaded.
 
 When `GCS_REPORTS_BUCKET` is configured, files are uploaded directly to Google Cloud Storage using signed URLs, bypassing the Cloud Run 32 MB HTTP request limit.
 
@@ -132,7 +134,7 @@ Perfect for automation, CI/CD, or power users:
 | `--skip-rules ID1,ID2` | Skip these rules |
 | `--llm-review` | Enable Gemini Review (requires API key) |
 | `--no-llm-review` | Disable Gemini Review |
-| `--model ID` | Gemini model — default: `gemini-2.5-pro` (falls back to `gemini-2.5-flash` on quota/availability errors); allowed: `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview` |
+| `--model ID` | Gemini model — default: `gemini-2.5-pro` (falls back to `gemini-2.5-flash` on quota/availability errors); stable values: `gemini-2.5-flash`, `gemini-2.5-pro` |
 | `--baseline-name NAME` | Name used to identify the differ baseline for custom datasets |
 | `--help` | Show help |
 ### ☁️ Deployment
@@ -146,7 +148,7 @@ The repository includes GitHub Actions for zero-touch deployment.
 1. Create Artifact Registry repo.
 2. Create GCS bucket for reports (optional but recommended).
 3. Create service account with necessary permissions.
-4. Add GitHub secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY` (JSON key), `AR_LOCATION` (e.g. `us`).
+4. Add GitHub secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY` (JSON key). Optional: `GCP_REGION`, `AR_LOCATION` (e.g. `us` for multi-region AR repos; defaults to `GCP_REGION` or `us-central1`).
 
 Push to `main` — automatic build and deploy!
 
@@ -170,19 +172,24 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |
 | `IMPORT_EXISTENCE_CHECKS` | No | Java import tool existence checks. The UI toggle (Import Options → Enable Data Commons existence checks) overrides this per-run; the toggle defaults to OFF for performance. Server-level default: `true` when running via CLI. |
 | `LOG_LEVEL` | No | Application log level: `DEBUG`, `INFO` (default), `WARNING` |
+| `KEEP_RUN_DIR` | No | Set to `1` to preserve per-run output directories after cleanup (useful for debugging) |
+| `BATCH_IMAGE_URI` | No | Docker image URI used for Cloud Batch jobs. Auto-set from `GCP_PROJECT_ID`/`GCP_REGION`/`AR_LOCATION` at deploy time. Override if your image lives in a different registry. |
+| `BATCH_PROVISIONING_MODEL` | No | Cloud Batch VM provisioning: `STANDARD` (default, stable) or `SPOT` (~60–90% cheaper but may be preempted) |
+| `GENMCF_PROFILE` | No | Set to `true` to enable JFR CPU/lock profiling and GC logging during Step 2 (genmcf). Output: `genmcf_profile.jfr` + `gc.log`. ~1–5% overhead. |
 
 #### CSV Auto-Splitting for Large Imports
 
 **Why it exists:** `genmcf --num-threads` parallelizes at the *file* level — one thread per CSV file. A single large CSV (e.g. 38 M rows, ~28 GB) keeps all threads idle except one, regardless of machine size. Splitting the CSV into same-schema shards lets genmcf process them in parallel and actually use the configured thread count.
 
-**How it works:** A Python splitter (`scripts/split_csv_for_genmcf.py`) runs between Step 1 (schema review) and Step 2 (genmcf). It partitions the single CSV into N shards — each has an identical header and `rows_per_shard` data rows. Step 0 and Step 1 always run on the original file. After genmcf completes, shards are deleted.
+**How it works:** When enabled, CSV validation and splitting happen together in Step 1.5 (`scripts/validate_and_split.py`) — a single streaming pass that validates quality and partitions the CSV into N shards. Each shard has an identical header and `rows_per_shard` data rows. Steps 0 and 1 always run on the original file. After genmcf completes, shards are deleted.
 
 **This is off by default.** Enable it only when you have a single large CSV and want to benchmark or improve throughput.
 
 | Variable | Default | Description |
 |---|---|---|
 | `CSV_SPLIT_ENABLED` | `false` | Set to `true` to enable splitting |
-| `CSV_SPLIT_ROWS` | `1000000` | Data rows per shard |
+| `CSV_SPLIT_ROWS` | adaptive | Data rows per shard. Leave unset for adaptive sizing (targets `CSV_SPLIT_TARGET_SHARDS_PER_THREAD × JAVA_THREADS` shards from file size; clamped to [500 000, 5 000 000]). Set to a positive integer to override. |
+| `CSV_SPLIT_TARGET_SHARDS_PER_THREAD` | `2` | Adaptive shard multiplier: `target_shards = JAVA_THREADS × this`. Supports decimals. Ignored when `CSV_SPLIT_ROWS` is set explicitly. |
 | `CSV_SPLIT_THRESHOLD_ROWS` | `5000000` | Skip split if source CSV has fewer rows than this |
 | `CSV_SPLIT_CLEANUP` | `true` | Set to `false` to preserve shards after Step 2 (debugging) |
 
@@ -232,6 +239,26 @@ CSV_SPLIT_ENABLED=true CSV_SPLIT_CLEANUP=false JAVA_THREADS=32 \
 | `peak_rss_gb` | cgroup `memory.current` | Container RSS at Step 2 exit; `unknown` on macOS |
 
 **Expected gains:** Roughly 2–5x improvement on real-world large datasets (e.g. 30 min → 6–15 min for Step 2). Actual gains depend on genmcf internal behaviour, disk I/O bandwidth, and JVM GC pressure, and may be lower. Benchmark with real data before relying on this feature.
+
+#### Cloud Batch Execution
+
+When `GCS_REPORTS_BUCKET` is set, **all** validation runs are dispatched to Google Cloud Batch instead of executing in-process on the Cloud Run instance. This applies to both built-in datasets and custom uploads, regardless of file size.
+
+**Why Batch?** Cloud Run has a 32 MB HTTP request limit, a 60-minute request timeout, and limited memory. Cloud Batch removes all three constraints and supports multi-core VMs for parallel genmcf processing.
+
+**Machine tier selection** (based on total CSV byte size at dispatch time):
+
+| CSV size | Machine type | vCPUs | Memory |
+|---|---|---|---|
+| < 5 GB | `n2-highmem-16` | 16 | 128 GB |
+| 5–20 GB | `n2-highmem-32` | 32 | 256 GB |
+| ≥ 20 GB | `n2-highmem-64` | 64 | 512 GB |
+
+**Status polling:** The Cloud Run server polls `jobs/<run_id>/status.json` in GCS and streams updates to the browser. Progress appears as step pills ("Preflight", "AI Schema Review", "DC Import Tool", etc.) identical to the local streaming experience.
+
+**Image:** Batch jobs run the same Docker image as Cloud Run (set via `BATCH_IMAGE_URI`, auto-configured at deploy time).
+
+**Accept Baseline:** After a successful Batch run, the "Accept Baseline" button becomes available once all MCF artifacts finish uploading (indicated by `artifacts_ready: true` in `status.json`).
 
 #### Health Check
 
@@ -397,7 +424,7 @@ Set `LOG_LEVEL=DEBUG` for verbose output.
 A: Only for AI-powered schema review. The validator works without it (skips the Gemini step).
 
 **Q: What Java version do I need?**
-A: Java 11+ (17 recommended). Docker image includes Java 17.
+A: Java 17. Docker image includes Java 17 (`openjdk-17-jre-headless`).
 
 **Q: Can I run this in CI/CD?**
 A: Absolutely! Use the CLI (`./run_e2e_test.sh`) in your pipelines. Exit codes indicate pass/fail.

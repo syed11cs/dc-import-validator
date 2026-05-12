@@ -37,8 +37,10 @@
 #   IMPORT_RESOLUTION_MODE        - LOCAL|FULL  (default: LOCAL)
 #   IMPORT_EXISTENCE_CHECKS       - true|false  (default: true)
 #   JAVA_THREADS                  - genmcf thread count  (default: 2)
+#   LLM_MODEL                     - Gemini model ID (default: gemini-2.5-pro; passed to --model)
 #   GEMINI_API_KEY / GOOGLE_API_KEY - Gemini API key (passed through; required if LLM_REVIEW=true)
 #   DC_API_KEY                    - DC API key (required only for IMPORT_RESOLUTION_MODE=FULL)
+#   GENMCF_PROFILE                - Set to `true` to enable JFR CPU profiling + GC logging in Step 2
 
 set -uo pipefail
 

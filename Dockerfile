@@ -1,5 +1,6 @@
-# Full Cloud Run image: built-in datasets + Custom (requires datacommonsorg/data for import_validation only).
-# Child birth testdata lives in this repo (sample_data/child_birth/). Sparse clone: only tools/import_validation.
+# Full Cloud Run / Cloud Batch image: built-in datasets + Custom uploads.
+# Child birth testdata lives in this repo (sample_data/child_birth/).
+# Sparse clone from datacommonsorg/data: tools/import_validation, tools/import_differ, util, tools/statvar_importer.
 # ------------------------------------------------------------------------------
 # Stage 1: Sparse clone of data repo (only tools/import_validation for the runner)
 # ------------------------------------------------------------------------------
@@ -29,7 +30,7 @@ FROM python:3.11-slim-bookworm
 
 # Add metadata
 LABEL maintainer="Data Commons Team" \
-      version="1.0.0" \
+      version="0.4.0" \
       description="DC Import Validator - Full image with built-in datasets"
 
 # Java 17 for dc-import JAR; curl for JAR download
@@ -54,9 +55,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
 
 # dc-import JAR (-f = fail on HTTP errors; retry on transient failure)
 ARG IMPORT_RELEASE_VERSION=v0.3.0
-RUN mkdir -p bin && \
+RUN IMPORT_VERSION_NUM="${IMPORT_RELEASE_VERSION#v}" && \
+    mkdir -p bin && \
     curl --retry 3 --retry-delay 5 -sfL -o bin/datacommons-import-tool.jar \
-    "https://github.com/datacommonsorg/import/releases/download/${IMPORT_RELEASE_VERSION}/datacommons-import-tool-0.3.0-jar-with-dependencies.jar" && \
+    "https://github.com/datacommonsorg/import/releases/download/${IMPORT_RELEASE_VERSION}/datacommons-import-tool-${IMPORT_VERSION_NUM}-jar-with-dependencies.jar" && \
     chmod 644 bin/datacommons-import-tool.jar
 
 # Create non-root user for security
