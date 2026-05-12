@@ -96,7 +96,7 @@ The web interface makes validation accessible to everyone:
 3. (Optional) Add StatVars MCF for enhanced schema validation.
 4. Click **Run Validation**.
 
-File limit: 100 GB per file. Multiple CSV files can be uploaded.
+File limit: 100 GB total per upload session (TMCF + all CSVs combined). Multiple CSV files can be uploaded.
 
 When `GCS_REPORTS_BUCKET` is configured, files are uploaded directly to Google Cloud Storage using signed URLs, bypassing the Cloud Run 32 MB HTTP request limit.
 
