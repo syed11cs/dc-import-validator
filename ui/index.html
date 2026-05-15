@@ -256,24 +256,26 @@
     .rules-category[open] .rules-category-chevron::before { content: '▴'; }
     .rules-category-items { padding: 8px 0 0 0; }
     /* Custom SQL rules */
-    #custom-sql-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
-    #custom-sql-section-label { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
-    .custom-rule-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-elevated); margin-bottom: 4px; }
+    #custom-sql-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+    #custom-sql-section-label { font-size: 0.8125rem; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+    .custom-rules-count { color: var(--text-muted); font-weight: 400; }
+    .custom-rule-item { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-elevated); margin-bottom: 6px; }
     .custom-rule-item:has(.rule-checkbox:checked) { background: rgba(99,102,241,0.08); border-color: rgba(99,102,241,0.25); }
     .custom-rule-item:has(.rule-checkbox:not(:checked)) { opacity: 0.72; }
     .custom-rule-body { flex: 1; min-width: 0; }
     .custom-rule-id { font-family: monospace; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 2px; }
     .custom-rule-query { font-family: monospace; font-size: 0.71rem; color: var(--text-muted); background: rgba(0,0,0,0.055); border-radius: 3px; padding: 2px 5px; word-break: break-all; white-space: pre-wrap; margin-top: 3px; display: block; }
-    .custom-rule-badge { font-size: 0.65rem; color: var(--accent); background: rgba(99,102,241,0.12); padding: 1px 6px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; align-self: flex-start; margin-top: 2px; }
-    .custom-rule-delete { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 1rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
+    .custom-rule-badge { font-size: 0.62rem; color: var(--text-muted); background: transparent; border: 1px solid rgba(255,255,255,0.12); padding: 1px 5px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; align-self: flex-start; margin-top: 2px; }
+    .custom-rule-delete { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 0.8rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
     .custom-rule-delete:hover { opacity: 1; color: var(--fail); }
     .custom-rule-edit { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px 4px; font-size: 0.8rem; line-height: 1; opacity: 0.55; flex-shrink: 0; align-self: flex-start; }
     .custom-rule-edit:hover { opacity: 1; color: var(--accent); }
     .custom-rule-edit-form { flex: 1; display: flex; flex-direction: column; gap: 10px; }
     .custom-rule-edit-form textarea, .custom-rule-edit-form input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.75rem; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 6px; resize: vertical; }
     .custom-rule-edit-form textarea { min-height: 56px; }
+    .custom-rule-edit-form textarea:focus, .custom-rule-edit-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
     .custom-rule-edit-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-start; margin-top: 4px; }
-    .custom-rule-edit-save { width: auto; flex: 0 0 auto; background: none; border: 1px solid var(--accent); color: var(--accent); font-size: 0.73rem; padding: 3px 10px; border-radius: 4px; font-family: inherit; cursor: pointer; transition: all 0.15s ease; }
+    .custom-rule-edit-save { width: auto; flex: 0 0 auto; background: none; border: 1px solid var(--accent); color: var(--accent); font-size: 0.75rem; padding: 3px 10px; border-radius: 4px; font-family: inherit; cursor: pointer; transition: all 0.15s ease; }
     .custom-rule-edit-save:hover { background: rgba(99,102,241,0.12); }
     .custom-rule-edit-cancel { width: auto; flex: 0 0 auto; font-size: 0.75rem; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: 4px; font-family: inherit; cursor: pointer; opacity: 0.6; transition: opacity 0.15s; }
     .custom-rule-edit-cancel:hover { color: var(--text); opacity: 0.9; }
@@ -287,9 +289,9 @@
     /* Keep the button visually styled even when disabled=true (set for accessibility during loading) */
     #sql-generate-btn.btn-loading,
     #sql-generate-btn.btn-loading:disabled { background: var(--accent); color: #fff; border: 1px solid var(--accent); opacity: 1; cursor: progress; pointer-events: none; box-shadow: 0 0 0 1px rgba(99,102,241,0.4), 0 0 6px rgba(99,102,241,0.35); }
-    #sql-rule-add-btn { background: rgba(99,102,241,0.12); border: 1px solid var(--accent); color: var(--accent); font-size: 0.78rem; font-weight: 500; padding: 5px 16px; cursor: pointer; transition: all 0.15s ease; border-radius: var(--radius); margin-top: 10px; }
-    #sql-rule-add-btn:not(:disabled):hover { background: var(--accent); color: #fff; }
-    #sql-rule-add-btn:disabled { opacity: 0.3; cursor: not-allowed; background: none; border-color: var(--border); color: var(--text-muted); }
+    /* Shared loading state for inline edit buttons — same accent treatment as Add Rule. */
+    .custom-rule-edit-save.btn-loading,
+    .custom-rule-edit-save.btn-loading:disabled { background: var(--accent); color: #fff; border: 1px solid var(--accent); opacity: 1; cursor: progress; pointer-events: none; }
     #sql-rule-error { font-size: 0.75rem; color: var(--fail); display: none; }
     #sql-rule-vague-hint { font-size: 0.72rem; color: var(--text-muted); display: none; margin-top: 2px; }
     #sql-rule-editor label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 3px; }
@@ -299,7 +301,21 @@
     ._sql-spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.5); border-top-color: #fff; border-radius: 50%; animation: _sql-spin 0.65s linear infinite; margin-right: 6px; vertical-align: middle; }
     .custom-rule-condition { font-size: 0.73rem; color: var(--text); margin-top: 4px; }
     .custom-rule-condition-label { color: var(--text-muted); font-size: 0.7rem; margin-right: 3px; }
-    #sql-rule-success { font-size: 0.75rem; color: var(--success); display: none; }
+    .custom-rule-origin-label { font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; font-style: italic; }
+    .custom-rule-nl-sql-details { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+    .custom-rule-nl-condition { font-size: 0.7rem; color: var(--text-muted); }
+    .custom-rule-nl-condition code { font-size: 0.7rem; background: rgba(0,0,0,0.08); padding: 0 3px; border-radius: 2px; }
+    .nl-edit-prompt-section { display: flex; flex-direction: column; gap: 4px; }
+    /* NL prompt textarea: prose font, sized to match the generation panel textarea. */
+    .nl-edit-prompt-section textarea { font-family: inherit; font-size: 0.78rem; padding: 6px 8px; min-height: 48px; resize: none; }
+    .custom-rule-edit-save:disabled { opacity: 0.5; cursor: not-allowed; }
+    .nl-edit-advanced summary { font-size: 0.72rem; color: var(--text-muted); cursor: pointer; user-select: none; list-style: none; }
+    .nl-edit-advanced summary::-webkit-details-marker { display: none; }
+    .nl-edit-advanced { margin-top: 4px; }
+    .nl-edit-advanced > div { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+    .nl-edit-advanced textarea, .nl-edit-advanced input[type="text"] { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 0.75rem; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 6px; resize: vertical; }
+    .nl-edit-advanced textarea { min-height: 56px; }
+    #sql-rule-success { font-size: 0.75rem; color: var(--success); max-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.2s ease, max-height 0.2s ease; pointer-events: none; }
     #sql-rule-explanation { font-size: 0.73rem; color: var(--text-muted); background: rgba(99,102,241,0.07); border-left: 2px solid rgba(99,102,241,0.35); padding: 5px 8px; border-radius: 0 3px 3px 0; display: none; }
     #sql-rule-suggestions { display: none; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
     .sql-suggestion-chip { font-size: 0.72rem; padding: 3px 9px; border-radius: 12px; border: 1px solid var(--border); background: none; color: var(--text); opacity: 0.8; cursor: pointer; transition: all 0.12s ease; font-family: inherit; }
@@ -1626,11 +1642,11 @@
           <div id="sql-rule-editor">
             <div id="sql-rule-desc-row">
               <div style="flex:1;display:flex;flex-direction:column;gap:4px;">
-                <label for="sql-rule-desc" style="font-size:0.72rem;color:var(--text-muted);">Rule description</label>
+                <label for="sql-rule-desc">Rule description</label>
                 <textarea id="sql-rule-desc" rows="2" placeholder="Describe the rule in plain English (e.g. 'no negative values', 'dates after 2020')"></textarea>
                 <div id="sql-rule-vague-hint">Try being more specific (e.g. "after 2020", "greater than 0")</div>
               </div>
-              <button type="button" id="sql-generate-btn" class="btn btn-sm">Generate Rule</button>
+              <button type="button" id="sql-generate-btn" class="btn btn-sm">Add Rule</button>
             </div>
             <div id="sql-rule-error"></div>
             <div id="sql-suggestions-label"></div>
@@ -1648,10 +1664,7 @@
               </div>
               <input type="text" id="sql-rule-id" style="display:none;">
             </details>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-              <button type="button" id="sql-rule-add-btn" class="btn btn-sm" style="width:auto;display:none;" disabled>Add Rule</button>
-            </div>
-            <div id="sql-rule-success">&#10003; Rule added</div>
+            <div id="sql-rule-success">Rule added successfully</div>
           </div>
         </div>
       </div>
@@ -2095,94 +2108,236 @@
       if (!container) return;
       const label = document.getElementById('custom-sql-section-label');
       if (label) {
-        label.textContent = customRulesList.length > 0
-          ? 'Custom Validation Rules (' + customRulesList.length + ')'
+        label.innerHTML = customRulesList.length > 0
+          ? 'Custom Validation Rules <span class="custom-rules-count">(' + customRulesList.length + ')</span>'
           : 'Custom Validation Rules';
       }
       if (customRulesList.length === 0) {
         container.innerHTML = '';
         return;
       }
+      const debugMode = !!window._sqlDebugMode;
       // Checked state is stored in r.enabled — no DOM reading needed.
       container.innerHTML = customRulesList.map(r => {
-        const isChecked = r.enabled !== false; // default true if field absent (legacy)
-        return '<div class="custom-rule-item">' +
-          '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (isChecked ? ' checked' : '') + '>' +
-          '<div class="custom-rule-body">' +
+        const isChecked = r.enabled !== false;
+        const isNl = r.origin === 'nl';
+        let bodyHtml;
+        if (isNl) {
+          // NL rules: in normal mode show only description (no SQL, no ID exposed).
+          // In debug mode, show ID + origin label + "View Generated SQL" collapsed details.
+          bodyHtml =
+            '<div class="custom-rule-title">' + escapeHtml(r.description || r.rule_id) + '</div>';
+          if (debugMode) {
+            bodyHtml +=
+              '<div class="custom-rule-meta-id">ID: ' + escapeHtml(r.rule_id) + '</div>' +
+              '<div class="custom-rule-origin-label">Generated from natural language</div>' +
+              '<details class="custom-rule-sql-toggle">' +
+                '<summary>View Generated SQL</summary>' +
+                '<div class="custom-rule-nl-sql-details">' +
+                  '<div class="custom-rule-nl-condition">Condition: <code>' + escapeHtml(r.condition) + '</code></div>' +
+                  '<code class="custom-rule-query">' + escapeHtml(r.query) + '</code>' +
+                '</div>' +
+              '</details>';
+          }
+        } else {
+          // Manual rules: always show condition and SQL toggle.
+          bodyHtml =
             '<div class="custom-rule-title">' + escapeHtml(r.description || r.rule_id) + '</div>' +
             '<div class="custom-rule-meta-id">ID: ' + escapeHtml(r.rule_id) + '</div>' +
             '<div class="custom-rule-condition"><span class="custom-rule-condition-label">Condition: </span>' + escapeHtml(r.condition) + '</div>' +
             '<details class="custom-rule-sql-toggle">' +
               '<summary>View logic</summary>' +
               '<code class="custom-rule-query">' + escapeHtml(r.query) + '</code>' +
-            '</details>' +
-          '</div>' +
+            '</details>';
+        }
+        return '<div class="custom-rule-item">' +
+          '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (isChecked ? ' checked' : '') + '>' +
+          '<div class="custom-rule-body">' + bodyHtml + '</div>' +
           '<span class="custom-rule-badge">Custom</span>' +
           '<button type="button" class="custom-rule-edit" data-rule-id="' + escapeHtml(r.rule_id) + '" title="Edit rule" aria-label="Edit rule">Edit</button>' +
           '<button type="button" class="custom-rule-delete" data-rule-id="' + escapeHtml(r.rule_id) + '" title="Remove rule" aria-label="Remove rule">\u00d7</button>' +
         '</div>';
       }).join('');
+
       container.querySelectorAll('.rule-checkbox[data-rule-id]').forEach(cb => {
         cb.addEventListener('change', () => {
           const r = customRulesList.find(x => x.rule_id === cb.dataset.ruleId);
           if (r) r.enabled = cb.checked;
         });
       });
+
       container.querySelectorAll('.custom-rule-delete').forEach(btn => {
         btn.addEventListener('click', () => {
           const idx = customRulesList.findIndex(x => x.rule_id === btn.dataset.ruleId);
           if (idx !== -1) {
             customRulesList.splice(idx, 1);
             renderCustomRules();
-            // Re-render suggestion chips so the deleted rule's chip can reappear.
             if (typeof showSuggestions === 'function' && typeof defaultSuggestions !== 'undefined' && defaultSuggestions.length) {
               showSuggestions(defaultSuggestions, 'Try one of these:');
             }
           }
         });
       });
+
       container.querySelectorAll('.custom-rule-edit').forEach(btn => {
         btn.addEventListener('click', () => {
           const ruleId = btn.dataset.ruleId;
           const r = customRulesList.find(x => x.rule_id === ruleId);
           if (!r) return;
           const item = btn.closest('.custom-rule-item');
-          // Replace item content with inline edit form; rule ID is read-only.
-          // Enabled state comes from r.enabled — not from DOM.
           item.classList.add('custom-rule-editing');
-          item.innerHTML =
-            '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (r.enabled !== false ? ' checked' : '') + '>' +
-            '<div class="custom-rule-edit-form">' +
-              '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
-                '<span style="font-size:0.68rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</span>' +
-                '<span style="font-size:0.65rem;color:var(--accent);background:rgba(99,102,241,0.12);padding:1px 6px;border-radius:3px;">Editing rule</span>' +
-              '</div>' +
-              '<textarea class="edit-query" rows="3" placeholder="SQL query">' + escapeHtml(r.query) + '</textarea>' +
-              '<input type="text" class="edit-condition" placeholder="Condition (e.g. value >= 0)" value="' + escapeHtml(r.condition) + '">' +
-              '<div class="custom-rule-edit-error" style="color:var(--fail);font-size:0.75rem;display:none;"></div>' +
-              '<div class="custom-rule-edit-actions">' +
-                '<button type="button" class="custom-rule-edit-save" data-rule-id="' + escapeHtml(r.rule_id) + '">Save changes</button>' +
-                '<button type="button" class="custom-rule-edit-cancel">Cancel</button>' +
-              '</div>' +
-            '</div>';
-          // Keep enabled in sync if the checkbox is toggled while in edit mode.
-          item.querySelector('.rule-checkbox').addEventListener('change', function() {
-            const live = customRulesList.find(x => x.rule_id === ruleId);
-            if (live) live.enabled = this.checked;
-          });
-          item.querySelector('.custom-rule-edit-save').addEventListener('click', () => {
-            const query = item.querySelector('.edit-query').value.trim();
-            const condition = item.querySelector('.edit-condition').value.trim();
-            const errEl = item.querySelector('.custom-rule-edit-error');
-            if (!query) { if (errEl) { errEl.textContent = 'Query is required.'; errEl.style.display = ''; } return; }
-            if (!condition) { if (errEl) { errEl.textContent = 'Condition is required.'; errEl.style.display = ''; } return; }
-            const live = customRulesList.find(x => x.rule_id === ruleId);
-            if (live) { live.query = query; live.condition = condition; }
-            renderCustomRules();
-          });
-          item.querySelector('.custom-rule-edit-cancel').addEventListener('click', () => {
-            renderCustomRules();
-          });
+
+          if (r.origin === 'nl') {
+            // ── NL edit form (atomic) ─────────────────────────────────────────────
+            // "Update Rule" calls the API and commits the result in one step.
+            // Debug mode exposes current SQL for inspection; it does not change the
+            // commit model — "Update Rule" always regenerates from the NL prompt.
+            const advancedSql = debugMode
+              ? '<details class="nl-edit-advanced">' +
+                  '<summary>View generated SQL</summary>' +
+                  '<div>' +
+                    '<textarea class="edit-query" rows="3" placeholder="SQL query"></textarea>' +
+                    '<input type="text" class="edit-condition" placeholder="Condition">' +
+                  '</div>' +
+                '</details>'
+              : '';
+
+            const editIdRow = debugMode
+              ? '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+                  '<span style="font-size:0.68rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</span>' +
+                  '<span style="font-size:0.65rem;color:var(--accent);background:rgba(99,102,241,0.12);padding:1px 6px;border-radius:3px;">NL rule</span>' +
+                '</div>'
+              : '';
+
+            item.innerHTML =
+              '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (r.enabled !== false ? ' checked' : '') + '>' +
+              '<div class="custom-rule-edit-form">' +
+                editIdRow +
+                '<div class="nl-edit-prompt-section">' +
+                  '<label style="font-size:0.75rem;color:var(--text-muted);margin-bottom:2px;display:block;">Describe what the rule should check:</label>' +
+                  '<textarea class="edit-nl-prompt" rows="2"></textarea>' +
+                '</div>' +
+                advancedSql +
+                '<div class="custom-rule-edit-error" style="color:var(--fail);font-size:0.75rem;display:none;"></div>' +
+                '<div class="custom-rule-edit-actions">' +
+                  '<button type="button" class="custom-rule-edit-save nl-edit-update">Update Rule</button>' +
+                  '<button type="button" class="custom-rule-edit-cancel">Cancel</button>' +
+                '</div>' +
+              '</div>';
+
+            const nlPromptEl = item.querySelector('.edit-nl-prompt');
+            const errEl      = item.querySelector('.custom-rule-edit-error');
+            const updateBtn  = item.querySelector('.nl-edit-update');
+
+            // Set values via JS — safe for quotes, newlines, and special chars in SQL.
+            if (nlPromptEl) nlPromptEl.value = r.description || '';
+            if (debugMode) {
+              const qInput = item.querySelector('.edit-query');
+              const cInput = item.querySelector('.edit-condition');
+              if (qInput) qInput.value = r.query || '';
+              if (cInput) cInput.value = r.condition || '';
+            }
+
+            item.querySelector('.rule-checkbox').addEventListener('change', function() {
+              const live = customRulesList.find(x => x.rule_id === ruleId);
+              if (live) live.enabled = this.checked;
+            });
+
+            nlPromptEl.addEventListener('input', () => {
+              if (errEl) errEl.style.display = 'none';
+            });
+
+            updateBtn.addEventListener('click', async () => {
+              const prompt = (nlPromptEl.value || '').trim();
+              if (!prompt) { errEl.textContent = 'Description is required.'; errEl.style.display = ''; return; }
+              updateBtn.style.minWidth = updateBtn.offsetWidth + 'px';
+              updateBtn.classList.add('btn-loading');
+              updateBtn.disabled = true;
+              updateBtn.innerHTML = '<span class="_sql-spinner"></span>Updating\u2026';
+              if (errEl) errEl.style.display = 'none';
+              let succeeded = false;
+              try {
+                const res = await fetch((API || '') + '/api/generate-sql-rule', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    prompt,
+                    dataset: currentDataset || null,
+                    csv_columns: null,
+                    clarification_round: 0,
+                    run_id: lastRunReportId || null,
+                    csv_preview_stats: null,
+                  }),
+                });
+                const data = await res.json();
+                if (data && data.query) {
+                  const live = customRulesList.find(x => x.rule_id === ruleId);
+                  if (live) {
+                    live.query = data.query;
+                    live.condition = data.condition;
+                    live.description = prompt;
+                  }
+                  succeeded = true;
+                } else {
+                  const msg = (data && (data.error || data.detail)) || 'Update failed. Try rephrasing.';
+                  if (errEl) { errEl.textContent = msg; errEl.style.display = ''; }
+                }
+              } catch (_e) {
+                if (errEl) { errEl.textContent = 'Request failed. Check your connection.'; errEl.style.display = ''; }
+              } finally {
+                if (succeeded) {
+                  renderCustomRules(); // closes card atomically
+                } else {
+                  updateBtn.style.minWidth = '';
+                  updateBtn.classList.remove('btn-loading');
+                  updateBtn.disabled = false;
+                  updateBtn.textContent = 'Update Rule';
+                }
+              }
+            });
+
+            item.querySelector('.custom-rule-edit-cancel').addEventListener('click', () => {
+              renderCustomRules();
+            });
+
+          } else {
+            // ── Manual edit form: raw SQL textarea + condition input (unchanged) ──
+            item.innerHTML =
+              '<input type="checkbox" class="rule-checkbox" id="rule-' + escapeHtml(r.rule_id) + '" data-rule-id="' + escapeHtml(r.rule_id) + '"' + (r.enabled !== false ? ' checked' : '') + '>' +
+              '<div class="custom-rule-edit-form">' +
+                '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">' +
+                  '<span style="font-size:0.68rem;font-family:monospace;color:var(--text-muted)">ID: ' + escapeHtml(r.rule_id) + '</span>' +
+                  '<span style="font-size:0.65rem;color:var(--accent);background:rgba(99,102,241,0.12);padding:1px 6px;border-radius:3px;">Editing rule</span>' +
+                '</div>' +
+                '<textarea class="edit-query" rows="3" placeholder="SQL query">' + escapeHtml(r.query) + '</textarea>' +
+                '<input type="text" class="edit-condition" placeholder="Condition (e.g. value >= 0)" value="' + escapeHtml(r.condition) + '">' +
+                '<div class="custom-rule-edit-error" style="color:var(--fail);font-size:0.75rem;display:none;"></div>' +
+                '<div class="custom-rule-edit-actions">' +
+                  '<button type="button" class="custom-rule-edit-save" data-rule-id="' + escapeHtml(r.rule_id) + '">Save changes</button>' +
+                  '<button type="button" class="custom-rule-edit-cancel">Cancel</button>' +
+                '</div>' +
+              '</div>';
+
+            item.querySelector('.rule-checkbox').addEventListener('change', function() {
+              const live = customRulesList.find(x => x.rule_id === ruleId);
+              if (live) live.enabled = this.checked;
+            });
+
+            item.querySelector('.custom-rule-edit-save').addEventListener('click', () => {
+              const query = item.querySelector('.edit-query').value.trim();
+              const condition = item.querySelector('.edit-condition').value.trim();
+              const errEl = item.querySelector('.custom-rule-edit-error');
+              if (!query) { if (errEl) { errEl.textContent = 'Query is required.'; errEl.style.display = ''; } return; }
+              if (!condition) { if (errEl) { errEl.textContent = 'Condition is required.'; errEl.style.display = ''; } return; }
+              const live = customRulesList.find(x => x.rule_id === ruleId);
+              if (live) { live.query = query; live.condition = condition; }
+              renderCustomRules();
+            });
+
+            item.querySelector('.custom-rule-edit-cancel').addEventListener('click', () => {
+              renderCustomRules();
+            });
+          }
         });
       });
     }
@@ -2194,7 +2349,11 @@
           rule_id: r.rule_id,
           validator: 'SQL_VALIDATOR',
           scope: { data_source: 'stats' },
-          params: { query: r.query, condition: r.condition },
+          // nl_prompt goes inside params so _normalize_custom_rule() can read params.get("nl_prompt").
+          params: Object.assign(
+            { query: r.query, condition: r.condition },
+            r.origin === 'nl' && r.description ? { nl_prompt: r.description } : {},
+          ),
         }));
     }
 
@@ -2745,8 +2904,6 @@
       if (deselectAll) deselectAll.disabled = disabled;
       if (savePreset) savePreset.disabled = disabled;
       if (clearPresets) clearPresets.disabled = disabled;
-      const addSqlBtn = document.getElementById('sql-rule-add-btn');
-      if (addSqlBtn) addSqlBtn.disabled = disabled;
       document.querySelectorAll('.custom-rule-delete').forEach(btn => { btn.disabled = disabled; });
       document.querySelectorAll('.custom-rule-edit').forEach(btn => { btn.disabled = disabled; });
       const sqlGenerateBtn = document.getElementById('sql-generate-btn');
@@ -4786,6 +4943,8 @@
         }
         return localStorage.getItem('_sql_debug') === '1';
       })();
+      // Expose for renderCustomRules() which lives outside this IIFE.
+      window._sqlDebugMode = _sqlDebugMode;
 
       const generateBtn    = document.getElementById('sql-generate-btn');
       const descEl         = document.getElementById('sql-rule-desc');
@@ -4795,7 +4954,6 @@
       const queryEl        = document.getElementById('sql-rule-query');
       const conditionEl    = document.getElementById('sql-rule-condition');
       const ruleIdEl       = document.getElementById('sql-rule-id');
-      const addBtn         = document.getElementById('sql-rule-add-btn');
       const successEl      = document.getElementById('sql-rule-success');
       const explanationEl  = document.getElementById('sql-rule-explanation');
       const vagueHintEl    = document.getElementById('sql-rule-vague-hint');
@@ -4886,17 +5044,9 @@
         explanationEl.style.display = 'none';
         const logicEl = document.getElementById('sql-rule-logic');
         if (logicEl) { logicEl.style.display = 'none'; logicEl.open = false; }
-        addBtn.style.display = 'none';
-        addBtn.disabled = true;
         if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
       }
 
-      function syncAddBtn() {
-        addBtn.disabled = !(queryEl.value.trim() && conditionEl.value.trim());
-      }
-
-      queryEl.addEventListener('input', syncAddBtn);
-      conditionEl.addEventListener('input', syncAddBtn);
       descEl.addEventListener('input', function() { lastPrompt = null; });
 
       // Read column headers from the first uploaded CSV file (first 2 KB only).
@@ -4966,11 +5116,11 @@
         lastPrompt = prompt;
         showError('');
         clearResult();
-        generateBtn.style.width = generateBtn.offsetWidth + 'px';
+        generateBtn.style.minWidth = generateBtn.offsetWidth + 'px';
         generateBtn.classList.add('btn-loading');
         generateBtn.disabled = true;
         descEl.disabled = true;
-        generateBtn.innerHTML = '<span class="_sql-spinner"></span>Generating\u2026';
+        generateBtn.innerHTML = '<span class="_sql-spinner"></span>Adding\u2026';
         try {
           const csvColumns = await readCsvColumns();
           const csvPreviewStats = lastRunReportId ? null : await readCsvPreviewStats();
@@ -5003,21 +5153,45 @@
           }
           // Detect response type by shape — never rely on HTTP status for sql/error.
           if (data.query) {
-            // SQL result
-            queryEl.value = data.query;
-            conditionEl.value = data.condition;
-            if (data.explanation) {
-              explanationEl.textContent = data.explanation;
-              explanationEl.style.display = 'block';
+            // Atomically add the generated rule to the list.
+            const ruleId = (ruleIdEl && ruleIdEl.value.trim()) || data.rule_id ||
+              ('custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
+            if (ruleIdEl) ruleIdEl.value = '';
+            customRulesList.push({
+              rule_id: ruleId, query: data.query, condition: data.condition,
+              description: prompt, origin: 'nl', enabled: true,
+            });
+            renderCustomRules();
+            updateRunButtonState();
+            // Scroll the newly added rule card into view if the list is not empty.
+            const _rulesList = document.getElementById('custom-rules-list');
+            if (_rulesList && _rulesList.lastElementChild) {
+              _rulesList.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
-            const logicEl = document.getElementById('sql-rule-logic');
-            // In debug mode show the SQL editor open; in normal mode keep it hidden entirely.
-            if (logicEl) { logicEl.style.display = _sqlDebugMode ? '' : 'none'; logicEl.open = _sqlDebugMode; }
+            descEl.value = '';
             lastPrompt = null;
-            addBtn.style.display = '';
-            generateBtn.dataset.pendingRuleId = data.rule_id;
-            syncAddBtn();
-            addBtn.focus();
+            // Debug mode: show generated SQL as informational output.
+            // Normal mode: SQL panel stays hidden.
+            if (_sqlDebugMode) {
+              queryEl.value = data.query;
+              conditionEl.value = data.condition;
+              if (data.explanation) { explanationEl.textContent = data.explanation; explanationEl.style.display = 'block'; }
+              const logicEl = document.getElementById('sql-rule-logic');
+              if (logicEl) { logicEl.style.display = ''; logicEl.open = true; }
+            } else {
+              queryEl.value = '';
+              conditionEl.value = '';
+              explanationEl.style.display = 'none';
+              const logicEl = document.getElementById('sql-rule-logic');
+              if (logicEl) { logicEl.style.display = 'none'; }
+            }
+            successEl.style.maxHeight = '2em';
+            successEl.style.opacity = '1';
+            setTimeout(() => {
+              successEl.style.opacity = '0';
+              setTimeout(() => { successEl.style.maxHeight = '0'; }, 220);
+            }, 2000);
+            if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
           } else if (data.error) {
             // Error + suggestions
             showError(data.error);
@@ -5037,41 +5211,11 @@
           generateBtn.classList.remove('btn-loading');
           generateBtn.disabled = false;
           descEl.disabled = false;
-          generateBtn.innerHTML = 'Generate Rule';
-          generateBtn.style.width = '';
+          generateBtn.innerHTML = 'Add Rule';
+          generateBtn.style.minWidth = '';
         }
       });
 
-      addBtn.addEventListener('click', () => {
-        const query     = (queryEl.value || '').trim();
-        const condition = (conditionEl.value || '').trim();
-        showError('');
-        if (!query)     { showError('SQL Query is required.'); queryEl.focus(); return; }
-        if (!condition) { showError('Condition is required.'); conditionEl.focus(); return; }
-        const manualId = (ruleIdEl.value || '').trim();
-        const ruleId = manualId ||
-          generateBtn.dataset.pendingRuleId ||
-          ('custom_sql_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
-        delete generateBtn.dataset.pendingRuleId;
-        const description = descEl.value.trim();
-        customRulesList.push({ rule_id: ruleId, query, condition, description: description || undefined, enabled: true });
-        renderCustomRules();
-        updateRunButtonState();
-        descEl.value = '';
-        queryEl.value = '';
-        conditionEl.value = '';
-        ruleIdEl.value = '';
-        explanationEl.style.display = 'none';
-        const logicEl = document.getElementById('sql-rule-logic');
-        if (logicEl) { logicEl.style.display = 'none'; logicEl.open = false; }
-        addBtn.style.display = 'none';
-        syncAddBtn();
-        // Re-render suggestion chips so the just-added rule's chip is removed.
-        if (defaultSuggestions.length) showSuggestions(defaultSuggestions, 'Try one of these:');
-        // Brief success confirmation.
-        successEl.style.display = 'block';
-        setTimeout(() => { successEl.style.display = 'none'; }, 2000);
-      });
 
       // Fetch suggestions from backend (data-aware when dataset/run_id are known).
       // Pre-run: when no runId, samples the uploaded CSV client-side for context.
@@ -5099,7 +5243,6 @@
             'no StatVar should have negative minimum values',
             'every StatVar should have non-empty units',
             'observation dates should be after 2010',
-            'minimum value should not exceed maximum value',
           ];
         } finally {
           clearResult();

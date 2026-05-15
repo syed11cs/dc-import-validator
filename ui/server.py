@@ -165,12 +165,20 @@ def _normalize_custom_rule(rule: dict) -> dict:
     so this function explicitly builds the output dict to avoid passing unknown keys through.
     """
     rule_id = rule["rule_id"]  # guaranteed non-empty by _validate_custom_rules
+    # Make a copy of params so we can strip UI-only keys (nl_prompt) before the
+    # rule reaches the DC framework runner, which only expects query and condition.
+    params = dict(rule.get("params") or {})
+    # NL-generated rules carry the original prompt in params.nl_prompt; use it as the
+    # human-readable description so validation output identifies the rule by its intent,
+    # then remove it so it is not forwarded to the DC runner as an unknown param.
+    nl_prompt = params.pop("nl_prompt", "") or ""
+    description = rule.get("description") or nl_prompt or f"Custom SQL rule: {rule_id}"
     normalized: dict = {
         "rule_id": rule_id,
-        "description": rule.get("description") or f"Custom SQL rule: {rule_id}",
+        "description": description,
         "validator": rule.get("validator") or "SQL_VALIDATOR",
         "scope": rule.get("scope") or {"data_source": "stats"},
-        "params": rule.get("params") or {},
+        "params": params,
     }
     if "enabled" in rule:
         normalized["enabled"] = rule["enabled"]
@@ -447,7 +455,6 @@ _DEFAULT_SQL_SUGGESTIONS = [
     "no StatVar should have negative minimum values",
     "every StatVar should have non-empty units",
     "observation dates should be after 2010",
-    "minimum value should not exceed maximum value",
 ]
 
 
