@@ -255,13 +255,12 @@ def _llm_review_enabled(llm_review: str | None) -> bool:
     return bool(llm_review)
 
 
-# Allowlist of accepted Gemini model IDs. Values outside this set are rejected so
-# unvalidated user input never reaches the external API as a model identifier.
+# Allowlist of accepted Gemini model IDs for user-selectable schema review (Step 1).
+# Values outside this set are rejected so unvalidated user input never reaches the API.
+# Add entries only after verifying the model ID is live against the Gemini API.
 _ALLOWED_LLM_MODELS: frozenset[str] = frozenset({
     "gemini-2.5-flash",
     "gemini-2.5-pro",
-    "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
 })
 
 
@@ -1361,7 +1360,45 @@ def get_fluctuation_samples(dataset: str, run_id: str | None = Query(None)):
 _FLUCTUATION_INTERP_SEMAPHORE = threading.Semaphore(5)
 
 # Limit concurrent NL → SQL generation calls (each makes a Gemini API request).
-_GENERATE_SQL_RULE_SEMAPHORE = asyncio.Semaphore(3)
+# Capacity 2: sized for Pro primary (~5-8s/call). At capacity 3 under Pro latency,
+# a queued 4th caller waits up to 24s before the API is even reached.
+_GENERATE_SQL_RULE_SEMAPHORE = asyncio.Semaphore(2)
+
+# NL → SQL generation model tier.
+# Primary: Gemini Pro for semantic correctness (SQL is stored in persistent configs).
+# Fallback: Gemini Flash on quota/availability errors (transient degradation only).
+_SQL_PRIMARY_MODEL = "gemini-2.5-pro"
+_SQL_FALLBACK_MODEL = "gemini-2.5-flash"
+# Per-call timeout for SQL generation (primary + fallback combined).
+# Pro p95 ≈ 8s; Flash fallback p95 ≈ 4s; 20s gives headroom without allowing
+# indefinite hangs. Applied via asyncio.wait_for — the asyncio Task is cancelled
+# and the semaphore released immediately; the underlying thread completes in the
+# background when the OS socket eventually closes.
+_SQL_LLM_TIMEOUT_SEC = 20.0
+
+
+def _is_sql_llm_availability_error(exc: Exception) -> bool:
+    """True for transient Gemini errors that warrant a Flash fallback.
+
+    Retryable: ResourceExhausted (429), ServiceUnavailable (503),
+               DeadlineExceeded, InternalServerError.
+    Not retryable: InvalidArgument, PermissionDenied, Unauthenticated —
+                   these indicate configuration problems, not transient state.
+    """
+    try:
+        from google.api_core import exceptions as _gax
+        return isinstance(exc, (
+            _gax.ResourceExhausted,
+            _gax.ServiceUnavailable,
+            _gax.DeadlineExceeded,
+            _gax.InternalServerError,
+        ))
+    except ImportError:
+        msg = str(exc).lower()
+        return any(t in msg for t in (
+            "resourceexhausted", "serviceunavailable",
+            "deadlineexceeded", "internalservererror", "429", "503",
+        ))
 
 
 class FluctuationInterpretationRequest(BaseModel):
@@ -2632,25 +2669,70 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
     user_prompt = f"Rule description: {prompt_text}{columns_hint}"
     full_prompt = system_prompt + "\n\n" + context_section + "\n" + user_prompt
 
+    # Build generation config: temperature=0 for deterministic, reproducible SQL.
+    # SQL is stored in persistent validation configs and must not vary across calls.
+    try:
+        from google.genai import types as _genai_types
+        _sql_gen_config = _genai_types.GenerateContentConfig(temperature=0, max_output_tokens=1024)
+    except (ImportError, AttributeError) as _cfg_exc:
+        logger.warning(
+            "generate_sql_rule: GenerateContentConfig unavailable (%s) — "
+            "temperature=0 not applied; SQL output will be non-deterministic.",
+            _cfg_exc,
+        )
+        _sql_gen_config = None
+
+    def _call_sql_llm(prompt: str) -> str:
+        """Call Pro primary; fall back to Flash on quota/availability errors."""
+        _client = genai.Client(api_key=api_key)
+
+        def _generate(model_id: str) -> str:
+            kw: dict = {"model": model_id, "contents": prompt}
+            if _sql_gen_config is not None:
+                kw["config"] = _sql_gen_config
+            resp = _client.models.generate_content(**kw)
+            extracted = resp.text if resp.text else ""
+            if not extracted and getattr(resp, "candidates", None):
+                for c in resp.candidates:
+                    if getattr(c, "content", None) and getattr(c.content, "parts", None):
+                        for p in c.content.parts:
+                            if getattr(p, "text", None):
+                                extracted = p.text.strip()
+                                break
+                    if extracted:
+                        break
+            return extracted
+
+        try:
+            return _generate(_SQL_PRIMARY_MODEL)
+        except Exception as _exc:
+            if not _is_sql_llm_availability_error(_exc):
+                raise
+            logger.warning(
+                "[gemini] feature=sql_rule_generation model_used=%s fallback=true reason=%s",
+                _SQL_FALLBACK_MODEL, _exc,
+            )
+            return _generate(_SQL_FALLBACK_MODEL)
+
     try:
         async with _GENERATE_SQL_RULE_SEMAPHORE:
-            client = genai.Client(api_key=api_key)
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-2.5-flash",
-                contents=full_prompt,
+            text = await asyncio.wait_for(
+                asyncio.to_thread(_call_sql_llm, full_prompt),
+                timeout=_SQL_LLM_TIMEOUT_SEC,
             )
-        text = (getattr(response, "text", None) or "").strip()
-        if not text and getattr(response, "candidates", None):
-            for c in response.candidates:
-                if getattr(c, "content", None) and getattr(c.content, "parts", None):
-                    for p in c.content.parts:
-                        if getattr(p, "text", None):
-                            text = p.text.strip()
-                            break
-                if text:
-                    break
+        text = text.strip()
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[gemini] feature=sql_rule_generation timeout=true timeout_sec=%.1f",
+            _SQL_LLM_TIMEOUT_SEC,
+        )
+        raise HTTPException(status_code=503, detail="Rule generation timed out — try again.")
     except Exception as exc:
+        if _is_sql_llm_availability_error(exc):
+            logger.warning(
+                "[gemini] feature=sql_rule_generation both_models_failed=true error=%s", exc,
+            )
+            raise HTTPException(status_code=503, detail="LLM service temporarily unavailable — try again.")
         logger.warning("generate_sql_rule llm_error: %s", exc)
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}")
 
@@ -2688,19 +2770,23 @@ async def generate_sql_rule(body: _GenerateSqlRuleRequest):
                 "Output must start with '{' and end with '}'."
             )
             async with _GENERATE_SQL_RULE_SEMAPHORE:
-                _retry_client = genai.Client(api_key=api_key)
-                _retry_resp = await asyncio.to_thread(
-                    _retry_client.models.generate_content,
-                    model="gemini-2.5-flash",
-                    contents=_nudge,
+                _retry_text = await asyncio.wait_for(
+                    asyncio.to_thread(_call_sql_llm, _nudge),
+                    timeout=_SQL_LLM_TIMEOUT_SEC,
                 )
-            _retry_text = (getattr(_retry_resp, "text", None) or "").strip()
+            _retry_text = _retry_text.strip()
             if _retry_text.startswith("```"):
                 _retry_text = "\n".join(
                     ln for ln in _retry_text.splitlines() if not ln.startswith("```")
                 ).strip()
             result = json.loads(_retry_text)
             logger.info("generate_sql_rule invalid_json recovered via retry")
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[gemini] feature=sql_rule_generation_retry timeout=true timeout_sec=%.1f",
+                _SQL_LLM_TIMEOUT_SEC,
+            )
+            raise HTTPException(status_code=503, detail="Rule generation timed out — try again.")
         except Exception as _retry_exc:
             logger.warning("generate_sql_rule invalid_json attempt=2: %s", _retry_exc)
             raise HTTPException(
