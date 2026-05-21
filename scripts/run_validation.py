@@ -236,12 +236,25 @@ def main() -> int:
 
     config_path = args.validation_config
     output_path = args.validation_output
-    if not os.path.isfile(config_path):
+    _cfg_exists = os.path.isfile(config_path)
+    _cfg_size = os.path.getsize(config_path) if _cfg_exists else -1
+    print(
+        f'[OVERRIDE_TRACE] {{"component":"run_validation","event":"startup",'
+        f'"config_path":{config_path!r},"exists":{str(_cfg_exists).lower()},"size_bytes":{_cfg_size}}}',
+        flush=True,
+    )
+    if not _cfg_exists:
         print(f"Error: validation config not found: {config_path}", file=sys.stderr)
         return 2
 
     config = _load_config(config_path)
     dc_rules, custom_rules = _split_rules(config)
+    print(
+        f'[OVERRIDE_TRACE] {{"component":"run_validation","event":"config_loaded",'
+        f'"config_path":{config_path!r},"total_rules":{len(config.get("rules", []))},'
+        f'"dc_rules":{len(dc_rules)},"custom_rules":{len(custom_rules)}}}',
+        flush=True,
+    )
 
     dc_results = []
     if dc_rules:

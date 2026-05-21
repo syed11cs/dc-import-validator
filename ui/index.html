@@ -1428,6 +1428,8 @@
     .field-hint { font-size: 0.75rem; color: var(--text-muted); margin: 3px 0 10px; line-height: 1.5; }
     .required-asterisk { color: var(--fail); font-weight: 500; }
     .label-optional { font-size: 0.72rem; font-weight: 400; color: var(--text-muted); margin-left: 3px; }
+    #validation-config-url::placeholder { color: var(--text-muted); opacity: 0.6; font-family: inherit; }
+    #validation-config-url:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
     .form-group-section { padding-top: 14px; border-top: 1px solid var(--border); margin-top: 0; }
     .file-input-row {
       display: flex;
@@ -1580,6 +1582,17 @@
             <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
             <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
           </div>
+        </div>
+        <div class="custom-upload-optional-fields" id="validation-config-section" style="margin-top:10px;">
+          <label>Validation Config <span class="label-optional">(optional)</span></label>
+          <div class="file-input-row" id="validation-config-file-row">
+            <input type="file" id="validation-config-file" accept=".json" />
+            <button type="button" id="validation-config-choose-btn" class="file-choose-btn">Choose File</button>
+            <span id="validation-config-file-name" class="file-name">No file chosen</span>
+            <button type="button" id="validation-config-clear-btn" class="file-clear-btn" style="display:none;" title="Remove file" aria-label="Remove file">×</button>
+          </div>
+          <input type="text" id="validation-config-url" placeholder="or paste an HTTPS URL to a config JSON" autocomplete="off" spellcheck="false" style="margin-top:4px; width:100%; box-sizing:border-box; font-size:0.8rem; padding:5px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-family:ui-monospace,monospace;" />
+          <p class="field-hint">Overrides rule selections for this run. File takes priority over URL.</p>
         </div>
       </div>
       <div class="form-group form-group-section" style="margin-bottom: 14px;">
@@ -1765,6 +1778,7 @@
     let customCsvFiles = [];
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
+    let customValidationConfigFile = null;
     let customInputMode = 'upload'; // 'upload' | 'gcs'
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
@@ -1983,6 +1997,7 @@
         customCsvFiles = [];
         customStatVarsMcfFile = null;
         customStatVarsSchemaMcfFile = null;
+        customValidationConfigFile = null;
         customInputMode = 'upload';
         document.getElementById('mode-upload-btn')?.classList.add('active');
         document.getElementById('mode-gcs-btn')?.classList.remove('active');
@@ -1996,6 +2011,13 @@
         document.getElementById('csv-file').value = '';
         document.getElementById('stat-vars-mcf-file').value = '';
         document.getElementById('stat-vars-schema-mcf-file').value = '';
+        document.getElementById('validation-config-file').value = '';
+        const _vcfName = document.getElementById('validation-config-file-name');
+        if (_vcfName) { _vcfName.textContent = 'No file chosen'; _vcfName.classList.remove('has-file'); }
+        const _vcfClear = document.getElementById('validation-config-clear-btn');
+        if (_vcfClear) _vcfClear.style.display = 'none';
+        const _vcfUrl = document.getElementById('validation-config-url');
+        if (_vcfUrl) _vcfUrl.value = '';
         ['tmcf-file-name', 'csv-file-name', 'stat-vars-mcf-file-name', 'stat-vars-schema-mcf-file-name'].forEach(id => {
           const el = document.getElementById(id);
           if (el) { el.textContent = 'No file chosen'; el.classList.remove('has-file'); }
@@ -3539,6 +3561,7 @@
             import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
             existence_checks: opts.existence_checks || 'false',
             custom_rules: opts.custom_rules || [],
+            validation_config_url: opts.validation_config_url || '',
             machine_type_override: opts.machine_type_override || '',
             processing_mode: opts.processing_mode || 'auto',
             java_threads: opts.java_threads || 0,
@@ -3718,6 +3741,11 @@
       document.getElementById('csv-clear-btn').disabled = true;
       document.getElementById('stat-vars-mcf-clear-btn').disabled = true;
       document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = true;
+      document.getElementById('validation-config-file').disabled = true;
+      document.getElementById('validation-config-choose-btn').disabled = true;
+      document.getElementById('validation-config-clear-btn').disabled = true;
+      const _vcUrlEl = document.getElementById('validation-config-url');
+      if (_vcUrlEl) _vcUrlEl.disabled = true;
       setRulesSectionDisabled(true);
       const _nameInput = document.getElementById('custom-dataset-name');
       if (_nameInput) _nameInput.disabled = true;
@@ -3804,6 +3832,7 @@
             import_resolution_mode: 'LOCAL',
             existence_checks: existenceChecks,
             custom_rules: selectedCustomRules,
+            validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
             ..._getPerfOpts(),
           }, runAbortController.signal);
         } else if (runDataset === 'custom') {
@@ -3925,6 +3954,7 @@
               import_resolution_mode: 'LOCAL',
               existence_checks: existenceChecks,
               custom_rules: selectedCustomRules,
+              validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
               ..._getPerfOpts(),
             }, runAbortController.signal);
 
@@ -3944,6 +3974,12 @@
             formData.append('llm_review', '1');
             formData.append('existence_checks', existenceChecks);
             if (selectedCustomRules.length > 0) formData.append('custom_rules_json', JSON.stringify(selectedCustomRules));
+            if (customValidationConfigFile) {
+              formData.append('validation_config', customValidationConfigFile);
+            } else {
+              const _vcUrl = (document.getElementById('validation-config-url')?.value || '').trim();
+              if (_vcUrl) formData.append('validation_config_url', _vcUrl);
+            }
             r = await fetch(API + '/api/run/custom/stream', {
               method: 'POST',
               body: formData,
@@ -3986,6 +4022,7 @@
             import_resolution_mode: 'LOCAL',
             existence_checks: existenceChecks,
             custom_rules: selectedCustomRules,
+            validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
             ..._getPerfOpts(),
           }, runAbortController.signal);
         }
@@ -4302,6 +4339,11 @@
         document.getElementById('csv-clear-btn').disabled = false;
         document.getElementById('stat-vars-mcf-clear-btn').disabled = false;
         document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = false;
+        document.getElementById('validation-config-file').disabled = false;
+        document.getElementById('validation-config-choose-btn').disabled = false;
+        document.getElementById('validation-config-clear-btn').disabled = false;
+        const _vcUrlElR = document.getElementById('validation-config-url');
+        if (_vcUrlElR) _vcUrlElR.disabled = false;
         setRulesSectionDisabled(false);
         btn.textContent = '\u25B6 Run validation';
         btn.title = '';
@@ -6087,9 +6129,20 @@
           ? 'Provide TMCF + CSV paths from GCS to validate.'
           : 'Upload TMCF + CSV files to validate.';
         // Clear the inputs of the mode being hidden so stale values don't carry over.
+        // Show/hide the validation config file row based on mode.
+        // In GCS/Batch mode, file upload isn't supported — only URL is used.
+        const _vcFileRow = document.getElementById('validation-config-file-row');
+        if (_vcFileRow) _vcFileRow.style.display = isGcs ? 'none' : '';
         if (isGcs) {
           customTmcfFile = null; customCsvFiles = [];
           customStatVarsMcfFile = null; customStatVarsSchemaMcfFile = null;
+          // Clear the config file when switching to GCS mode; URL remains.
+          customValidationConfigFile = null;
+          document.getElementById('validation-config-file').value = '';
+          const _vcfN = document.getElementById('validation-config-file-name');
+          if (_vcfN) { _vcfN.textContent = 'No file chosen'; _vcfN.classList.remove('has-file'); }
+          const _vcfC = document.getElementById('validation-config-clear-btn');
+          if (_vcfC) _vcfC.style.display = 'none';
           document.getElementById('tmcf-file').value = '';
           document.getElementById('csv-file').value = '';
           document.getElementById('stat-vars-mcf-file').value = '';
@@ -6215,6 +6268,7 @@
     });
     setupCustomFileInput('stat-vars-mcf-file', 'stat-vars-mcf-choose-btn', 'stat-vars-mcf-file-name', 'stat-vars-mcf-clear-btn', (f) => { customStatVarsMcfFile = f; }, () => { customStatVarsMcfFile = null; });
     setupCustomFileInput('stat-vars-schema-mcf-file', 'stat-vars-schema-mcf-choose-btn', 'stat-vars-schema-mcf-file-name', 'stat-vars-schema-mcf-clear-btn', (f) => { customStatVarsSchemaMcfFile = f; }, () => { customStatVarsSchemaMcfFile = null; });
+    setupCustomFileInput('validation-config-file', 'validation-config-choose-btn', 'validation-config-file-name', 'validation-config-clear-btn', (f) => { customValidationConfigFile = f; }, () => { customValidationConfigFile = null; });
     document.getElementById('preset-trigger').addEventListener('click', (e) => {
       e.stopPropagation();
       const menu = document.getElementById('preset-menu');

@@ -155,6 +155,86 @@ def _validate_custom_rules(custom_rules: list) -> str | None:
     return None
 
 
+def _validate_config_bytes(content: bytes, source: str = "") -> None:
+    """Parse and structurally validate a validation config JSON blob.
+
+    Raises HTTPException 400 on invalid JSON or missing 'rules' array.
+    Raises HTTPException 422 if any SQL_VALIDATOR rule fails the DuckDB EXPLAIN pre-check.
+    """
+    try:
+        cfg = json.loads(content)
+    except json.JSONDecodeError as exc:
+        detail = f"Validation config is not valid JSON: {exc}"
+        if source:
+            detail += f" (source: {source})"
+        raise HTTPException(status_code=400, detail=detail)
+    if not isinstance(cfg.get("rules"), list):
+        raise HTTPException(status_code=400, detail="Validation config must have a 'rules' array")
+    sql_rules = [r for r in cfg["rules"] if isinstance(r, dict) and r.get("validator") == "SQL_VALIDATOR"]
+    if sql_rules:
+        err = _validate_custom_rules(sql_rules)
+        if err:
+            raise HTTPException(status_code=422, detail=f"SQL syntax error in config: {err}")
+
+
+async def _fetch_and_validate_config(url: str) -> bytes:
+    """Fetch a validation config from an HTTPS URL and validate its structure.
+
+    Raises HTTPException 400 on non-HTTPS URL, HTTP errors, invalid JSON, or bad structure.
+    """
+    url = url.strip()
+    if not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="validation_config_url must start with https://")
+    # Auto-convert GitHub blob viewer URLs to raw content URLs.
+    import re as _re
+    _m = _re.match(r"^https://github\.com/([^/]+/[^/]+)/blob/(.+)$", url)
+    if _m:
+        url = f"https://raw.githubusercontent.com/{_m.group(1)}/{_m.group(2)}"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+        resp.raise_for_status()
+        content = resp.content
+    except __import__("httpx").HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to fetch config URL (HTTP {exc.response.status_code}): {url}",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch config URL: {exc}")
+    _validate_config_bytes(content, source=url)
+    return content
+
+
+async def _resolve_validation_config(
+    upload: "UploadFile | None",
+    url: str | None,
+    dest_dir: Path,
+) -> Path | None:
+    """Resolve a user-supplied validation config to a file inside dest_dir.
+
+    Priority: uploaded file > URL. Returns None if neither is provided.
+    The resulting file is named validation_config_upload.json and is cleaned up
+    with dest_dir (the run upload dir) after the run completes.
+    """
+    content: bytes | None = None
+    if upload and getattr(upload, "filename", None):
+        try:
+            content = await upload.read()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to read config file: {exc}")
+        _validate_config_bytes(content, source=upload.filename)
+    elif url and url.strip():
+        content = await _fetch_and_validate_config(url)
+    if content is None:
+        return None
+    dest = dest_dir / "validation_config_upload.json"
+    dest.write_bytes(content)
+    logger.info("resolved_validation_config bytes=%d", len(content))
+    return dest
+
+
 def _normalize_custom_rule(rule: dict) -> dict:
     """Return a copy of a custom rule with all fields required by validate_config_template.py.
 
@@ -667,6 +747,8 @@ async def _run_custom_validation_impl(
     csv_gcs_paths: str | None = None,
     stat_vars_mcf_gcs_path: str | None = None,
     stat_vars_schema_mcf_gcs_path: str | None = None,
+    validation_config: "UploadFile | None" = None,
+    validation_config_url: str | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream.
 
@@ -877,8 +959,11 @@ async def _run_custom_validation_impl(
     baseline_name = f"custom_{dataset_name.strip()}"
     logger.info("custom run dataset_name=%r baseline_name=%s request_id=%s", dataset_name, baseline_name, request_id)
 
-    rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
-    config_path = _create_merged_config("custom", rule_ids, list(custom_rules or []))
+    # User-supplied config file or URL takes full precedence over rule selection / custom SQL rules.
+    config_path = await _resolve_validation_config(validation_config, validation_config_url, run_upload_dir)
+    if config_path is None:
+        rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
+        config_path = _create_merged_config("custom", rule_ids, list(custom_rules or []))
 
     extra_env = _existence_checks_env(existence_checks)
     logger.info(
@@ -967,6 +1052,8 @@ async def run_custom_validation_stream(
     csv_gcs_paths: str | None = Form(None),
     stat_vars_mcf_gcs_path: str | None = Form(None),
     stat_vars_schema_mcf_gcs_path: str | None = Form(None),
+    validation_config: UploadFile | None = File(None),
+    validation_config_url: str | None = Form(None),
 ):
     """Run validation with streaming output.
 
@@ -974,6 +1061,10 @@ async def run_custom_validation_stream(
     - Direct upload:    tmcf and csv as multipart file fields (default).
     - GCS session:      session_id from /api/prepare-upload.
     - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
+
+    Optional: validation_config (file) or validation_config_url (HTTPS URL) to override
+    the default validation rules. File takes priority over URL. When provided, all rule
+    selection and custom SQL rules are ignored for this run.
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -994,6 +1085,8 @@ async def run_custom_validation_stream(
         tmcf_gcs_path=tmcf_gcs_path, csv_gcs_paths=csv_gcs_paths,
         stat_vars_mcf_gcs_path=stat_vars_mcf_gcs_path,
         stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
+        validation_config=validation_config,
+        validation_config_url=validation_config_url,
     )
 
 
@@ -1015,6 +1108,8 @@ async def run_custom_validation(
     csv_gcs_paths: str | None = Form(None),
     stat_vars_mcf_gcs_path: str | None = Form(None),
     stat_vars_schema_mcf_gcs_path: str | None = Form(None),
+    validation_config: UploadFile | None = File(None),
+    validation_config_url: str | None = Form(None),
 ):
     """Run validation (non-streaming).
 
@@ -1022,6 +1117,9 @@ async def run_custom_validation(
     - Direct upload:    tmcf and csv as multipart file fields (default).
     - GCS session:      session_id from /api/prepare-upload.
     - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
+
+    Optional: validation_config (file) or validation_config_url (HTTPS URL) to override
+    the default validation rules. File takes priority over URL.
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -1042,6 +1140,8 @@ async def run_custom_validation(
         tmcf_gcs_path=tmcf_gcs_path, csv_gcs_paths=csv_gcs_paths,
         stat_vars_mcf_gcs_path=stat_vars_mcf_gcs_path,
         stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
+        validation_config=validation_config,
+        validation_config_url=validation_config_url,
     )
 
 
@@ -1054,14 +1154,21 @@ async def run_validation(
     llm_review: str | None = Query(None),
     llm_model: str | None = Query(None),
     existence_checks: str | None = Query(None),
+    validation_config_url: str | None = Query(None),
 ):
     if dataset not in DATASET_OUTPUT_MAP:
         raise HTTPException(status_code=404, detail="Unknown dataset")
     script = SCRIPT_DIR / "run_e2e_test.sh"
     if not script.exists():
         raise HTTPException(status_code=500, detail="run_e2e_test.sh not found")
-    rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
-    config_path = _create_filtered_config(dataset, rule_ids)
+    # Config override takes full priority — ignore rule selection when set.
+    if validation_config_url and validation_config_url.strip():
+        run_upload_dir = OUTPUT_DIR / dataset / getattr(request.state, "request_id", "override")
+        run_upload_dir.mkdir(parents=True, exist_ok=True)
+        config_path = await _resolve_validation_config(None, validation_config_url.strip(), run_upload_dir)
+    else:
+        rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
+        config_path = _create_filtered_config(dataset, rule_ids)
     extra_env = _existence_checks_env(existence_checks)
     logger.info(
         "run existence_checks=%s dataset=%s request_id=%s",
@@ -3453,6 +3560,8 @@ class _SubmitJobRequest(BaseModel):
     existence_checks: str = "false"
     # Per-run custom SQL rules (not persisted; merged into the config for this run only).
     custom_rules: list[dict] = []
+    # Optional: HTTPS URL to a validation config JSON that overrides rule selection and custom_rules.
+    validation_config_url: str = ""
     # Performance tuning (Batch only).
     # machine_type_override: one of n2-highmem-16 / n2-highmem-32 / n2-highmem-64.
     # Omit to let the server auto-select based on csv_total_bytes.
@@ -3575,10 +3684,59 @@ async def submit_batch_job(body: _SubmitJobRequest):
 
     # For the Batch path, create the merged validation config on the server and upload
     # it to GCS so the Batch VM can download it via MERGED_CONFIG_GCS_PATH.
-    # This covers both rule filtering (body.rules) and custom SQL rules (body.custom_rules).
+    # Priority: validation_config_url (user-supplied config) > custom_rules/rules (merged config).
     # The Batch VM never merges — it only downloads and passes --config= to the pipeline.
     merged_config_gcs_path = ""
-    if body.custom_rules or body.rules:
+    logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+        "component": "submit_batch_job", "event": "request_received",
+        "run_id": run_id,
+        "validation_config_url": body.validation_config_url or "",
+        "rules": body.rules or "",
+        "custom_rules_count": len(body.custom_rules or []),
+    }))
+    if body.validation_config_url:
+        # Fetch the user-supplied config, validate it, write to temp, upload to GCS.
+        _url_content = await _fetch_and_validate_config(body.validation_config_url)
+        fd, _url_tmp = tempfile.mkstemp(suffix=".json", prefix="validation_config_")
+        try:
+            with os.fdopen(fd, "wb") as _f:
+                _f.write(_url_content)
+            logger.info(
+                "submit_batch_job: uploading url config to GCS run_id=%s url=%s",
+                run_id, body.validation_config_url,
+            )
+            merged_config_gcs_path = await asyncio.to_thread(
+                gcs_reports.upload_merged_config_to_gcs, run_id, Path(_url_tmp)
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to upload config to GCS: {exc}")
+        finally:
+            try:
+                os.unlink(_url_tmp)
+            except OSError:
+                pass
+        # Detailed GCS artifact log: bucket / object path / full URI separately.
+        if merged_config_gcs_path:
+            _bucket_name = merged_config_gcs_path.split("/")[2] if merged_config_gcs_path.startswith("gs://") else "?"
+            _obj_path = "/".join(merged_config_gcs_path.split("/")[3:]) if merged_config_gcs_path.startswith("gs://") else merged_config_gcs_path
+            logger.info(
+                '[OVERRIDE_TRACE] {"component":"submit_batch_job","event":"config_uploaded",'
+                '"run_id":"%s","bucket":"%s","object_path":"%s","gcs_uri":"%s"}',
+                run_id, _bucket_name, _obj_path, merged_config_gcs_path,
+            )
+        # Hard assertion: URL was set but upload returned empty — fail immediately.
+        if not merged_config_gcs_path:
+            logger.error('[OVERRIDE_TRACE] %s', json.dumps({
+                "component": "submit_batch_job", "event": "upload_returned_empty",
+                "run_id": run_id,
+                "validation_config_url": body.validation_config_url,
+                "hint": "GCS_REPORTS_BUCKET may not be set or upload_merged_config_to_gcs returned empty string",
+            }))
+            raise HTTPException(
+                status_code=500,
+                detail="GCS_REPORTS_BUCKET is required to use a custom validation config with Batch jobs.",
+            )
+    elif body.custom_rules or body.rules:
         dataset_key = dataset if dataset in DATASET_CONFIG_MAP else "custom"
         rule_ids = [x.strip() for x in body.rules.split(",") if x.strip()] if body.rules else []
         _merged_tmp = _create_merged_config(dataset_key, rule_ids, body.custom_rules)
@@ -3689,6 +3847,14 @@ async def submit_batch_job(body: _SubmitJobRequest):
             )
             effective_machine_override = _recommended
 
+    _rules_filter_val = "" if body.validation_config_url else body.rules
+    logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+        "component": "submit_batch_job", "event": "building_input_files",
+        "run_id": run_id,
+        "merged_config_gcs_path": merged_config_gcs_path,
+        "rules_filter": _rules_filter_val,
+        "skip_rules_filter": body.skip_rules or "",
+    }))
     input_files = _InputFiles(
         gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
         tmcf_filename=body.tmcf_filename,
@@ -3701,7 +3867,7 @@ async def submit_batch_job(body: _SubmitJobRequest):
         stat_vars_mcf_gcs_path=body.stat_vars_mcf_gcs_path,
         stat_vars_schema_mcf_gcs_path=body.stat_vars_schema_mcf_gcs_path,
         llm_review=body.llm_review,
-        rules_filter=body.rules,
+        rules_filter=_rules_filter_val,
         skip_rules_filter=body.skip_rules,
         baseline_name=body.baseline_name,
         import_resolution_mode=body.import_resolution_mode,
@@ -3710,6 +3876,12 @@ async def submit_batch_job(body: _SubmitJobRequest):
         processing_mode=body.processing_mode,
         java_threads=body.java_threads,
     )
+    logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+        "component": "submit_batch_job", "event": "input_files_created",
+        "run_id": run_id,
+        "input_files.merged_config_gcs_path": input_files.merged_config_gcs_path,
+        "input_files.rules_filter": input_files.rules_filter,
+    }))
 
     try:
         job_name = await asyncio.to_thread(

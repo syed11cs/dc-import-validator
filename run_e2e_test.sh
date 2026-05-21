@@ -183,6 +183,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ─── Override-config diagnostic trace (post arg-parse) ───────────────────────
+echo "[OVERRIDE_TRACE] {\"component\":\"run_e2e_test\",\"event\":\"post_parse\",\"DATASET\":\"${DATASET}\",\"CONFIG_OVERRIDE\":\"${CONFIG_OVERRIDE:-}\",\"VALIDATION_CONFIG\":\"${VALIDATION_CONFIG}\",\"RULES_FILTER\":\"${RULES_FILTER:-}\",\"SKIP_RULES_FILTER\":\"${SKIP_RULES_FILTER:-}\"}"
+
 # Default dataset if not specified
 if [[ -z "$DATASET" ]]; then
   if [[ -n "$CUSTOM_TMCF" && ${#CUSTOM_CSVS[@]} -gt 0 ]]; then
@@ -398,6 +401,8 @@ else
   echo "Use: child_birth, statistics_poland, finland_census, uae_population, or custom (with --tmcf and --csv)"
   exit 1
 fi
+
+echo "[OVERRIDE_TRACE] {\"component\":\"run_e2e_test\",\"event\":\"post_dataset_setup\",\"DATASET\":\"${DATASET}\",\"VALIDATION_CONFIG\":\"${VALIDATION_CONFIG}\",\"CONFIG_OVERRIDE\":\"${CONFIG_OVERRIDE:-}\"}"
 
 # Build --csv args array from CSVS for scripts that accept repeatable --csv
 CSV_ARGS=()
@@ -1215,7 +1220,7 @@ fi
 STEP3_START=$(date +%s)
 log_mem "step3_validation"
 VALIDATE_CONFIG_SCRIPT="$SCRIPT_DIR/scripts/validate_config_template.py"
-if [[ -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
+if [[ -z "$CONFIG_OVERRIDE" && -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_CONFIG" ]]; then
   if ! $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" 2>/dev/null; then
     log_error "Validation config failed template check. Run: $PYTHON $VALIDATE_CONFIG_SCRIPT $VALIDATION_CONFIG"
     $PYTHON "$VALIDATE_CONFIG_SCRIPT" "$VALIDATION_CONFIG" || true

@@ -67,6 +67,14 @@ LLM_REVIEW="${LLM_REVIEW:-false}"
 RULES_FILTER="${RULES_FILTER:-}"
 SKIP_RULES_FILTER="${SKIP_RULES_FILTER:-}"
 MERGED_CONFIG_GCS_PATH="${MERGED_CONFIG_GCS_PATH:-}"
+
+# ─── Build / image metadata ───────────────────────────────────────────────────
+# GIT_SHA and BUILD_DATE are baked into the image via Dockerfile ARG/ENV.
+# BATCH_IMAGE_URI is set by Cloud Run at deploy time (matches the image used for Batch jobs).
+echo "[BUILD_INFO] sha=${GIT_SHA:-unknown} build=${BUILD_DATE:-unknown} image=${BATCH_IMAGE_URI:-unknown} host=$(hostname)"
+
+# ─── Override-config diagnostic trace ────────────────────────────────────────
+echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"startup\",\"run_id\":\"${RUN_ID}\",\"dataset\":\"${DATASET}\",\"MERGED_CONFIG_GCS_PATH\":\"${MERGED_CONFIG_GCS_PATH:-}\",\"RULES_FILTER\":\"${RULES_FILTER:-}\",\"SKIP_RULES_FILTER\":\"${SKIP_RULES_FILTER:-}\"}"
 BASELINE_NAME="${BASELINE_NAME:-}"
 BATCH_JOB_NAME="${BATCH_JOB_NAME:-}"
 VM_TYPE="${VM_TYPE:-}"
@@ -339,7 +347,10 @@ fi
 # (filtered built-in rules + all custom SQL rules). Passing --rules= on top would
 # re-filter the merged config by built-in IDs, silently dropping custom rules.
 # Rule filter args are only needed when no merged config is in use.
+_merged_cfg_is_empty="$([[ -z "${MERGED_CONFIG_GCS_PATH:-}" ]] && echo yes || echo no)"
+echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"config_branch_check\",\"run_id\":\"${RUN_ID}\",\"MERGED_CONFIG_GCS_PATH\":\"${MERGED_CONFIG_GCS_PATH:-}\",\"is_empty\":\"${_merged_cfg_is_empty}\"}"
 if [[ -z "$MERGED_CONFIG_GCS_PATH" ]]; then
+    echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"rules_filter_branch\",\"run_id\":\"${RUN_ID}\",\"RULES_FILTER\":\"${RULES_FILTER:-}\",\"SKIP_RULES_FILTER\":\"${SKIP_RULES_FILTER:-}\"}"
     [[ -n "$RULES_FILTER" ]] && E2E_ARGS+=("--rules=${RULES_FILTER}")
     [[ -n "$SKIP_RULES_FILTER" ]] && E2E_ARGS+=("--skip-rules=${SKIP_RULES_FILTER}")
 fi
@@ -348,7 +359,9 @@ fi
 # them into a config JSON and uploaded it to GCS. Download it here and pass
 # --config= so the pipeline uses the merged rule set without touching the baked-in
 # config file. Merging is done entirely on the server; this block only downloads.
+_config_added_to_args="no"
 if [[ -n "$MERGED_CONFIG_GCS_PATH" ]]; then
+    echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"config_download_start\",\"run_id\":\"${RUN_ID}\",\"gcs_path\":\"${MERGED_CONFIG_GCS_PATH}\"}"
     _MERGED_CONFIG="/tmp/validation_config_${RUN_ID}.json"
     if ! python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
             "$MERGED_CONFIG_GCS_PATH" "$_MERGED_CONFIG"; then
@@ -359,7 +372,13 @@ if [[ -n "$MERGED_CONFIG_GCS_PATH" ]]; then
             "Failed to download merged validation config from GCS: ${MERGED_CONFIG_GCS_PATH}"
         exit 1
     fi
+    # Checksum and size for download verification.
+    _cfg_size="$(ls -lh "${_MERGED_CONFIG}" 2>/dev/null | awk '{print $5}' || echo '?')"
+    _cfg_sha="$(sha256sum "${_MERGED_CONFIG}" 2>/dev/null | awk '{print $1}' || echo '?')"
+    echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"config_downloaded\",\"run_id\":\"${RUN_ID}\",\"local_path\":\"${_MERGED_CONFIG}\",\"size\":\"${_cfg_size}\",\"sha256\":\"${_cfg_sha}\"}"
     E2E_ARGS+=("--config=${_MERGED_CONFIG}")
+    _config_added_to_args="yes"
+    echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"config_arg_added\",\"run_id\":\"${RUN_ID}\",\"arg\":\"--config=${_MERGED_CONFIG}\"}"
     log "Downloaded merged config from GCS: ${MERGED_CONFIG_GCS_PATH}"
     # Log which custom SQL rules are present in the merged config for debugging.
     _custom_rule_ids="$(MERGED_CONFIG="$_MERGED_CONFIG" python3 <<'PYEOF' 2>/dev/null || echo '(parse error)'
@@ -376,6 +395,13 @@ PYEOF
     log "Custom SQL rules in config: ${_custom_rule_ids}"
 fi
 
+# Hard assertion: MERGED_CONFIG_GCS_PATH was set but --config never made it into E2E_ARGS.
+if [[ -n "$MERGED_CONFIG_GCS_PATH" && "$_config_added_to_args" != "yes" ]]; then
+    log "ERROR: [OVERRIDE_TRACE] ASSERTION FAILED — MERGED_CONFIG_GCS_PATH is set but --config was not added to E2E_ARGS. This is a bug."
+    exit 1
+fi
+
+echo "[OVERRIDE_TRACE] {\"component\":\"entrypoint\",\"event\":\"final_args\",\"run_id\":\"${RUN_ID}\",\"args_count\":\"${#E2E_ARGS[@]}\",\"args\":\"${E2E_ARGS[*]}\"}"
 log "Running: ${SCRIPT_DIR}/run_e2e_test.sh ${E2E_ARGS[*]}"
 
 # ─── 5. Execute pipeline with step interception ───────────────────────────────

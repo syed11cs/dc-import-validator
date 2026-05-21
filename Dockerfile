@@ -69,6 +69,14 @@ RUN addgroup --system --gid 1001 app && \
 # Switch to non-root user
 USER app
 
+# Build metadata — baked in at image build time, readable at runtime by batch/entrypoint.sh
+# and the FastAPI server startup. Pass via: --build-arg GIT_SHA=$(git rev-parse HEAD)
+#                                           --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_SHA=$GIT_SHA
+ENV BUILD_DATE=$BUILD_DATE
+
 # run_e2e_test.sh uses DATA_REPO when set, else defaults to $PROJECTS_DIR/datacommonsorg/data
 ENV PROJECTS_DIR=/app
 # Avoid "Fontconfig error: No writable cache directories" in Cloud Run (read-only fs except /tmp).

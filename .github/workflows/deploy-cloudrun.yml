@@ -54,7 +54,10 @@ jobs:
           PROJECT="${{ secrets.GCP_PROJECT_ID }}"
           REPO="${{ secrets.AR_REPOSITORY || 'dc-import-validator' }}"
           IMAGE="${AR_LOC}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE_NAME}:${GITHUB_SHA::7}"
-          docker build --platform linux/amd64 -t "$IMAGE" .
+          docker build --platform linux/amd64 \
+            --build-arg GIT_SHA="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
 

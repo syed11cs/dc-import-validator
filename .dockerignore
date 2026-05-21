@@ -62,3 +62,15 @@ datacommonsorg
 # ---------------------------
 debug.log
 npm-debug.log*
+
+# ---------------------------
+# Large local benchmark datasets (do NOT exclude the four named built-in
+# datasets: child_birth, statistics_poland, finland_census, uae_population —
+# those are needed by run_e2e_test.sh inside the container).
+# ---------------------------
+sample_data/dataset_1gb/
+sample_data/dataset_2gb/
+sample_data/dataset_3gb/
+sample_data/dataset_4gb/
+sample_data/dataset_5gb/
+sample_data/huge_test/
