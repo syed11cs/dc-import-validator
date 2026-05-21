@@ -3729,11 +3729,13 @@ async def submit_batch_job(body: _SubmitJobRequest):
         if merged_config_gcs_path:
             _bucket_name = merged_config_gcs_path.split("/")[2] if merged_config_gcs_path.startswith("gs://") else "?"
             _obj_path = "/".join(merged_config_gcs_path.split("/")[3:]) if merged_config_gcs_path.startswith("gs://") else merged_config_gcs_path
-            logger.info(
-                '[OVERRIDE_TRACE] {"component":"submit_batch_job","event":"config_uploaded",'
-                '"run_id":"%s","bucket":"%s","object_path":"%s","gcs_uri":"%s"}',
-                run_id, _bucket_name, _obj_path, merged_config_gcs_path,
-            )
+            logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+                "component": "submit_batch_job", "event": "config_uploaded",
+                "run_id": run_id,
+                "bucket": _bucket_name,
+                "object_path": _obj_path,
+                "gcs_uri": merged_config_gcs_path,
+            }))
         # Hard assertion: URL was set but upload returned empty — fail immediately.
         if not merged_config_gcs_path:
             logger.error('[OVERRIDE_TRACE] %s', json.dumps({

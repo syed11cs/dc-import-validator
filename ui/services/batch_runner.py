@@ -26,6 +26,7 @@ Optional environment variables:
     BATCH_PROVISIONING_MODEL  SPOT (default) or STANDARD
 """
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -213,16 +214,14 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
     if input_files.merged_config_gcs_path:
         env["MERGED_CONFIG_GCS_PATH"] = input_files.merged_config_gcs_path
 
-    logger.info(
-        '[OVERRIDE_TRACE] {"component":"_build_env_vars","run_id":"%s",'
-        '"input_files.merged_config_gcs_path":%r,"input_files.rules_filter":%r,'
-        '"MERGED_CONFIG_GCS_PATH_in_env":%r,"RULES_FILTER_in_env":%r}',
-        run_id,
-        input_files.merged_config_gcs_path,
-        input_files.rules_filter,
-        env.get("MERGED_CONFIG_GCS_PATH", "(not set)"),
-        env.get("RULES_FILTER", "(not set)"),
-    )
+    logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+        "component": "_build_env_vars",
+        "run_id": run_id,
+        "input_files.merged_config_gcs_path": input_files.merged_config_gcs_path,
+        "input_files.rules_filter": input_files.rules_filter,
+        "MERGED_CONFIG_GCS_PATH_in_env": env.get("MERGED_CONFIG_GCS_PATH", "(not set)"),
+        "RULES_FILTER_in_env": env.get("RULES_FILTER", "(not set)"),
+    }))
 
     # Java concurrency: derive JAVA_THREADS and JAVA_XMX.
     #
@@ -402,7 +401,6 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_
     env_vars["BATCH_JOB_NAME"] = job_name
     env_vars["VM_TYPE"]        = machine_type
 
-    import json as _json
     # Serialize full env payload — mask only GCS URIs to avoid credential leakage.
     _env_for_log = {
         k: ("[MASKED]" if any(s in k for s in ("KEY", "SECRET", "TOKEN", "PASSWORD")) else v)
@@ -411,7 +409,7 @@ def submit_job(run_id: str, dataset: str, input_files: InputFiles, machine_type_
     logger.info(
         '[OVERRIDE_TRACE] {"component":"submit_job","event":"batch_env_payload",'
         '"run_id":"%s","env":%s}',
-        run_id, _json.dumps(_env_for_log),
+        run_id, json.dumps(_env_for_log),
     )
 
     # ------------------------------------------------------------------
