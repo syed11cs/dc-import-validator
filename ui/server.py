@@ -439,6 +439,16 @@ async def _lifespan(app: FastAPI):
     """Startup: configure logging and assign server session ID."""
     session_id = configure_logging(APP_ROOT)
     log = get_logger(__name__)
+    # Emit build metadata on every startup — visible in Cloud Run logs and lets
+    # us confirm which image/SHA is actually serving (mirrors entrypoint.sh for Batch).
+    import socket as _socket
+    log.info(
+        "[BUILD_INFO] sha=%s build=%s image=%s host=%s",
+        os.environ.get("GIT_SHA", "unknown"),
+        os.environ.get("BUILD_DATE", "unknown"),
+        os.environ.get("BATCH_IMAGE_URI", "unknown"),
+        _socket.gethostname(),
+    )
     log.info(
         "DC Import Validator started server_session_id=%s logs_dir=%s",
         session_id,
