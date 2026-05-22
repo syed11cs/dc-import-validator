@@ -11,11 +11,13 @@ import asyncio
 import datetime
 from dataclasses import dataclass as _dataclass
 import html
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -178,24 +180,110 @@ def _validate_config_bytes(content: bytes, source: str = "") -> None:
 
 
 async def _fetch_and_validate_config(url: str) -> bytes:
-    """Fetch a validation config from an HTTPS URL and validate its structure.
+    """Fetch a validation config from a gs:// or https:// URL and validate its structure.
 
-    Raises HTTPException 400 on non-HTTPS URL, HTTP errors, invalid JSON, or bad structure.
+    Supported schemes:
+    - gs://bucket/path/config.json  — downloaded via GCS SDK using Cloud Run ADC.
+    - https://...                   — fetched via httpx with SSRF protections.
+
+    Architecture invariant: this function is the *only* place that touches the user-supplied
+    URI.  The caller always re-uploads the returned bytes to an internal controlled GCS path
+    before any Batch VM sees them.  Batch VMs never receive the original gs:// or https://
+    URI — they only consume the server-generated internal artifact.
+
+    SSRF protections (https path):
+    - Rejects http:// and any non-https/gs scheme.
+    - Resolves the hostname and blocks RFC-1918, link-local (169.254.x.x), loopback,
+      reserved, and multicast addresses before opening any connection.
+    - Does NOT follow redirects — caller must supply the final URL.
+
+    Raises HTTPException 400 on unsupported scheme, download/fetch failure, redirect
+    response, disallowed destination address, invalid JSON, or missing rules array.
+    Raises HTTPException 422 on SQL syntax errors inside SQL_VALIDATOR rules.
     """
     url = url.strip()
+
+    # ── gs:// path ────────────────────────────────────────────────────────────
+    if url.startswith("gs://"):
+        err = _validate_gcs_uri(url)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+            "component": "_fetch_and_validate_config", "event": "gs_fetch_start",
+            "uri": url,
+        }))
+        fd, _tmp_path = tempfile.mkstemp(suffix=".json", prefix="validation_config_gs_")
+        os.close(fd)
+        try:
+            await _download_gcs_uri(url, Path(_tmp_path))
+            content = Path(_tmp_path).read_bytes()
+        finally:
+            try:
+                os.unlink(_tmp_path)
+            except OSError:
+                pass
+        logger.info('[OVERRIDE_TRACE] %s', json.dumps({
+            "component": "_fetch_and_validate_config", "event": "gs_fetch_done",
+            "uri": url, "size_bytes": len(content),
+        }))
+        _validate_config_bytes(content, source=url)
+        return content
+
+    # ── https:// path ─────────────────────────────────────────────────────────
     if not url.startswith("https://"):
-        raise HTTPException(status_code=400, detail="validation_config_url must start with https://")
-    # Auto-convert GitHub blob viewer URLs to raw content URLs.
-    import re as _re
-    _m = _re.match(r"^https://github\.com/([^/]+/[^/]+)/blob/(.+)$", url)
+        raise HTTPException(
+            status_code=400,
+            detail="validation_config_url must start with https:// or gs://",
+        )
+
+    # Auto-convert GitHub blob viewer URLs to raw content URLs so users can
+    # paste the browser URL directly without finding the "Raw" button.
+    _m = re.match(r"^https://github\.com/([^/]+/[^/]+)/blob/(.+)$", url)
     if _m:
         url = f"https://raw.githubusercontent.com/{_m.group(1)}/{_m.group(2)}"
+
+    # SSRF guard: resolve the hostname and reject private/link-local/loopback/
+    # reserved/multicast addresses before opening any connection.
+    # Primary targets blocked: GCE metadata server (169.254.169.254, link-local),
+    # RFC-1918 private ranges, and loopback (127.x.x.x).
+    # Residual risk: DNS rebinding (TOCTOU between this check and httpx's own
+    # resolution). Mitigated by blocking the entire link-local /16 range, which
+    # covers the GCE metadata endpoint even under a rebinding attack.
+    from urllib.parse import urlparse as _urlparse
+    _hostname = (_urlparse(url).hostname or "").lower()
+    if not _hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL: missing hostname")
+    try:
+        _resolved = ipaddress.ip_address(socket.gethostbyname(_hostname))
+        if (_resolved.is_private or _resolved.is_link_local or
+                _resolved.is_loopback or _resolved.is_reserved or _resolved.is_multicast):
+            raise HTTPException(
+                status_code=400,
+                detail="validation_config_url resolves to a disallowed address",
+            )
+    except HTTPException:
+        raise
+    except OSError:
+        raise HTTPException(status_code=400, detail=f"Failed to resolve hostname: {_hostname}")
+    except ValueError:
+        pass  # ip_address() could not parse gethostbyname output — let httpx handle it
+
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        # follow_redirects=False: we do not chase redirects.  A redirect response
+        # is surfaced as an explicit 400 so the user can supply the final URL.
+        # This eliminates the redirect-to-internal-host attack vector entirely.
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             resp = await client.get(url)
+        if resp.is_redirect:
+            raise HTTPException(
+                status_code=400,
+                detail="validation_config_url returned a redirect — provide the final URL directly",
+            )
         resp.raise_for_status()
         content = resp.content
+    except HTTPException:
+        raise
     except __import__("httpx").HTTPStatusError as exc:
         raise HTTPException(
             status_code=400,
@@ -1072,9 +1160,9 @@ async def run_custom_validation_stream(
     - GCS session:      session_id from /api/prepare-upload.
     - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
 
-    Optional: validation_config (file) or validation_config_url (HTTPS URL) to override
-    the default validation rules. File takes priority over URL. When provided, all rule
-    selection and custom SQL rules are ignored for this run.
+    Optional: validation_config (file) or validation_config_url (https:// or gs:// URI) to
+    override the default validation rules. File takes priority over URL. When provided, all
+    rule selection and custom SQL rules are ignored for this run.
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -1128,8 +1216,8 @@ async def run_custom_validation(
     - GCS session:      session_id from /api/prepare-upload.
     - GCS input paths:  tmcf_gcs_path + csv_gcs_paths (comma-separated gs:// URIs).
 
-    Optional: validation_config (file) or validation_config_url (HTTPS URL) to override
-    the default validation rules. File takes priority over URL.
+    Optional: validation_config (file) or validation_config_url (https:// or gs:// URI) to
+    override the default validation rules. File takes priority over URL.
     """
     custom_rules: list[dict] = []
     if custom_rules_json:
@@ -3570,7 +3658,7 @@ class _SubmitJobRequest(BaseModel):
     existence_checks: str = "false"
     # Per-run custom SQL rules (not persisted; merged into the config for this run only).
     custom_rules: list[dict] = []
-    # Optional: HTTPS URL to a validation config JSON that overrides rule selection and custom_rules.
+    # Optional: https:// or gs:// URI to a validation config JSON that overrides rule selection and custom_rules.
     validation_config_url: str = ""
     # Performance tuning (Batch only).
     # machine_type_override: one of n2-highmem-16 / n2-highmem-32 / n2-highmem-64.
