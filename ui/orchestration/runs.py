@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -63,6 +64,38 @@ def pipeline_registry_payload(app_root: Path | str | None = None) -> dict[str, A
     else:
         path = Path(app_root) / "pipeline" / "registry.yaml"
     return registry_as_dict(load_registry(path))
+
+
+def effective_rules_filter(spec: RunSpec) -> str:
+    """Rules filter passed to Batch InputFiles (empty when a merged/URL config owns rules)."""
+    if spec.rules.validation_config_url:
+        return ""
+    return spec.rules.rules_filter
+
+
+def run_spec_with_batch_overrides(
+    spec: RunSpec,
+    *,
+    merged_config_gcs_path: str | None = None,
+    csv_total_bytes: int | None = None,
+    rules_filter: str | None = None,
+    machine_type_override: str | None = None,
+) -> RunSpec:
+    """Return a RunSpec copy with server-computed Batch submission fields applied."""
+    inputs = spec.inputs
+    rules = spec.rules
+    options = spec.options
+    if merged_config_gcs_path is not None:
+        rules = replace(rules, merged_config_gcs_path=merged_config_gcs_path)
+    if rules_filter is not None:
+        rules = replace(rules, rules_filter=rules_filter)
+    if csv_total_bytes is not None:
+        inputs = replace(inputs, csv_total_bytes=csv_total_bytes)
+    if machine_type_override is not None:
+        options = replace(options, machine_type_override=machine_type_override)
+    if inputs is not spec.inputs or rules is not spec.rules or options is not spec.options:
+        return replace(spec, inputs=inputs, rules=rules, options=options)
+    return spec
 
 
 def job_request_to_run_spec(

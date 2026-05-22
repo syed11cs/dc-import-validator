@@ -6,20 +6,11 @@ Fallback: Cloud Batch API (via batch_runner.get_batch_state) used when:
   - status.json shows "running" or "starting" but has not been updated in over
     5 minutes, indicating the VM died without writing a final status update.
 
-Status JSON schema (written by batch/entrypoint.sh write_status()):
-    {
-        "run_id":          str,
-        "batch_job_name":  str,
-        "dataset":         str,
-        "vm_type":         str,
-        "step":            str,       # "0", "1", "2", "2.4", "3", "4"
-        "step_label":      str,
-        "status":          str,       # "starting" | "running" | "succeeded" | "failed"
-        "started_at":      str,       # ISO-8601 UTC
-        "updated_at":      str,       # ISO-8601 UTC
-        "failure_code":    str | null,
-        "failure_message": str | null
-    }
+Status JSON (GCS jobs/{run_id}/status.json, written via batch/projector_status.py):
+    Canonical v1 fields: schema_version, step_id, step_index, step_label, substep_id,
+    failure_step_index, failure_step_id, failure_code, failure_message, failure_details.
+    Legacy poll field: step (string token, e.g. "2.4") — prefer step_index when present.
+    normalize_run_status() in ui.orchestration.runs fills step_index from step when missing.
 
 This module has no FastAPI dependency so it can be imported from tests.
 """

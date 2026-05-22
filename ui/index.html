@@ -3719,7 +3719,7 @@
         if (e.name === 'AbortError') {
           // Best-effort cancel: the job may have been created on the server before
           // the abort landed. The cancel endpoint handles "not found" gracefully.
-          fetch(API + '/api/jobs/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' }).catch(() => {});
+          fetch(API + '/api/runs/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' }).catch(() => {});
         }
         throw e;
       }
@@ -3739,7 +3739,7 @@
       while (true) {
         // ── Check abort before sleeping ──────────────────────────────
         if (signal && signal.aborted) {
-          fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
+          fetch(API + '/api/runs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
           throw new DOMException('Run cancelled', 'AbortError');
         }
 
@@ -3751,7 +3751,7 @@
 
         // ── Check abort again after wakeup ───────────────────────────
         if (signal && signal.aborted) {
-          fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
+          fetch(API + '/api/runs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
           throw new DOMException('Run cancelled', 'AbortError');
         }
 
@@ -3808,7 +3808,7 @@
           // leaving an orphaned Batch task consuming quota.
           if (Date.now() > _startingDeadlineMs) {
             _activeStepStartMs = null;
-            fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
+            fetch(API + '/api/runs/' + encodeURIComponent(confirmedRunId) + '/cancel', { method: 'POST' }).catch(() => {});
             return {
               success: false, cancelled: false, run_id: confirmedRunId,
               output: 'The validation job did not complete startup within 15 minutes. Possible causes: a large container image pull, a container launch failure, or a VM provisioning delay. Please retry \u2014 if the problem persists, check Cloud Logging for the batch job to see the specific error.',

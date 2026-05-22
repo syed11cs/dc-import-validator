@@ -62,16 +62,18 @@ from ui.gcs_reports import GCSAccessError, is_gcs_configured
 from ui import gcs_uploads as _gcs_uploads
 import gcs_baselines as _gcs_baselines
 from ui.services import batch_runner as _batch_runner
-from ui.services.batch_runner import InputFiles as _InputFiles
 from ui.services.job_status import get_job_status as _get_job_status
-from ui.orchestration.policy import PolicyBlockedError, resolve_executor
+from ui.orchestration.executors.batch import BatchExecutor
+from ui.orchestration.policy import BATCH, PolicyBlockedError, resolve_executor
 from ui.orchestration.spec import BUILTIN_DATASETS
 from ui.orchestration.runs import (
     build_run_created_response,
+    effective_rules_filter,
     fetch_run_status,
     job_request_to_run_spec,
     normalize_run_status,
     pipeline_registry_payload,
+    run_spec_with_batch_overrides,
     subprocess_legacy_hint,
 )
 
@@ -3661,16 +3663,17 @@ async def get_run_status(run_id: str):
 # ──────────────────────────────────────────────────────────────────────────────
 # Cloud Batch job orchestration endpoints
 #
-# These endpoints provide an async job lifecycle for large validation runs
-# that execute on Cloud Batch VMs rather than in Cloud Run directly.
+# Canonical run API: POST/GET /api/runs, POST /api/runs/{run_id}/cancel.
+# Legacy aliases (same behavior): POST /api/jobs, GET /api/jobs/{id}/status|report,
+# POST /api/jobs/{id}/cancel. Local subprocess runs stay on /api/run/* stream endpoints.
 #
-# Typical flow:
-#   1. POST /api/prepare-upload   → signed GCS upload URLs (existing endpoint)
-#   2. Browser uploads files directly to GCS
-#   3. POST /api/jobs             → submit Batch job; returns { run_id, job_name }
-#   4. GET  /api/jobs/{run_id}/status  → poll until status == "succeeded"/"failed"
-#   5. GET  /api/jobs/{run_id}/report  → fetch HTML report from GCS
-#   6. POST /api/jobs/{run_id}/cancel  → terminate a running job
+# Typical Batch flow:
+#   1. POST /api/prepare-upload   → signed GCS upload URLs
+#   2. Browser uploads files to GCS
+#   3. POST /api/runs (or /api/jobs) → submit Batch job
+#   4. GET  /api/runs/{run_id}    → poll status (jobs/.../status is equivalent)
+#   5. GET  /api/jobs/{run_id}/report → HTML report from GCS
+#   6. POST /api/runs/{run_id}/cancel (or jobs/.../cancel)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _validate_gcs_uri(uri: str, field: str) -> str | None:
@@ -3779,6 +3782,30 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
     """
     run_id = body.run_id.strip()
     dataset = body.dataset.strip()
+
+    # Shared orchestration policy (POST /api/jobs and POST /api/runs after runs pre-check).
+    try:
+        _policy_spec = job_request_to_run_spec(body)
+        _policy_resolution = resolve_executor(_policy_spec)
+    except PolicyBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if _policy_resolution.executor != BATCH:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "USE_LEGACY_STREAM_ENDPOINT",
+                "message": (
+                    "Subprocess runs use existing upload/stream endpoints; "
+                    "Batch submission requires production profile with GCS + Batch configured."
+                ),
+                "executor": _policy_resolution.executor,
+                "profile": _policy_resolution.profile,
+                "reason": _policy_resolution.reason,
+                **subprocess_legacy_hint(_policy_spec),
+            },
+        )
 
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
@@ -4038,47 +4065,32 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
             )
             effective_machine_override = _recommended
 
-    _rules_filter_val = "" if body.validation_config_url else body.rules
+    _base_spec = job_request_to_run_spec(body, merged_config_gcs_path=merged_config_gcs_path)
+    _rules_filter_val = effective_rules_filter(_base_spec)
     logger.info('[OVERRIDE_TRACE] %s', json.dumps({
-        "component": "submit_batch_job", "event": "building_input_files",
+        "component": "submit_batch_job", "event": "building_batch_plan",
         "run_id": run_id,
         "merged_config_gcs_path": merged_config_gcs_path,
         "rules_filter": _rules_filter_val,
         "skip_rules_filter": body.skip_rules or "",
     }))
-    input_files = _InputFiles(
-        gcs_prefix=f"sessions/{body.session_id}" if body.session_id else "",
-        tmcf_filename=body.tmcf_filename,
-        csv_filenames=body.csv_filenames,
-        stat_vars_mcf_filename=body.stat_vars_mcf_filename or None,
-        stat_vars_schema_mcf_filename=body.stat_vars_schema_mcf_filename or None,
+    batch_spec = run_spec_with_batch_overrides(
+        _base_spec,
         csv_total_bytes=csv_total_bytes,
-        tmcf_gcs_path=body.tmcf_gcs_path,
-        csv_gcs_paths=body.csv_gcs_paths,
-        stat_vars_mcf_gcs_path=body.stat_vars_mcf_gcs_path,
-        stat_vars_schema_mcf_gcs_path=body.stat_vars_schema_mcf_gcs_path,
-        llm_review=body.llm_review,
         rules_filter=_rules_filter_val,
-        skip_rules_filter=body.skip_rules,
-        baseline_name=body.baseline_name,
-        import_resolution_mode=body.import_resolution_mode,
-        import_existence_checks=body.existence_checks,
-        merged_config_gcs_path=merged_config_gcs_path,
-        processing_mode=body.processing_mode,
-        java_threads=body.java_threads,
+        machine_type_override=effective_machine_override,
     )
+    batch_plan = BatchExecutor().plan_submit(batch_spec)
     logger.info('[OVERRIDE_TRACE] %s', json.dumps({
-        "component": "submit_batch_job", "event": "input_files_created",
+        "component": "submit_batch_job", "event": "batch_plan_created",
         "run_id": run_id,
-        "input_files.merged_config_gcs_path": input_files.merged_config_gcs_path,
-        "input_files.rules_filter": input_files.rules_filter,
+        "merged_config_gcs_path": batch_plan.input_files.merged_config_gcs_path,
+        "rules_filter": batch_plan.input_files.rules_filter,
     }))
 
     try:
-        job_name = await asyncio.to_thread(
-            _batch_runner.submit_job, run_id, dataset, input_files,
-            effective_machine_override,
-        )
+        batch_result = await asyncio.to_thread(BatchExecutor().submit, batch_plan)
+        job_name = batch_result.job_name
     except KeyError as exc:
         # A required env var (BATCH_PROJECT_ID etc.) is not set.
         logger.error("submit_batch_job missing env var: %s", exc)
@@ -4100,7 +4112,7 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
 
 @app.post("/api/jobs")
 async def submit_batch_job(body: _SubmitJobRequest):
-    """Delegates to _execute_batch_job_submission (same as POST /api/runs in Batch profile)."""
+    """Legacy alias for POST /api/runs (same policy gate and Batch submission path)."""
     return await _execute_batch_job_submission(body)
 
 
@@ -4164,14 +4176,11 @@ async def get_batch_job_report(run_id: str):
     return HTMLResponse(content=content.decode("utf-8", errors="replace"))
 
 
-@app.post("/api/jobs/{run_id}/cancel")
-async def cancel_batch_job(run_id: str):
-    """Cancel a running Batch job.
+async def _cancel_run_impl(run_id: str) -> dict:
+    """Cancel a running Batch job (shared by /api/runs and /api/jobs cancel routes).
 
-    Reads the job_name from the run's status.json when available; falls back to
-    compute_job_name(run_id) so cancellation works during VM provisioning before
-    status.json has been written. Cancellation is best-effort — if the job has
-    already finished, the call is a no-op.
+    Reads batch_job_name from status.json when available; falls back to
+    compute_job_name(run_id) during provisioning before status.json exists.
     """
     try:
         status = await asyncio.to_thread(_get_job_status, run_id)
@@ -4211,6 +4220,18 @@ async def cancel_batch_job(run_id: str):
 
     logger.info("batch_job_cancelled run_id=%s job_name=%s", run_id, job_name)
     return {"ok": True, "run_id": run_id, "job_name": job_name}
+
+
+@app.post("/api/jobs/{run_id}/cancel")
+async def cancel_batch_job(run_id: str):
+    """Legacy cancel alias — prefer POST /api/runs/{run_id}/cancel."""
+    return await _cancel_run_impl(run_id)
+
+
+@app.post("/api/runs/{run_id}/cancel")
+async def cancel_run(run_id: str):
+    """Cancel a running Batch validation run."""
+    return await _cancel_run_impl(run_id)
 
 
 @app.get("/favicon.ico")

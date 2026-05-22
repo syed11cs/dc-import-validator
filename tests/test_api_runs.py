@@ -15,13 +15,17 @@ if str(ROOT) not in sys.path:
 
 from ui.orchestration.policy import BATCH, DEVELOPMENT, PRODUCTION, SUBPROCESS
 from ui.orchestration.policy import ExecutorResolution, resolve_executor
+from ui.orchestration.executors.batch import BatchExecutor
 from ui.orchestration.runs import (
     build_run_created_response,
+    effective_rules_filter,
     job_request_to_run_spec,
     normalize_run_status,
     pipeline_registry_payload,
+    run_spec_with_batch_overrides,
     subprocess_legacy_hint,
 )
+from ui.services.batch_runner import InputFiles
 from ui.orchestration.spec import run_spec_from_mapping
 
 
@@ -118,6 +122,53 @@ class TestPipelineRegistryPayload(unittest.TestCase):
         self.assertIn("legacy_markers", payload)
 
 
+class TestBatchRunSpecHelpers(unittest.TestCase):
+    def test_effective_rules_filter_empty_when_config_url(self) -> None:
+        spec = run_spec_from_mapping(
+            {
+                "run_id": "r1",
+                "mode": "builtin",
+                "dataset_id": "child_birth",
+                "inputs": {},
+                "rules": {
+                    "rules_filter": "rule_a",
+                    "validation_config_url": "https://example.com/c.json",
+                },
+                "options": {},
+            }
+        )
+        self.assertEqual(effective_rules_filter(spec), "")
+
+    def test_run_spec_overrides_match_batch_executor_input_files(self) -> None:
+        spec = run_spec_from_mapping(
+            {
+                "run_id": "r1",
+                "mode": "custom",
+                "dataset_id": "custom",
+                "inputs": {
+                    "session_id": "sess",
+                    "tmcf_filename": "a.tmcf",
+                    "csv_filenames": ["b.csv"],
+                    "csv_total_bytes": 1000,
+                },
+                "rules": {"merged_config_gcs_path": "gs://b/o.json"},
+                "options": {"machine_type_override": "n2-highmem-32"},
+            }
+        )
+        final = run_spec_with_batch_overrides(
+            spec,
+            csv_total_bytes=2000,
+            rules_filter="",
+            machine_type_override="n2-highmem-64",
+        )
+        files = BatchExecutor().spec_to_input_files(final)
+        self.assertIsInstance(files, InputFiles)
+        self.assertEqual(files.csv_total_bytes, 2000)
+        self.assertEqual(files.rules_filter, "")
+        self.assertEqual(files.merged_config_gcs_path, "gs://b/o.json")
+        self.assertEqual(final.options.machine_type_override, "n2-highmem-64")
+
+
 class TestSubprocessLegacyHint(unittest.TestCase):
     def test_builtin_hint(self) -> None:
         spec = run_spec_from_mapping(
@@ -202,6 +253,30 @@ class TestServerRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         mock_fetch.assert_called_once()
         self.assertEqual(resp.json()["schema_version"], "1.0")
+
+    def test_jobs_submit_blocked_in_dev_same_as_runs(self) -> None:
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        with patch.dict(os.environ, {"DEPLOYMENT_PROFILE": "development"}, clear=False):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/jobs",
+                json={"run_id": "run-1", "dataset": "child_birth"},
+            )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["detail"]["code"], "USE_LEGACY_STREAM_ENDPOINT")
+
+    @patch("ui.server._batch_runner.cancel_job")
+    @patch("ui.server._get_job_status", return_value={"status": "running", "batch_job_name": "projects/p/jobs/j1"})
+    def test_runs_cancel_alias(self, mock_status, mock_cancel) -> None:
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        client = TestClient(app)
+        resp = client.post("/api/runs/run-xyz/cancel")
+        self.assertEqual(resp.status_code, 200)
+        mock_cancel.assert_called_once_with("projects/p/jobs/j1")
 
     @patch("ui.server.fetch_run_status", return_value={"status": "running", "step": "1"})
     def test_runs_status_unified(self, mock_fetch) -> None:

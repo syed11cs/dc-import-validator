@@ -89,7 +89,7 @@ class RunSpec:
 
 
 def run_spec_from_mapping(data: Mapping[str, Any]) -> RunSpec:
-    """Build RunSpec from a plain dict (for tests and future POST /api/runs)."""
+    """Build RunSpec from a plain dict (tests and HTTP request mapping)."""
     inputs_raw = data.get("inputs") or {}
     rules_raw = data.get("rules") or {}
     options_raw = data.get("options") or {}
