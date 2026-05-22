@@ -242,31 +242,41 @@ async def _fetch_and_validate_config(url: str) -> bytes:
     if _m:
         url = f"https://raw.githubusercontent.com/{_m.group(1)}/{_m.group(2)}"
 
-    # SSRF guard: resolve the hostname and reject private/link-local/loopback/
-    # reserved/multicast addresses before opening any connection.
-    # Primary targets blocked: GCE metadata server (169.254.169.254, link-local),
-    # RFC-1918 private ranges, and loopback (127.x.x.x).
+    # SSRF guard: resolve ALL addresses for the hostname (both IPv4 and IPv6) and
+    # reject any that are private/link-local/loopback/reserved/multicast.
+    # Using getaddrinfo(AF_UNSPEC) instead of gethostbyname() is intentional:
+    #   - gethostbyname() returns only one IPv4 address. If a host has a public A
+    #     record but a private AAAA record, gethostbyname() would pass the check
+    #     while httpx (which does its own dual-stack resolution) could connect via
+    #     the private IPv6 address — a silent bypass.
+    #   - getaddrinfo(AF_UNSPEC) returns every A and AAAA record. We block if ANY
+    #     resolved address is disallowed, making the guard correct by construction.
+    # Primary targets blocked: GCE metadata (169.254.169.254, link-local /16),
+    # RFC-1918 private ranges, loopback (127.x.x.x / ::1), and multicast.
     # Residual risk: DNS rebinding (TOCTOU between this check and httpx's own
-    # resolution). Mitigated by blocking the entire link-local /16 range, which
-    # covers the GCE metadata endpoint even under a rebinding attack.
+    # resolution). Accepted: requires attacker to control DNS AND have a reachable
+    # internal IPv6 service on Cloud Run — not the realistic threat model here.
     from urllib.parse import urlparse as _urlparse
     _hostname = (_urlparse(url).hostname or "").lower()
     if not _hostname:
         raise HTTPException(status_code=400, detail="Invalid URL: missing hostname")
     try:
-        _resolved = ipaddress.ip_address(socket.gethostbyname(_hostname))
-        if (_resolved.is_private or _resolved.is_link_local or
-                _resolved.is_loopback or _resolved.is_reserved or _resolved.is_multicast):
-            raise HTTPException(
-                status_code=400,
-                detail="validation_config_url resolves to a disallowed address",
-            )
+        _addr_infos = socket.getaddrinfo(_hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _fam, _typ, _proto, _canon, _sockaddr in _addr_infos:
+            try:
+                _resolved = ipaddress.ip_address(_sockaddr[0])
+            except ValueError:
+                continue
+            if (_resolved.is_private or _resolved.is_link_local or
+                    _resolved.is_loopback or _resolved.is_reserved or _resolved.is_multicast):
+                raise HTTPException(
+                    status_code=400,
+                    detail="validation_config_url resolves to a disallowed address",
+                )
     except HTTPException:
         raise
     except OSError:
         raise HTTPException(status_code=400, detail=f"Failed to resolve hostname: {_hostname}")
-    except ValueError:
-        pass  # ip_address() could not parse gethostbyname output — let httpx handle it
 
     try:
         import httpx
