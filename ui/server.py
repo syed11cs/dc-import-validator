@@ -64,6 +64,16 @@ import gcs_baselines as _gcs_baselines
 from ui.services import batch_runner as _batch_runner
 from ui.services.batch_runner import InputFiles as _InputFiles
 from ui.services.job_status import get_job_status as _get_job_status
+from ui.orchestration.policy import PolicyBlockedError, resolve_executor
+from ui.orchestration.spec import BUILTIN_DATASETS
+from ui.orchestration.runs import (
+    build_run_created_response,
+    fetch_run_status,
+    job_request_to_run_spec,
+    normalize_run_status,
+    pipeline_registry_payload,
+    subprocess_legacy_hint,
+)
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_BYTES = 100 * 1024**3  # 100 GB per file
@@ -3612,6 +3622,43 @@ def get_baseline_versions(dataset: str, baseline_id: str | None = Query(None)):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Pipeline registry + unified run APIs (/api/runs, /api/pipeline/registry)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/pipeline/registry")
+async def get_pipeline_registry():
+    """Canonical pipeline step registry (labels, indices, legacy marker map)."""
+    try:
+        return pipeline_registry_payload(APP_ROOT)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        logger.exception("get_pipeline_registry failed")
+        raise HTTPException(status_code=500, detail=f"Failed to load pipeline registry: {exc}")
+
+
+async def _read_run_status(run_id: str) -> dict:
+    """Unified status read (GCS status.json + Batch API); normalizes v1 + legacy fields."""
+    try:
+        status = await asyncio.to_thread(fetch_run_status, run_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.exception("_read_run_status error run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"Failed to read run status: {exc}")
+    if status is None:
+        raise HTTPException(status_code=404, detail="Run status not found")
+    return normalize_run_status(status)
+
+
+@app.get("/api/runs/{run_id}")
+async def get_run_status(run_id: str):
+    """Unified run status for Batch (and GCS-backed) runs."""
+    return await _read_run_status(run_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Cloud Batch job orchestration endpoints
 #
 # These endpoints provide an async job lifecycle for large validation runs
@@ -3625,9 +3672,6 @@ def get_baseline_versions(dataset: str, baseline_id: str | None = Query(None)):
 #   5. GET  /api/jobs/{run_id}/report  → fetch HTML report from GCS
 #   6. POST /api/jobs/{run_id}/cancel  → terminate a running job
 # ──────────────────────────────────────────────────────────────────────────────
-
-_BUILTIN_DATASETS = frozenset({"child_birth", "statistics_poland", "finland_census", "uae_population"})
-
 
 def _validate_gcs_uri(uri: str, field: str) -> str | None:
     """Return an error string if uri is not a valid gs:// URI, else None."""
@@ -3680,9 +3724,46 @@ class _SubmitJobRequest(BaseModel):
     java_threads: int = 0
 
 
-@app.post("/api/jobs")
-async def submit_batch_job(body: _SubmitJobRequest):
-    """Submit a Cloud Batch validation job.
+@app.post("/api/runs")
+async def create_run(body: _SubmitJobRequest):
+    """Canonical run submission — dispatches via orchestration policy (Batch in production)."""
+    run_id = body.run_id.strip()
+    if not run_id:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    try:
+        spec = job_request_to_run_spec(body)
+        resolution = resolve_executor(spec)
+    except PolicyBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if resolution.executor == "subprocess":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "USE_LEGACY_STREAM_ENDPOINT",
+                "message": (
+                    "Subprocess runs use existing upload/stream endpoints; "
+                    "POST /api/runs submits Cloud Batch jobs when policy selects batch."
+                ),
+                "executor": resolution.executor,
+                "profile": resolution.profile,
+                "reason": resolution.reason,
+                **subprocess_legacy_hint(spec),
+            },
+        )
+
+    batch_result = await _execute_batch_job_submission(body)
+    return build_run_created_response(
+        run_id=run_id,
+        resolution=resolution,
+        batch_result=batch_result,
+    )
+
+
+async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
+    """Submit a Cloud Batch validation job (shared by POST /api/jobs and POST /api/runs).
 
     Supports two file-delivery modes for custom datasets (mutually exclusive):
     - Upload session: files uploaded via POST /api/prepare-upload + browser PUT.
@@ -3703,7 +3784,7 @@ async def submit_batch_job(body: _SubmitJobRequest):
         raise HTTPException(status_code=400, detail="run_id is required")
     if not dataset:
         raise HTTPException(status_code=400, detail="dataset is required")
-    if dataset not in _BUILTIN_DATASETS and dataset != "custom":
+    if dataset not in BUILTIN_DATASETS and dataset != "custom":
         raise HTTPException(status_code=400, detail=f"Unknown dataset: {dataset!r}")
     if dataset == "custom":
         has_filenames = bool(body.tmcf_filename and body.csv_filenames)
@@ -4017,30 +4098,21 @@ async def submit_batch_job(body: _SubmitJobRequest):
     return {"run_id": run_id, "job_name": job_name}
 
 
+@app.post("/api/jobs")
+async def submit_batch_job(body: _SubmitJobRequest):
+    """Delegates to _execute_batch_job_submission (same as POST /api/runs in Batch profile)."""
+    return await _execute_batch_job_submission(body)
+
+
 @app.get("/api/jobs/{run_id}/status")
 async def get_batch_job_status(run_id: str):
-    """Return the current status of a Batch validation run.
-
-    Reads status.json from GCS. When the status is "running" and the last
-    heartbeat is older than 5 minutes, the Batch API is probed to detect
-    silent VM termination.
-
-    Returns the status dict or 404 if no status has been written yet and the
-    Batch job cannot be found.
-    """
+    """Same status path as GET /api/runs/{run_id}."""
     try:
-        job_name = await asyncio.to_thread(_batch_runner.compute_job_name, run_id)
-        status = await asyncio.to_thread(_get_job_status, run_id, None, job_name=job_name)
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
-        logger.exception("get_batch_job_status error run_id=%s", run_id)
-        raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
-
-    if status is None:
-        raise HTTPException(status_code=404, detail="Job status not found")
-
-    return status
+        return await _read_run_status(run_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="Job status not found")
+        raise
 
 
 @app.get("/api/jobs/{run_id}/report", response_class=HTMLResponse)

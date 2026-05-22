@@ -1,0 +1,82 @@
+# Canonical pipeline step registry.
+# Consumed by pipeline/registry.py and run_e2e_test.sh step/progress emitters.
+schema_version: "1.0"
+
+steps:
+  - id: pre_import
+    index: 0
+    label: Pre-import checks
+    blocking: true
+    substeps:
+      - id: preflight
+        label: File preflight
+      - id: csv_quality
+        label: CSV quality
+      - id: csv_split
+        label: Validate and split CSV
+        optional: true
+
+  - id: schema_review
+    index: 1
+    label: Schema review
+    blocking: false
+    substeps:
+      - id: deterministic_review
+        label: Deterministic TMCF checks
+      - id: llm_review
+        label: Gemini review
+        optional: true
+
+  - id: import_tool
+    index: 2
+    label: DC import (genmcf)
+    blocking: true
+    substeps:
+      - id: genmcf
+        label: Run genmcf
+
+  - id: baseline_diff
+    index: 3
+    label: Baseline comparison
+    blocking: false
+    substeps:
+      - id: differ
+        label: Compare MCF to baseline
+        optional: true
+
+  - id: validation
+    index: 4
+    label: Import validation
+    blocking: true
+    substeps:
+      - id: dc_validation
+        label: Run validation rules
+      - id: counters_check
+        label: Counters match check
+        optional: true
+      - id: warn_only
+        label: Apply warn-only overrides
+        optional: true
+
+  - id: results
+    index: 5
+    label: Results
+    blocking: false
+    substeps:
+      - id: html_report
+        label: Generate HTML report
+      - id: upload_critical
+        label: Upload critical reports
+        optional: true
+      - id: upload_deferred
+        label: Upload deferred artifacts
+        optional: true
+
+# Exact lines emitted by run_e2e_test.sh today (::STEP::N:Label).
+legacy_markers:
+  "::STEP::0:Pre-Import Checks": pre_import
+  "::STEP::1:Gemini Review": schema_review
+  "::STEP::2:DC Import Tool": import_tool
+  "::STEP::2.4:Differ": baseline_diff
+  "::STEP::3:DC Import Validation": validation
+  "::STEP::4:Results": results

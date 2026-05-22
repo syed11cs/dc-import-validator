@@ -210,28 +210,6 @@ log_info()  { echo -e "${GREEN}[INFO]${NC} [session=$SESSION_ID] $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} [session=$SESSION_ID] $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} [session=$SESSION_ID] $1"; }
 
-# Emit structured failure event for UI (single line JSON). Runner forwards it; done payload uses it instead of parsing output.
-# Args: code step message [limit] [details_file]
-# If limit (4th) is non-empty, adds "limit" to JSON. If details_file (5th) exists, embeds its JSON as "details".
-emit_failure() {
-  local code=$1 step=$2 msg=$3 limit=${4:-} details_file=${5:-}
-  # Escape $msg via Python so quotes, backslashes, newlines, etc. never corrupt the JSON.
-  # json.dumps produces a quoted string ("…"); [1:-1] strips the outer quotes leaving only the content.
-  local escaped_msg
-  escaped_msg=$(${PYTHON:-python3} -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$msg" 2>/dev/null) \
-    || escaped_msg="(message unavailable; see logs)"
-  local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$escaped_msg\""
-  if [[ -n "$limit" && "$limit" != "null" ]]; then
-    base="${base},\"limit\":${limit}"
-  fi
-  if [[ -n "$details_file" && -f "$details_file" ]]; then
-    local details
-    details=$(cat "$details_file")
-    base="${base},\"details\":${details}"
-  fi
-  echo "${base}}"
-}
-
 # Log container memory usage at key pipeline stages. Reads from the cgroup filesystem so the
 # value reflects total container RSS (including the JVM), not just this shell process.
 log_mem() {
@@ -309,6 +287,104 @@ mkdir -p "$OUTPUT_DIR"
 if [[ -z "${PYTHON:-}" ]]; then
   [[ -f "$VENV_PYTHON" ]] && PYTHON="$VENV_PYTHON" || PYTHON="python3"
 fi
+
+# ─── Canonical v1 progress (legacy ::STEP:: markers + v1 JSON events) ─────────
+# Order per step/failure: legacy line first, then v1 JSON (additive; legacy consumers unchanged).
+export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
+_progress_cli() {
+  "$PYTHON" -m pipeline.progress "$@" 2>/dev/null || log_warn "v1 progress emit failed (non-fatal): $*"
+}
+
+emit_v1_progress() {
+  local step_id=$1
+  local substep_id=${2:-}
+  if [[ -n "$substep_id" ]]; then
+    _progress_cli progress --step-id "$step_id" --substep-id "$substep_id"
+  else
+    _progress_cli progress --step-id "$step_id"
+  fi
+}
+
+# Args: legacy_line step_id  — echoes legacy ::STEP:: unchanged, then v1 progress.
+emit_step_marker() {
+  echo "$1"
+  emit_v1_progress "$2"
+}
+
+# Map legacy failure code + numeric step -> canonical step_id [substep_id] (registry semantics).
+_failure_v1_context() {
+  local code=$1
+  local legacy_step=$2
+  case "$code" in
+    CSV_SPLIT_FAILED) echo "pre_import csv_split" ;;
+    PREFLIGHT_FAILED) echo "pre_import preflight" ;;
+    CSV_QUALITY_FAILED) echo "pre_import csv_quality" ;;
+    GEMINI_BLOCKING) echo "schema_review llm_review" ;;
+    DATA_PROCESSING_FAILED) echo "import_tool genmcf" ;;
+    *)
+      case "$legacy_step" in
+        0) echo "pre_import" ;;
+        1) echo "schema_review" ;;
+        2) echo "import_tool" ;;
+        3) echo "validation" ;;
+        4) echo "results" ;;
+        *) echo "pre_import" ;;
+      esac
+      ;;
+  esac
+}
+
+emit_v1_failure() {
+  local code=$1
+  local legacy_step=$2
+  local msg=$3
+  local limit=${4:-}
+  local details_file=${5:-}
+  local ctx step_id substep_id
+  ctx=$(_failure_v1_context "$code" "$legacy_step")
+  step_id=$(echo "$ctx" | awk '{print $1}')
+  substep_id=$(echo "$ctx" | awk '{print $2}')
+  local -a args=(failure --step-id "$step_id" --failure-code "$code" --message "$msg")
+  [[ -n "$substep_id" ]] && args+=(--substep-id "$substep_id")
+  [[ -n "$limit" && "$limit" != "null" ]] && args+=(--limit "$limit")
+  [[ -n "$details_file" && -f "$details_file" ]] && args+=(--details-file "$details_file")
+  _progress_cli "${args[@]}"
+}
+
+# Emit structured failure event for UI (single line JSON). Runner forwards it; done payload uses it instead of parsing output.
+# Args: code step message [limit] [details_file]
+# Legacy JSON unchanged; canonical v1 failure emitted immediately after (registry-backed step_id).
+emit_failure() {
+  local code=$1 step=$2 msg=$3 limit=${4:-} details_file=${5:-}
+  local escaped_msg
+  escaped_msg=$($PYTHON -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$msg" 2>/dev/null) \
+    || escaped_msg="(message unavailable; see logs)"
+  local base="{\"t\":\"failure\",\"code\":\"$code\",\"step\":$step,\"message\":\"$escaped_msg\""
+  if [[ -n "$limit" && "$limit" != "null" ]]; then
+    base="${base},\"limit\":${limit}"
+  fi
+  if [[ -n "$details_file" && -f "$details_file" ]]; then
+    local details
+    details=$(cat "$details_file")
+    base="${base},\"details\":${details}"
+  fi
+  echo "${base}}"
+  emit_v1_failure "$code" "$step" "$msg" "$limit" "$details_file"
+}
+
+emit_run_finished() {
+  local status=$1
+  local exit_code=$2
+  local failure_code=${3:-}
+  local msg=${4:-}
+  local step_id=${5:-}
+  local -a args=(run_finished --status "$status" --exit-code "$exit_code")
+  [[ -n "$failure_code" ]] && args+=(--failure-code "$failure_code")
+  [[ -n "$msg" ]] && args+=(--message "$msg")
+  [[ -n "$step_id" ]] && args+=(--step-id "$step_id")
+  _progress_cli "${args[@]}"
+}
 
 # =============================================================================
 # Step 0: Dataset-specific paths (child_birth testdata in repo; rule-test variants in sample_data/)
@@ -445,7 +521,7 @@ fi
 # =============================================================================
 # Step 0: Pre-Import Checks (preflight + CSV quality + row count)
 # =============================================================================
-echo "::STEP::0:Pre-Import Checks"
+emit_step_marker "::STEP::0:Pre-Import Checks" pre_import
 log_info "Pre-Import Checks (files + CSV quality + row count)..."
 mkdir -p "$DATASET_OUTPUT"
 PREFLIGHT_ERRORS_JSON="$DATASET_OUTPUT/preflight_errors.json"
@@ -483,7 +559,7 @@ if [[ -n "$TMCF" && -f "$TMCF" ]]; then
       log_info "Step 1 (background): schema review (deterministic only)..."
     fi
     $PYTHON "$LLM_REVIEW_SCRIPT" --tmcf="$TMCF" --output="$SCHEMA_REVIEW_OUT" \
-      --model="$LLM_MODEL" "${LLM_EXTRA_ARGS[@]}" >"$_STEP1_BG_OUT" 2>&1 &
+      --model="$LLM_MODEL" ${LLM_EXTRA_ARGS[@]+"${LLM_EXTRA_ARGS[@]}"} >"$_STEP1_BG_OUT" 2>&1 &
     _STEP1_BG_PID=$!
     log_info "Step 1 launched in background (PID $_STEP1_BG_PID)"
   fi
@@ -930,7 +1006,7 @@ if [[ -n "$_STEP1_BG_PID" ]]; then
   _STEP1_BG_PID=""
 fi
 
-echo "::STEP::1:Gemini Review"
+emit_step_marker "::STEP::1:Gemini Review" schema_review
 
 # Replay Step 1 output (captured to avoid interleaving with Step 0 stdout).
 if [[ -n "$_STEP1_BG_OUT" && -f "$_STEP1_BG_OUT" ]]; then
@@ -975,7 +1051,7 @@ fi
 # =============================================================================
 STEP2_START=$(date +%s)
 log_mem "step2_genmcf"
-echo "::STEP::2:DC Import Tool"
+emit_step_marker "::STEP::2:DC Import Tool" import_tool
 log_info "Step 2: Running dc-import genmcf..."
 
 # Resolve JAR: IMPORT_JAR_PATH -> bin/ -> download from GitHub
@@ -1043,7 +1119,7 @@ fi
 
 set +e
 java -XX:+UseG1GC -Xmx"${JAVA_XMX}" \
-  "${_JVM_PROFILE_FLAGS[@]}" \
+  ${_JVM_PROFILE_FLAGS[@]+"${_JVM_PROFILE_FLAGS[@]}"} \
   -jar "$JAR_PATH" genmcf "${GENMCF_FILES[@]}" -o="$GENMCF_OUTPUT" \
   --num-threads="$JAVA_THREADS" \
   --resolution="$IMPORT_RESOLUTION_MODE" --existence-checks="$IMPORT_EXISTENCE_CHECKS" \
@@ -1179,7 +1255,7 @@ fi
 
 DIFFER_OUTPUT=""
 if [[ -n "$_DIFFER_DATASET_ID" ]]; then
-  echo "::STEP::2.4:Differ"
+  emit_step_marker "::STEP::2.4:Differ" baseline_diff
   DIFFER_OUT_DIR="$GENMCF_OUTPUT/differ_output"
   _DIFFER_START=$(date +%s)
   _DIFFER_EXIT=0
@@ -1229,7 +1305,7 @@ if [[ -z "$CONFIG_OVERRIDE" && -f "$VALIDATE_CONFIG_SCRIPT" && -f "$VALIDATION_C
   fi
 fi
 
-echo "::STEP::3:DC Import Validation"
+emit_step_marker "::STEP::3:DC Import Validation" validation
 log_info "Step 3: Running import_validation (config: $(basename "$VALIDATION_CONFIG"))..."
 
 # Validation output goes inside dataset folder for consistency
@@ -1374,7 +1450,7 @@ fi
 STEP4_START=$(date +%s)
 HTML_REPORT="$DATASET_OUTPUT/validation_report.html"
 if [[ -f "$VALIDATION_OUTPUT" ]]; then
-  echo "::STEP::4:Results"
+  emit_step_marker "::STEP::4:Results" results
   log_info "Step 4: Generating HTML report..."
   OVERALL_ARG="--overall=pass"
   [[ "$VALIDATION_RESULT" -ne 0 ]] && OVERALL_ARG="--overall=fail"
@@ -1395,6 +1471,7 @@ if [[ "$VALIDATION_RESULT" -eq 0 ]]; then
   echo "=========================================="
   echo "Output: $VALIDATION_OUTPUT"
   [[ -f "$HTML_REPORT" ]] && echo "Report: $HTML_REPORT"
+  emit_run_finished succeeded 0
   exit 0
 else
   log_error "Validation FAILED"
@@ -1404,5 +1481,6 @@ else
   echo "=========================================="
   echo "Output: $VALIDATION_OUTPUT"
   [[ -f "$HTML_REPORT" ]] && echo "Report: $HTML_REPORT"
+  emit_run_finished failed 1
   exit 1
 fi

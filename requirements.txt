@@ -1,3 +1,6 @@
+# Pipeline step registry (pipeline/registry.yaml)
+PyYAML>=6.0
+
 # Minimal requirements for running import_validation
 # (from datacommonsorg/data/tools/import_validation)
 absl-py

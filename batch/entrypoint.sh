@@ -113,6 +113,11 @@ STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 mkdir -p "${WORKSPACE}"
 
+export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+readonly PROJECTOR_STATE_FILE="${WORKSPACE}/.projector_bridge.json"
+readonly STATUS_CLI=(python3 "${SCRIPT_DIR}/batch/projector_status.py" \
+    --state-file "${PROJECTOR_STATE_FILE}" --app-root "${SCRIPT_DIR}")
+
 # ─── Logging helper ───────────────────────────────────────────────────────────
 
 log() {
@@ -127,19 +132,12 @@ _SA_EMAIL="$(curl -sf -H 'Metadata-Flavor: Google' \
     2>/dev/null || echo 'unknown (metadata unavailable)')"
 log "Auth: active_service_account=${_SA_EMAIL}"
 
-# ─── write_status ─────────────────────────────────────────────────────────────
-#
-# Writes jobs/<RUN_ID>/status.json to GCS.
-# All values are passed as environment variables to avoid shell quoting issues
-# with special characters in failure messages.
+# ─── write_status (ProgressProjector → status.json v1 on GCS) ─────────────────
 #
 # Usage: write_status <step> <step_label> <status> [failure_code] [failure_message]
-#
-# <step>          - Pipeline step number or string (e.g. "0", "2", "2.4", "4")
-# <step_label>    - Human-readable label (e.g. "DC Import Tool")
-# <status>        - "running" | "succeeded" | "failed"
-# [failure_code]  - Machine-readable code (e.g. "DATA_PROCESSING_FAILED"); empty = null
-# [failure_message] - Human-readable explanation; empty = null
+#        [failure_details_json] [artifacts_ready]
+# Legacy step tokens (0, 2.4, 4) are mapped to canonical step_id via the registry.
+# Running progress during the pipeline is driven by feed-line + projector (not here).
 
 write_status() {
     local step="$1"
@@ -147,81 +145,32 @@ write_status() {
     local status="$3"
     local failure_code="${4:-}"
     local failure_message="${5:-}"
-    # failure_details_json: a JSON-encoded value (object, array, or literal null).
-    # Defaults to null so intermediate "running" writes are unaffected.
     local failure_details_json="${6:-null}"
-    # artifacts_ready: "true" | "false" | "" (omit field).
-    # "false" = Phase 1 (UI-critical) uploads done; MCF/deferred still uploading.
-    # "true"  = All deferred artifacts uploaded; Accept Baseline is now safe.
-    # ""      = Field omitted (backward compat — treated as true by UI/job_status.py).
     local artifacts_ready="${7:-}"
-
-    STEP="$step" \
-    STEP_LABEL="$step_label" \
-    STATUS="$status" \
-    FAILURE_CODE="$failure_code" \
-    FAILURE_MESSAGE="$failure_message" \
-    FAILURE_DETAILS_JSON="$failure_details_json" \
-    ARTIFACTS_READY="$artifacts_ready" \
-    STARTED_AT="$STARTED_AT" \
-    python3 -c "
-import json, os
-from datetime import datetime, timezone
-from google.cloud import storage
-
-client = storage.Client()
-bucket = client.bucket(os.environ['GCS_REPORTS_BUCKET'])
-
-# Parse the pre-serialised details value back to a Python object so it is
-# stored as structured JSON (not a string) in status.json.
-_details_raw = os.environ.get('FAILURE_DETAILS_JSON', 'null')
-try:
-    failure_details = json.loads(_details_raw)
-except (json.JSONDecodeError, ValueError):
-    failure_details = None
-
-data = {
-    'run_id':          os.environ['RUN_ID'],
-    'batch_job_name':  os.environ.get('BATCH_JOB_NAME', ''),
-    'dataset':         os.environ['DATASET'],
-    'vm_type':         os.environ.get('VM_TYPE', ''),
-    'attempt':         int(os.environ.get('BATCH_TASK_ATTEMPT', '0') or '0'),
-    'step':            os.environ['STEP'],
-    'step_label':      os.environ['STEP_LABEL'],
-    'status':          os.environ['STATUS'],
-    'started_at':      os.environ['STARTED_AT'],
-    'updated_at':      datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-    'failure_code':    os.environ['FAILURE_CODE'] or None,
-    'failure_message': os.environ['FAILURE_MESSAGE'] or None,
-    'failure_details': failure_details,
-}
-
-# artifacts_ready is optional: only written when explicitly set to 'true' or 'false'.
-# Omitting the field preserves backward compatibility (UI treats missing as true).
-_ar = os.environ.get('ARTIFACTS_READY', '')
-if _ar in ('true', 'false'):
-    data['artifacts_ready'] = (_ar == 'true')
-
-blob = bucket.blob('jobs/' + os.environ['RUN_ID'] + '/status.json')
-blob.upload_from_string(json.dumps(data, indent=2), content_type='application/json')
-print(
-    '[status] step=' + data['step'] +
-    ' status=' + data['status'] +
-    ' label=' + data['step_label'] +
-    (' artifacts_ready=' + str(data['artifacts_ready']).lower() if 'artifacts_ready' in data else ''),
-    flush=True,
-)
-" 2>&1 || log "WARNING: write_status failed (step=${step} status=${status}) — continuing"
+    local -a extra=(
+        write-explicit
+        --step "$step"
+        --step-label "$step_label"
+        --status "$status"
+        --failure-details-json "$failure_details_json"
+    )
+    [[ -n "$failure_code" ]] && extra+=(--failure-code "$failure_code")
+    [[ -n "$failure_message" ]] && extra+=(--failure-message "$failure_message")
+    if [[ "$artifacts_ready" == "true" || "$artifacts_ready" == "false" ]]; then
+        extra+=(--artifacts-ready "$artifacts_ready")
+    fi
+    "${STATUS_CLI[@]}" "${extra[@]}" 2>&1 \
+        || log "WARNING: write_status failed (step=${step} status=${status}) — continuing"
 }
 
 # ─── 1. Write initial status ──────────────────────────────────────────────────
 #
-# Use status="starting" (not "running") so the polling loop treats this as the
-# pre-pipeline boot phase. The "running" status is only written once the pipeline
-# emits its first ::STEP:: marker. This prevents pill 0 from prematurely consuming
-# the step-0 transition with the label "Starting" before run_e2e_test.sh begins.
+# status="starting" until the pipeline emits progress (projector feed-line → running).
 
-write_status "0" "Preparing validation environment" "starting"
+"${STATUS_CLI[@]}" init --started-at "${STARTED_AT}" 2>&1 \
+    || log "WARNING: projector status init failed — continuing"
+"${STATUS_CLI[@]}" write-starting --label "Preparing validation environment" 2>&1 \
+    || log "WARNING: write-starting failed — continuing"
 
 # ─── 2. Validate inputs for custom datasets ───────────────────────────────────
 
@@ -408,9 +357,8 @@ log "Running: ${SCRIPT_DIR}/run_e2e_test.sh ${E2E_ARGS[*]}"
 #
 # Pipe all pipeline output through a while-read loop that:
 #   - Echoes every line to stdout (Cloud Logging captures it).
-#   - Detects ::STEP::N:Label markers and writes status.json.
-#   - Captures the last structured {"t":"failure",...} event to a temp file
-#     so we can extract failure_code and failure_message after the pipe exits.
+#   - Feeds each line through ProgressProjector (v1 + legacy ::STEP::) and writes status.json.
+#   - Captures the last structured failure JSON line for post-pipeline fallback.
 #
 # set -e is intentionally NOT active here so we can capture PIPESTATUS[0].
 # set -u remains active; set -o pipefail is suspended over the pipeline so the
@@ -424,19 +372,10 @@ while IFS= read -r line; do
     # Pass every line through to stdout for Cloud Logging.
     echo "$line"
 
-    # Detect step progress markers emitted by run_e2e_test.sh.
-    # Format: ::STEP::N:Label  or  ::STEP::N  (label is optional)
-    if [[ "$line" =~ ::STEP::([0-9.]+):?(.*) ]]; then
-        _step="${BASH_REMATCH[1]}"
-        _label="${BASH_REMATCH[2]}"
-        [[ -z "$_label" ]] && _label="Step ${_step}"
-        write_status "$_step" "$_label" "running" || true
-    fi
+    "${STATUS_CLI[@]}" feed-line --line "$line" 2>/dev/null || true
 
-    # Capture the last structured failure event emitted by emit_failure()
-    # in run_e2e_test.sh. These are single-line JSON objects of the form:
-    # {"t":"failure","code":"...","step":N,"message":"..."}
-    if [[ "$line" == '{"t":"failure"'* ]]; then
+    # Last-resort failure file (legacy + v1 single-line JSON).
+    if [[ "$line" == *'"t":"failure"'* ]]; then
         printf '%s' "$line" > "${FAILURE_EVENT_FILE}"
     fi
 done
@@ -456,9 +395,12 @@ FAILURE_MESSAGE=""
 FAILURE_DETAILS_JSON="null"   # JSON-encoded details object, or literal null
 
 if [[ $PIPELINE_EXIT -ne 0 ]]; then
+    # Priority 0: ProgressProjector failure state (v1 + legacy failures fed during stream).
+    _extracted="$("${STATUS_CLI[@]}" read-failure 2>/dev/null || printf '\t\tnull')"
+    IFS=$'\t' read -r FAILURE_CODE FAILURE_MESSAGE FAILURE_DETAILS_JSON <<< "$_extracted"
+
     # Priority 1: structured failure event captured from pipeline stdout.
-    # Extract code, message, and details in a single Python call (one file read).
-    if [[ -f "$FAILURE_EVENT_FILE" ]]; then
+    if [[ -z "$FAILURE_CODE" && -f "$FAILURE_EVENT_FILE" ]]; then
         _extracted="$(python3 -c "
 import json, sys
 try:

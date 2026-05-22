@@ -1685,17 +1685,7 @@
         <h2><span class="execution-label">Execution</span> <span id="execution-header-status"></span></h2>
         <div id="status-banner" class="status-banner" style="display: none;"></div>
         <div id="progress-container" class="progress-container">
-          <div id="progress-steps-row" class="progress-steps-row">
-            <span id="progress-pill-0" class="progress-step-pill">0. Pre-Import Checks</span>
-            <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-1" class="progress-step-pill">1. Schema Review</span>
-            <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-2" class="progress-step-pill">2. DC Import Tool</span>
-            <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-3" class="progress-step-pill">3. DC Import Validation</span>
-            <span class="progress-step-sep" aria-hidden="true"></span>
-            <span id="progress-pill-4" class="progress-step-pill">4. Results</span>
-          </div>
+          <div id="progress-steps-row" class="progress-steps-row" aria-label="Pipeline progress"></div>
           <div class="progress-bar-wrap">
             <div id="progress-bar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
               <div id="progress-fill" class="progress-fill indeterminate"></div>
@@ -2458,8 +2448,8 @@
       FAILURE.DATA_PROCESSING_FAILED,
       FAILURE.LINT_FAILED,
     ]);
-    /** Step index at which validation runs. Failures with step < this are "before validation". */
-    const VALIDATION_STEP_INDEX = 3;
+    /** Step index of the validation step (from pipeline registry). Updated when registry loads. */
+    let validationStepIndex = 4;
 
     /** Use structured failure from done payload only. No log parsing. Returns { code, message, step, limit } or null. */
     function getFailureInfo(data) {
@@ -3207,14 +3197,33 @@
       }
     }
 
-    const PROGRESS_STEPS = {
-      0: { pct: 8 },
-      1: { pct: 25 },
-      2: { pct: 50 },
-      3: { pct: 75 },
-      4: { pct: 100 },
+    // ── Pipeline registry (canonical steps; labels authoritative) ─────────────
+    const FALLBACK_PIPELINE_REGISTRY = {
+      schema_version: '1.0',
+      steps: [
+        { id: 'pre_import', index: 0, label: 'Pre-import checks', blocking: true, substeps: [] },
+        { id: 'schema_review', index: 1, label: 'Schema review', blocking: false, substeps: [] },
+        { id: 'import_tool', index: 2, label: 'DC import (genmcf)', blocking: true, substeps: [] },
+        { id: 'baseline_diff', index: 3, label: 'Baseline comparison', blocking: false, substeps: [] },
+        { id: 'validation', index: 4, label: 'Import validation', blocking: true, substeps: [] },
+        { id: 'results', index: 5, label: 'Results', blocking: false, substeps: [] },
+      ],
+      legacy_markers: {
+        '::STEP::0:Pre-Import Checks': 'pre_import',
+        '::STEP::1:Gemini Review': 'schema_review',
+        '::STEP::2:DC Import Tool': 'import_tool',
+        '::STEP::2.4:Differ': 'baseline_diff',
+        '::STEP::3:DC Import Validation': 'validation',
+        '::STEP::4:Results': 'results',
+      },
     };
-    const DEFAULT_STEP_LABELS = { 0: 'Pre-Import Checks', 1: 'Schema Review', 2: 'DC Import Tool', 3: 'DC Import Validation', 4: 'Results' };
+    let pipelineRegistry = null;
+    let progressStepCount = 6;
+    let progressStepEnd = 5;
+    let legacyTokenToIndex = {};
+    let registryStepById = {};
+    let registryStepByIndex = {};
+    let PROGRESS_STEPS = {};
     const MIN_STEP_DISPLAY_MS = 750;
     let lastLabelUpdateAt = 0;
     let pendingStepTimer = null;
@@ -3223,8 +3232,125 @@
     let elapsedTimerId = null;
     let stepLabels = {};
     let progressRunStartTime = null;
-    /** Current step index for label (0–4). Used to show "Step label · timer" during run; no numeric percent. */
+    /** Current canonical step_index for status line and pills. */
     let currentProgressStepIndex = 0;
+
+    function getPipelineRegistry() {
+      return pipelineRegistry || FALLBACK_PIPELINE_REGISTRY;
+    }
+
+    function applyPipelineRegistry(reg) {
+      pipelineRegistry = reg;
+      const steps = (reg.steps || []).slice().sort((a, b) => a.index - b.index);
+      progressStepCount = steps.length > 0 ? steps.length : 6;
+      progressStepEnd = Math.max(0, progressStepCount - 1);
+      registryStepById = {};
+      registryStepByIndex = {};
+      steps.forEach((s) => {
+        registryStepById[s.id] = s;
+        registryStepByIndex[s.index] = s;
+      });
+      const validationStep = registryStepById.validation;
+      validationStepIndex = validationStep ? validationStep.index : 4;
+      legacyTokenToIndex = {};
+      for (const [marker, stepId] of Object.entries(reg.legacy_markers || {})) {
+        const m = marker.match(/::STEP::([^:]+):/);
+        if (m && registryStepById[stepId]) legacyTokenToIndex[m[1]] = registryStepById[stepId].index;
+      }
+      PROGRESS_STEPS = {};
+      steps.forEach((s, i) => {
+        const pct = progressStepCount <= 1 ? 100 : Math.round((i / Math.max(1, progressStepCount - 1)) * 100);
+        PROGRESS_STEPS[s.index] = { pct };
+      });
+      PROGRESS_STEPS[progressStepCount] = { pct: 100 };
+      stepLabels = {};
+    }
+
+    async function fetchPipelineRegistry() {
+      try {
+        const r = await fetch(API + '/api/pipeline/registry');
+        if (r.ok) applyPipelineRegistry(await r.json());
+        else applyPipelineRegistry(FALLBACK_PIPELINE_REGISTRY);
+      } catch (_) {
+        applyPipelineRegistry(FALLBACK_PIPELINE_REGISTRY);
+      }
+      buildProgressPills();
+    }
+
+    /** Canonical step_index from status/stream payload (v1 authoritative; legacy token map fallback). */
+    function resolveStepIndex(source) {
+      if (!source || typeof source !== 'object') return 0;
+      if (typeof source.step_index === 'number' && !isNaN(source.step_index)) {
+        return source.step_index;
+      }
+      const stepId = source.step_id;
+      if (typeof stepId === 'string' && registryStepById[stepId]) {
+        return registryStepById[stepId].index;
+      }
+      const token = source.step != null ? String(source.step).trim() : '';
+      if (token && Object.prototype.hasOwnProperty.call(legacyTokenToIndex, token)) {
+        return legacyTokenToIndex[token];
+      }
+      if (/^\d+$/.test(token)) return parseInt(token, 10);
+      return 0;
+    }
+
+    function resolveFailureStepIndex(data) {
+      if (!data || typeof data !== 'object') return null;
+      if (typeof data.failure_step === 'number' && data.failure_step >= 0) return data.failure_step;
+      const sid = data.failure_step_id;
+      if (typeof sid === 'string' && registryStepById[sid]) return registryStepById[sid].index;
+      return null;
+    }
+
+    function stepLabelForIndex(stepIdx) {
+      if (stepLabels[stepIdx]) return stepLabels[stepIdx];
+      const regStep = registryStepByIndex[stepIdx];
+      return regStep ? regStep.label : ('Step ' + stepIdx);
+    }
+
+    function onStreamProgressMessage(msg) {
+      if (msg.t !== 'step') return;
+      const stepIdx = resolveStepIndex(msg);
+      // Monotonic: log-line fallbacks must not reactivate a prior step after advance.
+      if (stepIdx < currentProgressStepIndex) return;
+      if (msg.label != null && msg.label !== '') stepLabels[stepIdx] = msg.label;
+      const displayLabel = stepLabelForIndex(stepIdx);
+      const pill = document.getElementById('progress-pill-' + stepIdx);
+      if (pill) pill.textContent = stepIdx + '. ' + displayLabel;
+      updateProgressStep(stepIdx);
+      _setActiveStep(displayLabel);
+    }
+
+    function resolveFailureStepFromStatus(status) {
+      if (!status || typeof status !== 'object') return null;
+      if (typeof status.failure_step_index === 'number') return status.failure_step_index;
+      if (typeof status.failure_step_id === 'string' && registryStepById[status.failure_step_id]) {
+        return registryStepById[status.failure_step_id].index;
+      }
+      if (status.failure_code) return resolveStepIndex(status);
+      return null;
+    }
+
+    /** Local dev: builtin dataset via subprocess stream (no GCS/Batch). */
+    async function _runBuiltinSubprocessStream(dataset, opts, signal) {
+      const params = new URLSearchParams();
+      params.set('stream', 'true');
+      if (opts.rules) params.set('rules', opts.rules);
+      params.set('llm_review', opts.llm_review ? '1' : '0');
+      params.set('existence_checks', opts.existence_checks || 'false');
+      if (opts.validation_config_url) params.set('validation_config_url', opts.validation_config_url);
+      const url = API + '/api/run/' + encodeURIComponent(dataset) + '?' + params.toString();
+      const r = await fetch(url, { method: 'POST', signal });
+      if (!r.ok) {
+        const errJson = await r.json().catch(() => ({}));
+        throw new Error(errJson.detail || ('Server error (' + r.status + ')'));
+      }
+      if (!r.body) throw new Error('Streaming not supported');
+      return consumeStream(r.body, onStreamProgressMessage);
+    }
+
+    applyPipelineRegistry(FALLBACK_PIPELINE_REGISTRY);
 
     // ── Status line state (log panel activity line + elapsed timer) ───────────
     let _activeStepStartMs = null; // ms timestamp when the current step started
@@ -3262,7 +3388,7 @@
     function getRunningProgressText() {
       if (progressRunStartTime == null) return '';
       const elapsed = Math.floor((Date.now() - progressRunStartTime) / 1000);
-      const label = stepLabels[currentProgressStepIndex] ?? DEFAULT_STEP_LABELS[currentProgressStepIndex] ?? ('Step ' + currentProgressStepIndex);
+      const label = stepLabelForIndex(currentProgressStepIndex);
       return label + ' · ' + formatElapsed(elapsed);
     }
 
@@ -3280,10 +3406,10 @@
         }
         if (_activeStepStartMs) _refreshStatusLine();
         const stepIndex = currentProgressStepIndex;
-        for (let i = 0; i <= 4; i++) {
+        for (let i = 0; i < progressStepCount; i++) {
           const pill = document.getElementById('progress-pill-' + i);
           if (!pill) continue;
-          const label = stepLabels[i] ?? DEFAULT_STEP_LABELS[i] ?? ('Step ' + i);
+          const label = stepLabelForIndex(i);
           if (i === stepIndex) {
             pill.classList.add('running');
             pill.textContent = label;
@@ -3300,8 +3426,8 @@
     }
 
     function updateStepPills(step) {
-      const end = 4;
-      const allDone = step >= 5;
+      const end = progressStepEnd;
+      const allDone = step >= progressStepCount;
       for (let i = 0; i <= end; i++) {
         const pill = document.getElementById('progress-pill-' + i);
         if (!pill) continue;
@@ -3317,7 +3443,7 @@
     }
 
     function setFailedStepPill(failedStep) {
-      const end = 4;
+      const end = progressStepEnd;
       for (let i = 0; i <= end; i++) {
         const pill = document.getElementById('progress-pill-' + i);
         if (!pill) continue;
@@ -3384,17 +3510,17 @@
         }
         setRunPhase('failed');
       }
-      for (let i = 0; i <= 4; i++) {
+      for (let i = 0; i < progressStepCount; i++) {
         const pill = document.getElementById('progress-pill-' + i);
         if (!pill) continue;
         pill.classList.remove('running');
-        const label = stepLabels[i] ?? DEFAULT_STEP_LABELS[i] ?? ('Step ' + i);
-        pill.textContent = i + '. ' + label;
+        pill.textContent = i + '. ' + stepLabelForIndex(i);
       }
     }
 
     function updateProgressStep(step) {
-      const s = PROGRESS_STEPS[step] || PROGRESS_STEPS[4];
+      if (step < currentProgressStepIndex) return;
+      const s = PROGRESS_STEPS[step] || PROGRESS_STEPS[progressStepEnd] || PROGRESS_STEPS[progressStepCount];
       if (s) animateFillTo(s.pct);
       const now = Date.now();
       const elapsed = now - lastLabelUpdateAt;
@@ -3415,8 +3541,19 @@
     function buildProgressPills() {
       const row = document.getElementById('progress-steps-row');
       if (!row) return;
-      const step1Label = 'Schema Review';
-      row.innerHTML = '<span id="progress-pill-0" class="progress-step-pill">0. Pre-Import Checks</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-1" class="progress-step-pill">1. ' + step1Label + '</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-2" class="progress-step-pill">2. DC Import Tool</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-3" class="progress-step-pill">3. DC Import Validation</span><span class="progress-step-sep" aria-hidden="true"></span><span id="progress-pill-4" class="progress-step-pill">4. Results</span>';
+      const reg = getPipelineRegistry();
+      const steps = (reg.steps || []).slice().sort((a, b) => a.index - b.index);
+      if (!steps.length) return;
+      const parts = [];
+      steps.forEach((s, i) => {
+        if (i > 0) parts.push('<span class="progress-step-sep" aria-hidden="true"></span>');
+        const label = stepLabelForIndex(s.index);
+        parts.push(
+          '<span id="progress-pill-' + s.index + '" class="progress-step-pill" data-step-id="' + escapeHtml(s.id) + '">'
+          + s.index + '. ' + escapeHtml(label) + '</span>'
+        );
+      });
+      row.innerHTML = parts.join('');
     }
 
     function resetProgressBar() {
@@ -3537,7 +3674,7 @@
       // before status.json has been written.
       let confirmedRunId;
       try {
-        const submitResp = await fetch(API + '/api/jobs', {
+        const submitResp = await fetch(API + '/api/runs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3570,9 +3707,14 @@
         });
         if (!submitResp.ok) {
           const err = await submitResp.json().catch(() => ({}));
-          throw new Error(err.detail || 'Failed to submit job (' + submitResp.status + ')');
+          const detail = err.detail;
+          const msg = typeof detail === 'string' ? detail
+            : (detail && detail.message) ? detail.message
+            : 'Failed to submit run (' + submitResp.status + ')';
+          throw new Error(msg);
         }
-        ({ run_id: confirmedRunId } = await submitResp.json());
+        const submitJson = await submitResp.json();
+        confirmedRunId = submitJson.run_id || runId;
       } catch (e) {
         if (e.name === 'AbortError') {
           // Best-effort cancel: the job may have been created on the server before
@@ -3616,7 +3758,7 @@
         // ── Fetch GCS status.json; count consecutive errors ───────────
         let status;
         try {
-          const statusResp = await fetch(API + '/api/jobs/' + encodeURIComponent(confirmedRunId) + '/status');
+          const statusResp = await fetch(API + '/api/runs/' + encodeURIComponent(confirmedRunId));
           if (!statusResp.ok) {
             if (++_pollErrorCount >= MAX_POLL_ERRORS) {
               _activeStepStartMs = null;
@@ -3651,8 +3793,7 @@
         }
 
         // ── Update progress pills and log panel ──────────────────────
-        const stepNum = parseFloat(status.step ?? '0');
-        const stepIdx = isNaN(stepNum) ? 0 : Math.floor(stepNum);
+        const stepIdx = resolveStepIndex(status);
         if (status.status === 'starting') {
           // Job is booting — show the server-provided product-level label.
           // Labels are sourced from job_status.py (_BATCH_STARTING_LABELS) before
@@ -3678,10 +3819,10 @@
               baseline_id: null,
             };
           }
-        } else if (status.status === 'running' && stepIdx !== lastStepIdx) {
+        } else if (status.status === 'running' && stepIdx > lastStepIdx) {
           lastStepIdx = stepIdx;
           if (status.step_label) stepLabels[stepIdx] = status.step_label;
-          const displayLabel = stepLabels[stepIdx] ?? DEFAULT_STEP_LABELS[stepIdx] ?? ('Step ' + stepIdx);
+          const displayLabel = stepLabelForIndex(stepIdx);
           const pill = document.getElementById('progress-pill-' + stepIdx);
           if (pill) pill.textContent = stepIdx + '. ' + displayLabel;
           updateProgressStep(stepIdx);
@@ -3701,7 +3842,7 @@
         }
         if (status.status === 'failed') {
           _activeStepStartMs = null;
-          const failStep = isNaN(stepNum) ? null : stepIdx;
+          const failStep = resolveFailureStepFromStatus(status);
           const msg = status.failure_message || 'Validation failed — check run logs for details.';
           return {
             success: false, cancelled: false, run_id: confirmedRunId,
@@ -3796,7 +3937,7 @@
         let r, data;
         if (runDataset === 'custom' && customInputMode === 'gcs') {
           // ── GCS path mode → Cloud Batch ────────────────────────────────────────
-          // Routes through /api/jobs (same as upload mode) so the Batch VM downloads
+          // Routes through POST /api/runs (same as upload mode) so the Batch VM downloads
           // the files directly using its service account. Progress is polled from
           // status.json on GCS, not streamed from Cloud Run.
           if (!gcsUploadsConfigured) {
@@ -3990,41 +4131,41 @@
               throw new Error(errJson.detail || `Server error (${r.status})`);
             }
             if (!r.body) throw new Error('Streaming not supported');
-            data = await consumeStream(r.body, (msg) => {
-              if (msg.t === 'step') {
-                const s = msg.step ?? -1;
-                if (msg.label != null && msg.label !== '') stepLabels[s] = msg.label;
-                const displayLabel = stepLabels[s] ?? DEFAULT_STEP_LABELS[s] ?? ('Step ' + s);
-                const pill = document.getElementById('progress-pill-' + s);
-                if (pill) pill.textContent = s + '. ' + displayLabel;
-                if (typeof msg.step === 'number') updateProgressStep(msg.step);
-                _setActiveStep(displayLabel);
-              }
-              // Raw log lines are not surfaced — the status line is the sole log panel view.
-            });
+            data = await consumeStream(r.body, onStreamProgressMessage);
           }
         } else {
-          // Built-in dataset: submit batch job and poll GCS status.json.
-          const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
-          _setActiveStep('Submitting validation job\u2026');
-          data = await _submitAndPollBatchJob(batchRunId, runDataset, {
-            session_id: '',
-            tmcf_filename: '',
-            csv_filenames: [],
-            stat_vars_mcf_filename: '',
-            stat_vars_schema_mcf_filename: '',
-            csv_total_bytes: 0,
-            llm_review: true,
+          const validationConfigUrl = (document.getElementById('validation-config-url')?.value || '').trim();
+          const streamOpts = {
             rules: rulesParam,
-            skip_rules: '',
-            baseline_name: '',
-            import_resolution_mode: 'LOCAL',
+            llm_review: true,
             existence_checks: existenceChecks,
-            custom_rules: selectedCustomRules,
-            validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
-            ..._getPerfOpts(),
-          }, runAbortController.signal);
+            validation_config_url: validationConfigUrl,
+          };
+          if (gcsUploadsConfigured) {
+            const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            _setActiveStep('Submitting validation job\u2026');
+            data = await _submitAndPollBatchJob(batchRunId, runDataset, {
+              session_id: '',
+              tmcf_filename: '',
+              csv_filenames: [],
+              stat_vars_mcf_filename: '',
+              stat_vars_schema_mcf_filename: '',
+              csv_total_bytes: 0,
+              llm_review: true,
+              rules: rulesParam,
+              skip_rules: '',
+              baseline_name: '',
+              import_resolution_mode: 'LOCAL',
+              existence_checks: existenceChecks,
+              custom_rules: selectedCustomRules,
+              validation_config_url: validationConfigUrl,
+              ..._getPerfOpts(),
+            }, runAbortController.signal);
+          } else {
+            _setActiveStep('Starting local validation\u2026');
+            data = await _runBuiltinSubprocessStream(runDataset, streamOpts, runAbortController.signal);
+          }
         }
         _activeStepStartMs = null;
         setOutputContent(data.output || '(no output)', false);
@@ -4034,14 +4175,16 @@
             pendingStepTimer = null;
           }
           // Failure step comes only from done payload (data.failure_step). No log parsing or default index.
-          const failedStepIndex = (typeof data.failure_step === 'number' && data.failure_step >= 0 && data.failure_step <= 4) ? data.failure_step : null;
+          const failedStepIndex = resolveFailureStepIndex(data);
+          const failedPillIndex = (failedStepIndex !== null && failedStepIndex >= 0 && failedStepIndex <= progressStepEnd)
+            ? failedStepIndex : null;
           if (data.success) {
-            updateStepPills(5);
-          } else if (failedStepIndex !== null) {
-            setFailedStepPill(failedStepIndex);
+            updateStepPills(progressStepCount);
+          } else if (failedPillIndex !== null) {
+            setFailedStepPill(failedPillIndex);
           }
           const durationSec = (Date.now() - runStartTime) / 1000;
-          finishProgressBar(data.success, durationSec, failedStepIndex);
+          finishProgressBar(data.success, durationSec, failedPillIndex);
         }
         if (!data.cancelled) {
           const btn = document.getElementById('run-btn');
@@ -4063,7 +4206,8 @@
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
           const failureInfo = getFailureInfo(data);
           // Use data.failure_step for pipeline classification so step 0 (e.g. row count) always gets summary
-          const pipelineFailedBeforeValidation = !data.success && (typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX);
+          const failIdx = resolveFailureStepIndex(data);
+          const pipelineFailedBeforeValidation = !data.success && (failIdx !== null && failIdx < validationStepIndex);
           lastRunReportGenerated = !data.cancelled && !pipelineFailedBeforeValidation;
           lastRunHadAiReview = true;
           const runIdForResult = data.run_id || null;
@@ -4269,7 +4413,8 @@
           lastRunReportId = data.run_id || null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'failed');
           const code = data.failure_code;
-          const pipelineFailed = typeof data.failure_step === 'number' && data.failure_step < VALIDATION_STEP_INDEX;
+          const failIdxPost = resolveFailureStepIndex(data);
+          const pipelineFailed = failIdxPost !== null && failIdxPost < validationStepIndex;
           if (code && PIPELINE_FAILURE_CODES.has(code)) {
             clearValidationResults();
           } else {
@@ -4891,7 +5036,7 @@
           return;
         }
         try {
-          const r = await fetch(API + `/api/jobs/${encodeURIComponent(runId)}/status`);
+          const r = await fetch(API + `/api/runs/${encodeURIComponent(runId)}`);
           if (!r.ok) return;
           const st = await r.json();
           if (st && st.artifacts_ready === true) {
@@ -6540,6 +6685,7 @@
 
     fetchDatasets();
     fetchUploadConfig();
+    fetchPipelineRegistry();
     setOutputContent(LOG_PLACEHOLDER_HTML, true);
   </script>
 

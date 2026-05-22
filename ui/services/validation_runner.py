@@ -16,6 +16,10 @@ from pathlib import Path
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from pipeline.projector import FeedResult, ProgressProjector
+from pipeline.registry import load_registry, step_by_id
+from pipeline.status_v1 import ProjectorState, resolve_step_id_from_legacy_token
+
 from ui.app_logging import get_logger
 
 logger = get_logger(__name__)
@@ -168,21 +172,71 @@ def _parse_failure(output: str) -> dict | None:
         return {"code": "DATA_PROCESSING_FAILED", "step": 2, "message": "Data processing failed"}
     if "dc-import lint failed" in output:
         return {"code": "LINT_FAILED", "step": 2, "message": "lint failed"}
-    if "Gemini review found issues" in output or "Step 0 found blocking issues" in output:
-        return {"code": "GEMINI_BLOCKING", "step": 1, "message": "Gemini review found issues"}
     return None  # Order above defines priority when multiple phrases could match
 
 
-def _normalize_failure_event(obj: dict) -> dict | None:
-    """Validate and normalize a streamed failure event (t==='failure'). Returns dict with code, step, message, optional limit, optional details."""
-    if not isinstance(obj, dict) or obj.get("t") != "failure":
+def _registry_path(app_root: Path) -> Path:
+    return app_root / "pipeline" / "registry.yaml"
+
+
+def _new_projector(app_root: Path) -> ProgressProjector:
+    return ProgressProjector(registry_path=_registry_path(app_root))
+
+
+def _failure_dict_from_state(state: ProjectorState) -> dict | None:
+    """NDJSON/UI failure payload from projector state."""
+    if not state.failure_code:
         return None
-    code = obj.get("code")
+    out: dict = {
+        "code": state.failure_code,
+        "step": state.failure_step_index,
+        "message": state.failure_message or "",
+    }
+    if state.failure_step_id:
+        out["step_id"] = state.failure_step_id
+    if state.failure_limit is not None:
+        out["limit"] = state.failure_limit
+    if isinstance(state.failure_details, dict):
+        out["details"] = state.failure_details
+    return out
+
+
+def _normalize_failure_event(obj: dict) -> dict | None:
+    """Validate and normalize a streamed failure event. v1 authoritative when present."""
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("v") == 1 and obj.get("t") == "failure":
+        code = obj.get("failure_code")
+        message = obj.get("message")
+        if not code or not isinstance(message, str):
+            return None
+        step_index = obj.get("step_index")
+        out: dict = {
+            "code": str(code),
+            "step": int(step_index) if isinstance(step_index, int) else None,
+            "message": message,
+        }
+        if isinstance(obj.get("step_id"), str):
+            out["step_id"] = obj["step_id"]
+        if isinstance(obj.get("substep_id"), str):
+            out["substep_id"] = obj["substep_id"]
+        if obj.get("limit") is not None and isinstance(obj["limit"], (int, float)):
+            out["limit"] = int(obj["limit"])
+        if isinstance(obj.get("details"), dict):
+            out["details"] = obj["details"]
+        return out
+    if obj.get("t") != "failure":
+        return None
+    code = obj.get("code") or obj.get("failure_code")
     step = obj.get("step")
     message = obj.get("message")
     if not code or not isinstance(message, str):
         return None
-    out = {"code": str(code), "step": int(step) if isinstance(step, (int, float)) else None, "message": message}
+    out = {
+        "code": str(code),
+        "step": int(step) if isinstance(step, (int, float)) else None,
+        "message": message,
+    }
     if obj.get("limit") is not None and isinstance(obj["limit"], (int, float)):
         out["limit"] = int(obj["limit"])
     if isinstance(obj.get("details"), dict):
@@ -190,8 +244,71 @@ def _normalize_failure_event(obj: dict) -> dict | None:
     return out
 
 
+def _step_payload_from_status(status: dict) -> dict | None:
+    """Build NDJSON step event from projector status projection."""
+    step_index = status.get("step_index")
+    if not isinstance(step_index, int):
+        return None
+    payload: dict = {
+        "t": "step",
+        "step": step_index,
+        "step_index": step_index,
+        "ts": time.time(),
+    }
+    step_id = status.get("step_id")
+    if isinstance(step_id, str) and step_id:
+        payload["step_id"] = step_id
+    label = status.get("step_label")
+    if isinstance(label, str) and label.strip():
+        payload["label"] = label.strip()
+    substep_id = status.get("substep_id")
+    if isinstance(substep_id, str) and substep_id:
+        payload["substep_id"] = substep_id
+    substep_label = status.get("substep_label")
+    if isinstance(substep_label, str) and substep_label:
+        payload["substep_label"] = substep_label
+    return payload
+
+
+def _infer_step_fallback(text: str) -> tuple[int | None, str | None]:
+    """Last-resort step inference from log substrings (no ::STEP:: / v1)."""
+    _step_match = re.search(r"::STEP::(\d+(?:\.\d+)?)(?::(.+))?", text)
+    if _step_match:
+        token = _step_match.group(1)
+        label = _step_match.group(2).strip() if _step_match.group(2) else None
+        reg = load_registry()
+        step_id = resolve_step_id_from_legacy_token(reg, token)
+        if step_id:
+            step = step_by_id(reg, step_id)
+            if step is not None:
+                return step.index, label
+        if "." not in token:
+            return int(token), label
+    if "Pre-Import Checks" in text or "CSV quality" in text.lower():
+        return 0, None
+    if "Step 1" in text or ("Gemini review" in text and "model:" in text):
+        return 1, None
+    # "Step 2.4" must be checked before "Step 2" (substring would otherwise match import_tool).
+    if "Step 2.4" in text or "::STEP::2.4" in text:
+        return 3, None
+    if "Step 2" in text or "Running dc-import genmcf" in text:
+        return 2, None
+    if "Step 3" in text or "Running import_validation" in text:
+        return 4, None
+    if (
+        "Step 4" in text
+        or "HTML report:" in text
+        or "Validation PASSED" in text
+        or "Validation FAILED" in text
+    ):
+        return 5, None
+    return None, None
+
+
 def _is_failure_line_start(stripped: str) -> bool:
     """True if this line looks like the start of a structured failure JSON block."""
+    if stripped.startswith('{"v":1') and '"t":"failure"' in stripped:
+        return True
     return stripped.startswith('{"t":"failure"') or stripped.startswith('{"t": "failure"')
 
 
@@ -217,14 +334,39 @@ def _parse_structured_failure_from_output(output: str):
     return None
 
 
-async def _stream_run_output(proc):
-    """Stream process stdout line by line, yielding NDJSON. Detect steps and structured failure events.
-    Failure JSON may be emitted by the backend as a single line or across multiple lines; we buffer
-    until a complete valid JSON object is received."""
+def _emit_failure_ndjson(failure: dict) -> str:
+    return json.dumps({"t": "failure", **failure}) + "\n"
+
+
+def _maybe_emit_step_ndjson(
+    projector: ProgressProjector,
+    last_emitted_step_index: int | None,
+) -> tuple[str | None, int | None]:
+    """Emit step NDJSON when projector step_index advances."""
+    status = projector.to_status_dict()
+    payload = _step_payload_from_status(status)
+    if payload is None:
+        return None, last_emitted_step_index
+    idx = payload["step"]
+    if last_emitted_step_index is not None and idx < last_emitted_step_index:
+        return None, last_emitted_step_index
+    if idx == last_emitted_step_index:
+        return None, last_emitted_step_index
+    return json.dumps(payload) + "\n", idx
+
+
+async def _stream_run_output(proc, app_root: Path):
+    """Stream process stdout line by line, yielding NDJSON.
+
+    ProgressProjector is the primary interpreter for v1 events and legacy ::STEP:: markers.
+    Regex/substring step detection is fallback-only when the projector does not handle a line.
+    """
     output_lines = []
     cancelled = False
-    last_failure = None  # First structured failure emitted by backend; used in done so we don't re-parse output
-    failure_buffer = None  # list of raw lines making up an incomplete failure JSON block, or None
+    last_failure = None
+    failure_buffer = None
+    projector = _new_projector(app_root)
+    last_emitted_step_index: int | None = None
     try:
         while True:
             line = await proc.stdout.readline()
@@ -234,62 +376,71 @@ async def _stream_run_output(proc):
             text = _strip_ansi(text)
             output_lines.append(text)
             stripped = text.strip()
-            yield_line = True  # whether to emit this line as "t": "line" for the log
+            yield_line = True
+            feed = FeedResult(handled=False)
+            if stripped:
+                feed = projector.feed_line(stripped)
 
             if failure_buffer is not None:
-                # Continue buffering multi-line failure JSON
                 failure_buffer.append(text)
                 try:
                     obj = json.loads("".join(failure_buffer))
-                    failure = _normalize_failure_event(obj)
+                    projector.feed_line(json.dumps(obj, separators=(",", ":")))
+                    failure = _failure_dict_from_state(projector.state) or _normalize_failure_event(obj)
                     if failure:
                         if last_failure is None:
                             last_failure = failure
                         for buffered in failure_buffer:
                             yield json.dumps({"t": "line", "v": buffered}) + "\n"
-                        yield json.dumps({"t": "failure", **failure}) + "\n"
+                        yield _emit_failure_ndjson(failure)
                         failure_buffer = None
+                        step_line, last_emitted_step_index = _maybe_emit_step_ndjson(
+                            projector, last_emitted_step_index
+                        )
+                        if step_line:
+                            yield step_line
                 except (json.JSONDecodeError, TypeError):
-                    pass  # incomplete; keep buffering
+                    pass
                 yield_line = False
                 if failure_buffer is not None:
                     continue
-            elif _is_failure_line_start(stripped):
+            elif feed.kind in ("v1_failure", "legacy_failure"):
+                failure = _failure_dict_from_state(projector.state)
+                if failure:
+                    if last_failure is None:
+                        last_failure = failure
+                    yield _emit_failure_ndjson(failure)
+            elif _is_failure_line_start(stripped) and not feed.handled:
                 try:
                     obj = json.loads(stripped)
-                    failure = _normalize_failure_event(obj)
+                    projector.feed_line(stripped)
+                    failure = _failure_dict_from_state(projector.state) or _normalize_failure_event(obj)
                     if failure:
                         if last_failure is None:
                             last_failure = failure
-                        yield json.dumps({"t": "failure", **failure}) + "\n"
+                        yield _emit_failure_ndjson(failure)
                 except (json.JSONDecodeError, TypeError):
                     failure_buffer = [text]
                     yield_line = False
-            step = None
-            label = None
-            _step_match = re.search(r"::STEP::(\d)(?::(.+))?", text)
-            if _step_match:
-                step = int(_step_match.group(1))
-                if _step_match.group(2):
-                    label = _step_match.group(2).strip()
-            # Fallback: infer step from log substrings when ::STEP::N is not present. This depends on
-            # the log format produced by run_e2e_test.sh (e.g. "Step 2", "Running dc-import genmcf").
-            # If the E2E script changes its log messages, fallback detection may need updating.
-            elif "Pre-Import Checks" in text or "CSV quality" in text.lower():
-                step = 0
-            elif "Step 1" in text or ("Gemini review" in text and "model:" in text):
-                step = 1
-            elif "Step 2" in text or "Running dc-import genmcf" in text:
-                step = 2
-            elif "Step 3" in text or "Running import_validation" in text:
-                step = 3
-            elif "Step 4" in text or "HTML report:" in text or "Validation PASSED" in text or "Validation FAILED" in text:
-                step = 4
-            if step is not None:
-                payload = {"t": "step", "step": step, "ts": time.time()}
-                if label:
-                    payload["label"] = label
-                yield json.dumps(payload) + "\n"
+
+            if feed.kind in ("v1_progress", "legacy_step"):
+                step_line, last_emitted_step_index = _maybe_emit_step_ndjson(
+                    projector, last_emitted_step_index
+                )
+                if step_line:
+                    yield step_line
+            elif not feed.handled:
+                step, label = _infer_step_fallback(text)
+                if step is not None and step != last_emitted_step_index:
+                    if last_emitted_step_index is not None and step < last_emitted_step_index:
+                        pass
+                    else:
+                        payload: dict = {"t": "step", "step": step, "step_index": step, "ts": time.time()}
+                        if label:
+                            payload["label"] = label
+                        yield json.dumps(payload) + "\n"
+                        last_emitted_step_index = step
+
             if yield_line:
                 yield json.dumps({"t": "line", "v": text}) + "\n"
         await proc.wait()
@@ -315,7 +466,12 @@ async def _stream_run_output(proc):
             "ts_end": time.time(),
         }
         if not done_payload["success"] and not cancelled:
-            failure = last_failure or _parse_structured_failure_from_output(output) or _parse_failure(output)
+            failure = (
+                last_failure
+                or _failure_dict_from_state(projector.state)
+                or _parse_structured_failure_from_output(output)
+                or _parse_failure(output)
+            )
             if failure:
                 done_payload["failure_code"] = failure["code"]
                 done_payload["failure_step"] = failure["step"]
@@ -477,7 +633,7 @@ async def _run_validation_process_impl(
             try:
                 for _pl in (prefix_lines or []):
                     yield json.dumps({"t": "line", "v": _pl}) + "\n"
-                async for chunk in _stream_run_output(proc):
+                async for chunk in _stream_run_output(proc, app_root):
                     needs_post_yield_upload = False
                     try:
                         obj = json.loads(chunk) if chunk.strip() else {}
