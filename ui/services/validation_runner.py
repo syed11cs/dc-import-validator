@@ -476,6 +476,8 @@ async def _stream_run_output(proc, app_root: Path):
                 done_payload["failure_code"] = failure["code"]
                 done_payload["failure_step"] = failure["step"]
                 done_payload["failure_message"] = failure["message"]
+                if failure.get("step_id"):
+                    done_payload["failure_step_id"] = failure["step_id"]
                 if failure.get("limit") is not None:
                     done_payload["failure_limit"] = failure["limit"]
                 if isinstance(failure.get("details"), dict):

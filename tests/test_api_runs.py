@@ -278,6 +278,21 @@ class TestServerRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         mock_cancel.assert_called_once_with("projects/p/jobs/j1")
 
+    @patch("ui.server._batch_run_html_report")
+    def test_runs_report_alias(self, mock_report) -> None:
+        from fastapi.responses import HTMLResponse
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        mock_report.return_value = HTMLResponse("<html>ok</html>")
+        client = TestClient(app)
+        resp = client.get("/api/runs/run-xyz/report")
+        self.assertEqual(resp.status_code, 200)
+        mock_report.assert_called_once_with("run-xyz")
+        resp_jobs = client.get("/api/jobs/run-xyz/report")
+        self.assertEqual(resp_jobs.status_code, 200)
+        self.assertEqual(mock_report.call_count, 2)
+
     @patch("ui.server.fetch_run_status", return_value={"status": "running", "step": "1"})
     def test_runs_status_unified(self, mock_fetch) -> None:
         from fastapi.testclient import TestClient

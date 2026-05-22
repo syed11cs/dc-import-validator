@@ -3672,7 +3672,7 @@ async def get_run_status(run_id: str):
 #   2. Browser uploads files to GCS
 #   3. POST /api/runs (or /api/jobs) → submit Batch job
 #   4. GET  /api/runs/{run_id}    → poll status (jobs/.../status is equivalent)
-#   5. GET  /api/jobs/{run_id}/report → HTML report from GCS
+#   5. GET  /api/runs/{run_id}/report (or jobs/.../report) → HTML report from GCS
 #   6. POST /api/runs/{run_id}/cancel (or jobs/.../cancel)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -4127,35 +4127,26 @@ async def get_batch_job_status(run_id: str):
         raise
 
 
-@app.get("/api/jobs/{run_id}/report", response_class=HTMLResponse)
-async def get_batch_job_report(run_id: str):
-    """Return the HTML validation report for a completed Batch run.
-
-    The dataset is resolved from the run's status.json so the caller does not
-    need to track it separately.
-
-    Returns 404 when the report has not been uploaded yet (job still running)
-    or 503 when GCS is not configured.
-    """
+async def _batch_run_html_report(run_id: str) -> HTMLResponse:
+    """Fetch validation_report.html for a Batch run (dataset from status.json)."""
     if not is_gcs_configured():
         raise HTTPException(
             status_code=503,
             detail="GCS reports bucket is not configured (GCS_REPORTS_BUCKET not set)",
         )
 
-    # Resolve dataset from status.json.
     try:
         status = await asyncio.to_thread(_get_job_status, run_id)
     except Exception as exc:
-        logger.exception("get_batch_job_report: status read error run_id=%s", run_id)
-        raise HTTPException(status_code=500, detail=f"Failed to read job status: {exc}")
+        logger.exception("batch_run_html_report: status read error run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=f"Failed to read run status: {exc}")
 
     if status is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Run not found")
 
     dataset = status.get("dataset", "")
     if not dataset:
-        raise HTTPException(status_code=500, detail="Dataset not recorded in job status")
+        raise HTTPException(status_code=500, detail="Dataset not recorded in run status")
 
     try:
         content = await asyncio.to_thread(
@@ -4164,16 +4155,30 @@ async def get_batch_job_report(run_id: str):
     except GCSAccessError as exc:
         raise HTTPException(status_code=503, detail=f"GCS not accessible: {exc}")
     except Exception as exc:
-        logger.exception("get_batch_job_report: GCS read error run_id=%s dataset=%s", run_id, dataset)
+        logger.exception(
+            "batch_run_html_report: GCS read error run_id=%s dataset=%s", run_id, dataset
+        )
         raise HTTPException(status_code=500, detail=f"Failed to read report: {exc}")
 
     if content is None:
         raise HTTPException(
             status_code=404,
-            detail="Report not available yet — the job may still be running",
+            detail="Report not available yet — the run may still be in progress",
         )
 
     return HTMLResponse(content=content.decode("utf-8", errors="replace"))
+
+
+@app.get("/api/runs/{run_id}/report", response_class=HTMLResponse)
+async def get_run_report(run_id: str):
+    """Canonical HTML report for a completed Batch run."""
+    return await _batch_run_html_report(run_id)
+
+
+@app.get("/api/jobs/{run_id}/report", response_class=HTMLResponse)
+async def get_batch_job_report(run_id: str):
+    """Legacy alias for GET /api/runs/{run_id}/report."""
+    return await _batch_run_html_report(run_id)
 
 
 async def _cancel_run_impl(run_id: str) -> dict:

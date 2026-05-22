@@ -166,7 +166,7 @@ All supported environment variables in one place. See `.env.example` for an opti
 | `GCS_REPORTS_BUCKET` | For Cloud Run | GCS bucket for validation report storage **and** large-file upload sessions. When set, the UI uploads files directly to GCS via signed URLs before triggering validation, bypassing the Cloud Run 32 MB HTTP request limit. Upload/serve fails clearly if the bucket is not accessible. |
 | `DATA_REPO` | No | Path to `datacommonsorg/data` clone (default: `../datacommonsorg/data` from project root) |
 | `VALIDATION_RUN_TIMEOUT_SEC` | No | Max validation run time in seconds (e.g. `3600`); unset = no timeout |
-| `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `3`, min: `1`). Each run spawns a JVM; tune to available memory. Returns HTTP 429 when at capacity. |
+| `MAX_CONCURRENT_RUNS` | No | Max simultaneous validation runs (default: `1`, min: `1`). Matches Cloud Run concurrency=1 (one JVM per instance). Increase on larger hosts if memory allows. Returns HTTP 429 when at capacity. |
 | `JAVA_THREADS` | No | Number of threads for dc-import genmcf CSV processing (default: `2`). Parallelism is file-level — requires multiple CSV files or CSV auto-splitting to benefit. Higher values increase peak JVM memory proportionally. |
 | `CSV_SPLIT_ENABLED` | No | Set to `true` to auto-split a single large CSV into shards before Step 2, enabling genmcf thread parallelism. Default: `false`. See [CSV Auto-Splitting](#csv-auto-splitting-for-large-imports). |
 | `IMPORT_RESOLUTION_MODE` | No | Java import tool resolution mode (default: `LOCAL`) |

@@ -2582,10 +2582,10 @@
         const badge = document.createElement('div');
         badge.className = 'summary-card-badge';
         badge.style.cssText = 'font-size:0.85em;color:var(--text-muted);margin-top:2px;';
-        const schemaReviewRan = typeof opts.failure_step === 'number' && opts.failure_step >= 2;
-        badge.textContent = schemaReviewRan
-          ? 'Validation was skipped due to earlier pipeline failure.'
-          : 'Validation did not run.';
+        badge.textContent = pipelineSkippedValidationMessage(
+          opts.failure_step,
+          opts.failure_step_id
+        );
         content.appendChild(badge);
       }
 
@@ -3301,6 +3301,32 @@
       const sid = data.failure_step_id;
       if (typeof sid === 'string' && registryStepById[sid]) return registryStepById[sid].index;
       return null;
+    }
+
+    /** Badge when import validation never ran (pipeline failed before validation step). */
+    function pipelineSkippedValidationMessage(failureStep, failureStepId) {
+      const preIdx = registryStepById.pre_import ? registryStepById.pre_import.index : 0;
+      const schemaIdx = registryStepById.schema_review ? registryStepById.schema_review.index : 1;
+      const validationIdx = validationStepIndex;
+      if (failureStepId === 'pre_import') {
+        return 'Import validation did not run — the pipeline failed during pre-import checks.';
+      }
+      if (failureStepId === 'schema_review') {
+        return 'Import validation did not run — the pipeline failed during schema review.';
+      }
+      if (typeof failureStep !== 'number') {
+        return 'Import validation did not run.';
+      }
+      if (failureStep <= preIdx) {
+        return 'Import validation did not run — the pipeline failed during pre-import checks.';
+      }
+      if (failureStep === schemaIdx) {
+        return 'Import validation did not run — the pipeline failed during schema review.';
+      }
+      if (failureStep < validationIdx) {
+        return 'Import validation was skipped due to an earlier pipeline failure.';
+      }
+      return 'Import validation did not run.';
     }
 
     function stepLabelForIndex(stepIdx) {
@@ -4254,6 +4280,7 @@
               pipelineFailedBeforeValidation: pipelineFailedBeforeValidation || false,
               failure_code: data.failure_code ?? null,
               failure_step: data.failure_step,
+              failure_step_id: data.failure_step_id,
               failure_message: data.failure_message ?? null,
               failure_details: data.failure_details || undefined,
               runCount: counts.runCount,
@@ -4286,6 +4313,7 @@
               run_failure_reason: !data.success && !pipelineFailedBeforeValidation && (failureInfo && failureInfo.message) ? failureInfo.message : undefined,
               failure_code: data.failure_code || undefined,
               failure_step: data.failure_step,
+              failure_step_id: data.failure_step_id,
               failure_message: data.failure_message || undefined,
               failure_limit: data.failure_limit,
               failure_details: data.failure_details || undefined,
