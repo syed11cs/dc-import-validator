@@ -79,6 +79,7 @@ from ui.orchestration.runs import (
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_BYTES = 100 * 1024**3  # 100 GB per file
+MAX_VALIDATION_CONFIG_BYTES = 10 * 1024 * 1024  # 10 MB — validation config JSON
 
 # Version info — set APP_VERSION and optionally COMMIT_SHA via env at deploy time.
 # Example: APP_VERSION=v0.3.0 COMMIT_SHA=abc1234 uvicorn ...
@@ -3725,6 +3726,82 @@ class _SubmitJobRequest(BaseModel):
     processing_mode: str = "auto"
     # java_threads: explicit thread count; required when processing_mode == "custom".
     java_threads: int = 0
+
+
+async def _upload_validation_config_file_to_gcs(run_id: str, upload: UploadFile) -> str:
+    """Validate a validation config upload and store it for Batch (configs/{run_id}/...).
+
+    Returns gs:// URI for use as validation_config_url on POST /api/runs.
+    Raises HTTPException on validation failure or GCS upload failure (fail closed).
+    """
+    if not _gcs_uploads.is_gcs_uploads_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GCS uploads are not configured (GCS_REPORTS_BUCKET not set). "
+                "Validation config file upload for Batch requires GCS."
+            ),
+        )
+    if not upload or not getattr(upload, "filename", None):
+        raise HTTPException(status_code=400, detail="validation_config file is required")
+    try:
+        content = await upload.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to read config file: {exc}")
+    if len(content) > MAX_VALIDATION_CONFIG_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Validation config file exceeds {MAX_VALIDATION_CONFIG_BYTES // (1024 * 1024)} MB limit",
+        )
+    _validate_config_bytes(content, source=upload.filename or "upload")
+    fd, tmp_path = tempfile.mkstemp(suffix=".json", prefix="validation_config_upload_")
+    try:
+        with os.fdopen(fd, "wb") as tmp_f:
+            tmp_f.write(content)
+        gcs_uri = await asyncio.to_thread(
+            gcs_reports.upload_merged_config_to_gcs, run_id, Path(tmp_path)
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    if not gcs_uri:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to upload validation config to GCS. "
+                "GCS_REPORTS_BUCKET must be set for Batch runs with a config file."
+            ),
+        )
+    logger.info(
+        '[OVERRIDE_TRACE] %s',
+        json.dumps({
+            "component": "upload_validation_config",
+            "event": "uploaded",
+            "run_id": run_id,
+            "gcs_uri": gcs_uri,
+            "size_bytes": len(content),
+        }),
+    )
+    return gcs_uri
+
+
+@app.post("/api/runs/{run_id}/validation-config")
+async def upload_run_validation_config(
+    run_id: str,
+    validation_config: UploadFile = File(...),
+):
+    """Upload a validation config JSON for a pending Batch run.
+
+    Stores at gs://{bucket}/configs/{run_id}/validation_config.json. The client should
+    pass the returned validation_config_url to POST /api/runs (existing URL override path).
+    """
+    rid = run_id.strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    gcs_uri = await _upload_validation_config_file_to_gcs(rid, validation_config)
+    return {"validation_config_url": gcs_uri}
 
 
 @app.post("/api/runs")

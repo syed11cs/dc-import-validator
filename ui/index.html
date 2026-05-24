@@ -1592,7 +1592,8 @@
             <button type="button" id="validation-config-clear-btn" class="file-clear-btn" style="display:none;" title="Remove file" aria-label="Remove file">×</button>
           </div>
           <input type="text" id="validation-config-url" placeholder="or paste an https:// URL or gs:// URI to a config JSON" autocomplete="off" spellcheck="false" style="margin-top:4px; width:100%; box-sizing:border-box; font-size:0.8rem; padding:5px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-family:ui-monospace,monospace;" />
-          <p class="field-hint">Overrides rule selections for this run. File takes priority over URL. Accepts https:// URLs or gs:// URIs.</p>
+          <p class="field-hint">Overrides selected rules for this run. File takes priority over URL.</p>
+          <p class="field-hint" id="validation-config-override-hint" style="display: none; margin-top: 4px;">Uploaded config file will override sidebar rule selections (URL field ignored for this run).</p>
         </div>
       </div>
       <div class="form-group form-group-section" style="margin-bottom: 14px;">
@@ -1769,6 +1770,16 @@
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
     let customValidationConfigFile = null;
+    function syncValidationConfigOverrideUi() {
+      const hasFile = !!customValidationConfigFile;
+      const hint = document.getElementById('validation-config-override-hint');
+      const urlEl = document.getElementById('validation-config-url');
+      if (hint) hint.style.display = hasFile ? 'block' : 'none';
+      if (urlEl) {
+        urlEl.disabled = hasFile;
+        urlEl.title = hasFile ? 'Ignored while a config file is selected (file takes priority).' : '';
+      }
+    }
     let customInputMode = 'upload'; // 'upload' | 'gcs'
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
@@ -1988,6 +1999,7 @@
         customStatVarsMcfFile = null;
         customStatVarsSchemaMcfFile = null;
         customValidationConfigFile = null;
+        syncValidationConfigOverrideUi();
         customInputMode = 'upload';
         document.getElementById('mode-upload-btn')?.classList.add('active');
         document.getElementById('mode-gcs-btn')?.classList.remove('active');
@@ -3694,6 +3706,34 @@
       _artifactsReady = true;
       if (_artifactsPollInterval) { clearInterval(_artifactsPollInterval); _artifactsPollInterval = null; }
 
+      // Batch path: file > URL (sidebar merge only when neither is set).
+      // Config upload runs before POST /api/runs; any failure throws and aborts the run.
+      let validationConfigUrl = '';
+      if (customValidationConfigFile) {
+        _setActiveStep('Uploading validation config\u2026');
+        const configFd = new FormData();
+        configFd.append('validation_config', customValidationConfigFile);
+        const configUploadResp = await fetch(
+          API + '/api/runs/' + encodeURIComponent(runId) + '/validation-config',
+          { method: 'POST', body: configFd, signal },
+        );
+        if (!configUploadResp.ok) {
+          const errJson = await configUploadResp.json().catch(() => ({}));
+          const detail = errJson.detail;
+          const msg = typeof detail === 'string' ? detail
+            : Array.isArray(detail) ? detail.map((d) => d.msg || d).join('; ')
+            : 'Failed to upload validation config (' + configUploadResp.status + ')';
+          throw new Error(msg);
+        }
+        const configUploadJson = await configUploadResp.json();
+        if (!configUploadJson.validation_config_url) {
+          throw new Error('Validation config upload did not return a GCS URL');
+        }
+        validationConfigUrl = configUploadJson.validation_config_url;
+      } else {
+        validationConfigUrl = (opts.validation_config_url || '').trim();
+      }
+
       // Submit. Wrapped in try/catch so an abort that fires mid-submission still
       // cancels the server job: runId is generated locally and sent to the server
       // unchanged, so the cancel endpoint can find it via compute_job_name() even
@@ -3724,7 +3764,7 @@
             import_resolution_mode: opts.import_resolution_mode || 'LOCAL',
             existence_checks: opts.existence_checks || 'false',
             custom_rules: opts.custom_rules || [],
-            validation_config_url: opts.validation_config_url || '',
+            validation_config_url: validationConfigUrl,
             machine_type_override: opts.machine_type_override || '',
             processing_mode: opts.processing_mode || 'auto',
             java_threads: opts.java_threads || 0,
@@ -4482,7 +4522,10 @@
         } else {
           const durationSec = (Date.now() - runStartTime) / 1000;
           finishProgressBar(false, durationSec, null);
-          setOutputContent('Connection lost. The validation run may have been interrupted \u2014 please try again.', false);
+          const userMsg = (e && typeof e.message === 'string' && e.message.trim())
+            ? e.message.trim()
+            : 'Connection lost. The validation run may have been interrupted \u2014 please try again.';
+          setOutputContent(userMsg, false);
           console.error('Validation error:', e);
           showStatusBanner({ success: false, cancelled: false });
         }
@@ -4515,8 +4558,7 @@
         document.getElementById('validation-config-file').disabled = false;
         document.getElementById('validation-config-choose-btn').disabled = false;
         document.getElementById('validation-config-clear-btn').disabled = false;
-        const _vcUrlElR = document.getElementById('validation-config-url');
-        if (_vcUrlElR) _vcUrlElR.disabled = false;
+        syncValidationConfigOverrideUi();
         setRulesSectionDisabled(false);
         btn.textContent = '\u25B6 Run validation';
         btn.title = '';
@@ -6316,6 +6358,7 @@
           if (_vcfN) { _vcfN.textContent = 'No file chosen'; _vcfN.classList.remove('has-file'); }
           const _vcfC = document.getElementById('validation-config-clear-btn');
           if (_vcfC) _vcfC.style.display = 'none';
+          syncValidationConfigOverrideUi();
           document.getElementById('tmcf-file').value = '';
           document.getElementById('csv-file').value = '';
           document.getElementById('stat-vars-mcf-file').value = '';
@@ -6441,7 +6484,13 @@
     });
     setupCustomFileInput('stat-vars-mcf-file', 'stat-vars-mcf-choose-btn', 'stat-vars-mcf-file-name', 'stat-vars-mcf-clear-btn', (f) => { customStatVarsMcfFile = f; }, () => { customStatVarsMcfFile = null; });
     setupCustomFileInput('stat-vars-schema-mcf-file', 'stat-vars-schema-mcf-choose-btn', 'stat-vars-schema-mcf-file-name', 'stat-vars-schema-mcf-clear-btn', (f) => { customStatVarsSchemaMcfFile = f; }, () => { customStatVarsSchemaMcfFile = null; });
-    setupCustomFileInput('validation-config-file', 'validation-config-choose-btn', 'validation-config-file-name', 'validation-config-clear-btn', (f) => { customValidationConfigFile = f; }, () => { customValidationConfigFile = null; });
+    setupCustomFileInput('validation-config-file', 'validation-config-choose-btn', 'validation-config-file-name', 'validation-config-clear-btn', (f) => {
+      customValidationConfigFile = f;
+      syncValidationConfigOverrideUi();
+    }, () => {
+      customValidationConfigFile = null;
+      syncValidationConfigOverrideUi();
+    });
     document.getElementById('preset-trigger').addEventListener('click', (e) => {
       e.stopPropagation();
       const menu = document.getElementById('preset-menu');
