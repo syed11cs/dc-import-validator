@@ -1770,6 +1770,11 @@
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
     let customValidationConfigFile = null;
+    function isExternalValidationConfigActive() {
+      if (customValidationConfigFile) return true;
+      const url = (document.getElementById('validation-config-url')?.value || '').trim();
+      return !!url;
+    }
     function syncValidationConfigOverrideUi() {
       const hasFile = !!customValidationConfigFile;
       const hint = document.getElementById('validation-config-override-hint');
@@ -1779,6 +1784,7 @@
         urlEl.disabled = hasFile;
         urlEl.title = hasFile ? 'Ignored while a config file is selected (file takes priority).' : '';
       }
+      updateRulesSummary();
     }
     let customInputMode = 'upload'; // 'upload' | 'gcs'
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
@@ -3134,12 +3140,16 @@
       const row = document.getElementById('rules-summary-row');
       if (!el || !row) return;
       const total = document.querySelectorAll('.rule-checkbox').length;
-      const checked = document.querySelectorAll('.rule-checkbox:checked').length;
       if (total === 0) {
         row.style.display = 'none';
         return;
       }
       row.style.display = 'flex';
+      if (isExternalValidationConfigActive()) {
+        el.innerHTML = '<span class="count">✅ External validation config active</span>';
+        return;
+      }
+      const checked = document.querySelectorAll('.rule-checkbox:checked').length;
       const icon = checked === 0 ? '⚠️' : '✅';
       const hint = checked === 0 ? ' — select at least one' : '';
       el.innerHTML = `<span class="count">${icon} ${checked} / ${total} rules enabled${hint}</span>`;
@@ -6491,6 +6501,10 @@
       customValidationConfigFile = null;
       syncValidationConfigOverrideUi();
     });
+    const _vcUrlInput = document.getElementById('validation-config-url');
+    if (_vcUrlInput) {
+      _vcUrlInput.addEventListener('input', () => updateRulesSummary());
+    }
     document.getElementById('preset-trigger').addEventListener('click', (e) => {
       e.stopPropagation();
       const menu = document.getElementById('preset-menu');
