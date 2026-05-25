@@ -76,10 +76,12 @@ from ui.orchestration.runs import (
     run_spec_with_batch_overrides,
     subprocess_legacy_hint,
 )
+from ui import bulk_gcs_discovery as _bulk_gcs
 
 CUSTOM_UPLOAD_DIR = APP_ROOT / "output" / "custom_upload"
 MAX_UPLOAD_BYTES = 100 * 1024**3  # 100 GB per file
 MAX_VALIDATION_CONFIG_BYTES = 10 * 1024 * 1024  # 10 MB — validation config JSON
+MAX_BULK_PARALLELISM = 5
 
 # Version info — set APP_VERSION and optionally COMMIT_SHA via env at deploy time.
 # Example: APP_VERSION=v0.3.0 COMMIT_SHA=abc1234 uvicorn ...
@@ -4185,6 +4187,205 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
         run_id, dataset, job_name, custom_rule_ids,
     )
     return {"run_id": run_id, "job_name": job_name}
+
+
+class _BulkRunsRequest(BaseModel):
+    """Request body for POST /api/bulk-runs — discover child folders and submit Batch jobs."""
+
+    root_gcs_path: str
+    parallelism: int = 1
+    llm_review: bool = False
+    machine_type_override: str = ""
+    existence_checks: str = "false"
+    import_resolution_mode: str = "LOCAL"
+    rules: str = ""
+    skip_rules: str = ""
+    custom_rules: list[dict] = []
+    validation_config_url: str = ""
+    processing_mode: str = "auto"
+    java_threads: int = 0
+
+
+def _new_bulk_run_id() -> str:
+    return "bulk" + uuid.uuid4().hex[:12]
+
+
+def _new_child_run_id() -> str:
+    return "r" + uuid.uuid4().hex[:12]
+
+
+async def _submit_discovered_bulk_dataset(
+    bulk_run_id: str,
+    ds: _bulk_gcs.DiscoveredDataset,
+    body: _BulkRunsRequest,
+) -> dict:
+    """Submit one Batch job for a discovered folder via existing /api/runs logic."""
+    run_id = _new_child_run_id()
+    config_url, rules, custom_rules = _bulk_gcs.bulk_rules_for_submit(
+        ds.validation_config_gcs_path,
+        body.validation_config_url,
+        body.rules,
+        body.custom_rules,
+    )
+    job_body = _SubmitJobRequest(
+        run_id=run_id,
+        dataset="custom",
+        tmcf_gcs_path=ds.tmcf_gcs_path,
+        csv_gcs_paths=[ds.csv_gcs_path],
+        stat_vars_mcf_gcs_path=ds.stat_vars_mcf_gcs_path,
+        stat_vars_schema_mcf_gcs_path=ds.stat_vars_schema_mcf_gcs_path,
+        csv_total_bytes=ds.csv_total_bytes,
+        llm_review=body.llm_review,
+        rules=rules,
+        skip_rules=body.skip_rules,
+        baseline_name=f"custom_{ds.dataset_id}",
+        import_resolution_mode=body.import_resolution_mode,
+        existence_checks=body.existence_checks,
+        custom_rules=custom_rules,
+        validation_config_url=config_url,
+        machine_type_override=body.machine_type_override,
+        processing_mode=body.processing_mode,
+        java_threads=body.java_threads,
+    )
+    result = await _execute_batch_job_submission(job_body)
+    return {
+        "dataset": ds.dataset_id,
+        "folder": ds.folder_prefix,
+        "run_id": run_id,
+        "status": "submitted",
+        "job_name": result.get("job_name", ""),
+        "bulk_run_id": bulk_run_id,
+    }
+
+
+@app.post("/api/bulk-runs")
+async def create_bulk_runs(body: _BulkRunsRequest):
+    """Discover immediate child folders under a GCS root and submit one Batch job each."""
+    root = (body.root_gcs_path or "").strip()
+    if not root:
+        raise HTTPException(status_code=400, detail="root_gcs_path is required")
+    try:
+        _bulk_gcs.parse_gs_root(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not _gcs_uploads.is_gcs_uploads_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Bulk GCS validation requires GCS_REPORTS_BUCKET and Cloud Batch.",
+        )
+
+    # Policy gate: same requirements as POST /api/runs for custom GCS path mode.
+    _probe = _SubmitJobRequest(
+        run_id="probe",
+        dataset="custom",
+        tmcf_gcs_path="gs://placeholder-bucket/placeholder.tmcf",
+        csv_gcs_paths=["gs://placeholder-bucket/placeholder.csv"],
+    )
+    try:
+        _probe_resolution = resolve_executor(job_request_to_run_spec(_probe))
+    except PolicyBlockedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    if _probe_resolution.executor != BATCH:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "USE_LEGACY_STREAM_ENDPOINT",
+                "message": "Bulk GCS validation requires Cloud Batch (production profile).",
+                "executor": _probe_resolution.executor,
+                "profile": _probe_resolution.profile,
+            },
+        )
+
+    if body.custom_rules:
+        err = _validate_custom_rules(body.custom_rules)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
+    parallelism = _bulk_gcs.clamp_bulk_parallelism(
+        body.parallelism, maximum=MAX_BULK_PARALLELISM
+    )
+
+    try:
+        discovered, skipped = await asyncio.to_thread(
+            _bulk_gcs.discover_datasets_under_root, root
+        )
+    except Exception as exc:
+        logger.exception("bulk_runs discovery failed root=%s", root)
+        raise HTTPException(status_code=500, detail=f"Failed to list GCS folders: {exc}")
+
+    bulk_run_id = _new_bulk_run_id()
+    skipped_folders = [
+        {"folder": s.folder_prefix, "reason": s.reason} for s in skipped
+    ]
+    submit_list: list[_bulk_gcs.DiscoveredDataset] = []
+    seen_dataset_ids: set[str] = set()
+    for ds in discovered:
+        if ds.dataset_id in seen_dataset_ids:
+            skipped_folders.append({
+                "folder": ds.folder_prefix,
+                "reason": f"duplicate dataset id {ds.dataset_id!r}",
+            })
+            continue
+        seen_dataset_ids.add(ds.dataset_id)
+        submit_list.append(ds)
+
+    sem = asyncio.Semaphore(parallelism)
+
+    async def _run_one(ds: _bulk_gcs.DiscoveredDataset) -> dict:
+        async with sem:
+            try:
+                return await _submit_discovered_bulk_dataset(bulk_run_id, ds, body)
+            except HTTPException as exc:
+                detail = exc.detail
+                if not isinstance(detail, str):
+                    detail = json.dumps(detail)
+                return {
+                    "dataset": ds.dataset_id,
+                    "folder": ds.folder_prefix,
+                    "run_id": "",
+                    "status": "failed",
+                    "error": detail,
+                    "bulk_run_id": bulk_run_id,
+                }
+            except Exception as exc:
+                logger.exception(
+                    "bulk_runs submit failed bulk_run_id=%s dataset=%s",
+                    bulk_run_id,
+                    ds.dataset_id,
+                )
+                return {
+                    "dataset": ds.dataset_id,
+                    "folder": ds.folder_prefix,
+                    "run_id": "",
+                    "status": "failed",
+                    "error": str(exc),
+                    "bulk_run_id": bulk_run_id,
+                }
+
+    runs: list[dict] = []
+    if submit_list:
+        runs = list(await asyncio.gather(*[_run_one(ds) for ds in submit_list]))
+
+    submitted = sum(1 for r in runs if r.get("status") == "submitted")
+    datasets_found = len(discovered) + len(skipped)
+    logger.info(
+        "bulk_runs_complete bulk_run_id=%s root=%s datasets_found=%d submitted=%d skipped=%d",
+        bulk_run_id,
+        root,
+        datasets_found,
+        submitted,
+        len(skipped_folders),
+    )
+    return {
+        "bulk_run_id": bulk_run_id,
+        "root_gcs_path": root,
+        "datasets_found": datasets_found,
+        "submitted": submitted,
+        "skipped": len(skipped_folders),
+        "runs": runs,
+        "skipped_folders": skipped_folders,
+    }
 
 
 @app.post("/api/jobs")

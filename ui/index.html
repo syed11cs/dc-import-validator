@@ -1430,6 +1430,116 @@
     .label-optional { font-size: 0.72rem; font-weight: 400; color: var(--text-muted); margin-left: 3px; }
     #validation-config-url::placeholder { color: var(--text-muted); opacity: 0.6; font-family: inherit; }
     #validation-config-url:focus { outline: none; box-shadow: 0 0 0 1px var(--accent); }
+    .gcs-validation-mode-row { margin-bottom: 10px; }
+    .gcs-validation-mode-label { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); display: block; margin-bottom: 4px; }
+    .gcs-validation-mode-toggle { margin-bottom: 0; }
+    .field-inline-error { font-size: 0.72rem; color: var(--fail); margin: 4px 0 0; line-height: 1.4; }
+    #bulk-gcs-root.input-invalid { border-color: var(--fail); }
+    #bulk-gcs-root.input-invalid:focus { box-shadow: 0 0 0 1px var(--fail); }
+    #bulk-gcs-root { width: 100%; box-sizing: border-box; font-size: 0.82rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; }
+    #bulk-gcs-parallelism {
+      width: 5rem;
+      box-sizing: border-box;
+      font-size: 0.82rem;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+    #bulk-gcs-parallelism:focus {
+      outline: none;
+      box-shadow: 0 0 0 1px var(--accent, #6366f1);
+    }
+    #bulk-gcs-parallelism::-webkit-outer-spin-button,
+    #bulk-gcs-parallelism::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .bulk-runs-panel { margin-top: 12px; }
+    .bulk-runs-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .bulk-runs-table th, .bulk-runs-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+    .bulk-runs-table th { background: var(--surface); font-weight: 600; }
+    .bulk-discovery-status { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px; font-style: italic; opacity: 0.85; }
+    .bulk-runs-stats {
+      display: flex; flex-wrap: wrap; gap: 8px 16px;
+      font-size: 0.75rem; margin: 0 0 8px;
+      color: var(--text-muted); opacity: 0.9;
+    }
+    .bulk-runs-stats strong { font-weight: 600; color: var(--text); }
+    .bulk-skipped-list { margin-top: 8px; padding: 0; list-style: none; }
+    .bulk-skipped-item {
+      display: flex; flex-direction: column; gap: 1px;
+      font-size: 0.68rem;
+      background: rgba(245, 158, 11, 0.04);
+      border: 1px solid rgba(245, 158, 11, 0.12);
+      border-radius: 3px;
+      padding: 4px 6px;
+      margin-bottom: 4px;
+      line-height: 1.35;
+    }
+    .bulk-skipped-folder {
+      font-family: ui-monospace, monospace;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .bulk-skipped-reason { font-size: 0.68rem; color: var(--text-muted); opacity: 0.85; }
+    .bulk-rules-sidebar-note {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      opacity: 0.92;
+      background: transparent;
+      border: none;
+      border-left: 2px solid var(--border);
+      border-radius: 0;
+      padding: 4px 0 4px 8px;
+      margin-bottom: 8px;
+      line-height: 1.38;
+    }
+    #gcs-bulk-folder-fields > label:first-of-type { margin-top: 0; }
+    #gcs-bulk-folder-fields label[for="bulk-gcs-parallelism"] { margin-top: 6px; }
+    #gcs-bulk-folder-fields #bulk-gcs-parallelism { margin-top: 2px; }
+    .bulk-folder-structure-hint {
+      margin-top: 5px;
+      margin-bottom: 2px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      opacity: 0.9;
+    }
+    .bulk-folder-structure-hint summary {
+      cursor: pointer;
+      line-height: 1.35;
+    }
+    .bulk-folder-structure-hint pre {
+      margin: 4px 0 0;
+      padding: 5px 8px 5px 10px;
+      border-left: 1px solid var(--border);
+      white-space: pre;
+      font-family: ui-monospace, monospace;
+      font-size: 0.66rem;
+      line-height: 1.45;
+      color: var(--text);
+      opacity: 0.88;
+    }
+    .bulk-parallel-hint {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      opacity: 0.88;
+      line-height: 1.35;
+      margin: 3px 0 0;
+    }
+    #validation-config-section .field-hint {
+      font-size: 0.73rem;
+      line-height: 1.4;
+      opacity: 0.92;
+      margin-bottom: 8px;
+    }
+    #validation-config-section .label-optional { opacity: 0.9; }
+    .custom-dataset-name-row.is-bulk-hidden { display: none !important; }
     .form-group-section { padding-top: 14px; border-top: 1px solid var(--border); margin-top: 0; }
     .file-input-row {
       display: flex;
@@ -1533,7 +1643,7 @@
           </div>
           <div class="input-mode-toggle" style="margin-top: 14px;">
             <button type="button" class="input-mode-btn active" id="mode-upload-btn">Upload files</button>
-            <button type="button" class="input-mode-btn" id="mode-gcs-btn">Use GCS paths</button>
+            <button type="button" class="input-mode-btn" id="mode-gcs-btn">From GCS</button>
           </div>
           <div id="upload-mode-section">
             <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
@@ -1571,16 +1681,45 @@
             </div>
           </div><!-- /upload-mode-section -->
           <div id="gcs-mode-section" class="gcs-input-section" style="display: none;">
-            <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
-            <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" />
-            <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
-            <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false"></textarea>
-            <p class="field-hint">One path per line for multiple CSVs</p>
-            <label>StatVars MCF <span class="label-optional">(optional)</span></label>
-            <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
-            <label>StatVars Schema MCF <span class="label-optional">(optional)</span></label>
-            <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
-            <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
+            <div class="gcs-validation-mode-row">
+              <span class="gcs-validation-mode-label">Validation</span>
+              <div class="input-mode-toggle gcs-validation-mode-toggle" role="group" aria-label="GCS validation mode">
+                <button type="button" class="input-mode-btn active" id="gcs-mode-single-btn" data-gcs-validation-mode="single" aria-pressed="true">Single dataset</button>
+                <button type="button" class="input-mode-btn" id="gcs-mode-bulk-btn" data-gcs-validation-mode="bulk" aria-pressed="false">Bulk folder validation</button>
+              </div>
+            </div>
+            <div id="gcs-single-dataset-fields">
+              <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
+              <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" />
+              <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
+              <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false"></textarea>
+              <p class="field-hint">One path per line for multiple CSVs</p>
+              <label>StatVars MCF <span class="label-optional">(optional)</span></label>
+              <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
+              <label>StatVars Schema MCF <span class="label-optional">(optional)</span></label>
+              <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
+              <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
+            </div>
+            <div id="gcs-bulk-folder-fields" style="display: none;">
+              <label for="bulk-gcs-root">Root GCS folder <span class="required-asterisk" aria-label="required">*</span></label>
+              <input type="text" id="bulk-gcs-root" placeholder="gs://dc-imports/2026/batch-run/" autocomplete="off" spellcheck="false" aria-describedby="bulk-gcs-root-error" />
+              <p id="bulk-gcs-root-error" class="field-inline-error" style="display: none;" role="alert"></p>
+              <details id="bulk-folder-structure-hint" class="bulk-folder-structure-hint">
+                <summary>Expected structure</summary>
+                <pre>gs://bucket/imports/
+  dataset_a/
+    data.csv
+    data.tmcf
+    validation_config.json (optional)
+
+  dataset_b/
+    data.csv
+    data.tmcf</pre>
+              </details>
+              <label for="bulk-gcs-parallelism">Parallel validations</label>
+              <input type="number" id="bulk-gcs-parallelism" min="1" max="5" step="1" inputmode="numeric" value="3" aria-label="Parallel validations" />
+              <p class="bulk-parallel-hint">Number of dataset folders processed at the same time.</p>
+            </div>
           </div>
         </div>
         <div class="custom-upload-optional-fields" id="validation-config-section" style="margin-top:10px;">
@@ -1592,7 +1731,7 @@
             <button type="button" id="validation-config-clear-btn" class="file-clear-btn" style="display:none;" title="Remove file" aria-label="Remove file">×</button>
           </div>
           <input type="text" id="validation-config-url" placeholder="or paste an https:// URL or gs:// URI to a config JSON" autocomplete="off" spellcheck="false" style="margin-top:4px; width:100%; box-sizing:border-box; font-size:0.8rem; padding:5px 8px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); font-family:ui-monospace,monospace;" />
-          <p class="field-hint">Overrides selected rules for this run. File takes priority over URL.</p>
+          <p class="field-hint">Overrides sidebar-selected rules for this run. Uploaded file takes priority over URL.</p>
           <p class="field-hint" id="validation-config-override-hint" style="display: none; margin-top: 4px;">Uploaded config file will override sidebar rule selections (URL field ignored for this run).</p>
         </div>
       </div>
@@ -1620,6 +1759,7 @@
     <main class="main">
       <div id="rules-section" class="section">
         <h2>Validation rules</h2>
+        <p id="bulk-rules-sidebar-note" class="bulk-rules-sidebar-note" style="display: none;">Folder-level <code>validation_config.json</code> files override selected sidebar rules.</p>
         <div id="rules-preset-row" style="display: none; margin-bottom: 8px;">
           <label style="font-size: 0.75rem; color: var(--text-muted);">Preset</label>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px;">
@@ -1698,6 +1838,23 @@
         <div id="summary-card" class="summary-card" aria-live="polite">
           <div id="summary-card-content"></div>
           <div id="custom-restore-notice" class="custom-restore-notice" style="display:none;"></div>
+        </div>
+        <div id="bulk-runs-panel" class="bulk-runs-panel" style="display: none;" aria-live="polite">
+          <h3 style="font-size: 0.95rem; margin: 0 0 8px;">Bulk validation runs</h3>
+          <p id="bulk-discovery-status" class="bulk-discovery-status" style="display: none;"></p>
+          <div id="bulk-runs-stats" class="bulk-runs-stats" style="display: none;" aria-label="Bulk discovery summary">
+            <span>Discovered: <strong id="bulk-stat-discovered">0</strong></span>
+            <span>Runnable: <strong id="bulk-stat-runnable">0</strong></span>
+            <span>Skipped: <strong id="bulk-stat-skipped">0</strong></span>
+          </div>
+          <p id="bulk-runs-summary" class="field-hint" style="display: none; margin: 0 0 8px;"></p>
+          <table id="bulk-runs-table" class="bulk-runs-table">
+            <thead>
+              <tr><th>Dataset</th><th>Status</th><th>Run ID</th><th>Report</th></tr>
+            </thead>
+            <tbody id="bulk-runs-tbody"></tbody>
+          </table>
+          <ul id="bulk-skipped-list" class="bulk-skipped-list"></ul>
         </div>
         <div class="output-header">
           <div class="tabs">
@@ -1787,6 +1944,9 @@
       updateRulesSummary();
     }
     let customInputMode = 'upload'; // 'upload' | 'gcs'
+    let gcsValidationMode = 'single'; // 'single' | 'bulk'
+    let bulkRunsPollTimer = null;
+    let bulkRunsPollGeneration = 0;
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
 
@@ -3167,13 +3327,18 @@
         const _name = (document.getElementById('custom-dataset-name')?.value || '').trim();
         const _nameOk = /^[a-z0-9-]{3,48}$/.test(_name);
         if (customInputMode === 'gcs') {
-          const _tmcfGcs = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
-          const _csvGcs = (document.getElementById('csv-gcs-paths')?.value || '').trim();
-          const _csvEntries = _csvGcs.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
-          const _gcsOk = _tmcfGcs.startsWith('gs://') &&
-            _csvEntries.length > 0 &&
-            _csvEntries.every(p => p.length > 0 && p.startsWith('gs://'));
-          btn.disabled = !_gcsOk || !_nameOk;
+          if (gcsValidationMode === 'bulk') {
+            const _bulkOk = !validateBulkGcsRoot(document.getElementById('bulk-gcs-root')?.value || '');
+            btn.disabled = !_bulkOk;
+          } else {
+            const _tmcfGcs = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
+            const _csvGcs = (document.getElementById('csv-gcs-paths')?.value || '').trim();
+            const _csvEntries = _csvGcs.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
+            const _gcsOk = _tmcfGcs.startsWith('gs://') &&
+              _csvEntries.length > 0 &&
+              _csvEntries.every(p => p.length > 0 && p.startsWith('gs://'));
+            btn.disabled = !_gcsOk || !_nameOk;
+          }
         } else {
           btn.disabled = !customTmcfFile || customCsvFiles.length === 0 || !_nameOk;
         }
@@ -3709,6 +3874,290 @@
       };
     }
 
+    const BULK_DISCOVERY_MSG = 'Discovering datasets from GCS\u2026';
+
+    const BULK_PARALLELISM_DEFAULT = 3;
+    const BULK_PARALLELISM_MIN = 1;
+    const BULK_PARALLELISM_MAX = 5;
+
+    function clampBulkParallelismValue(raw) {
+      const s = String(raw ?? '').trim();
+      if (!s) return BULK_PARALLELISM_DEFAULT;
+      const digitsOnly = s.replace(/[^\d]/g, '');
+      if (!digitsOnly) return BULK_PARALLELISM_DEFAULT;
+      const n = parseInt(digitsOnly, 10);
+      if (!Number.isFinite(n)) return BULK_PARALLELISM_DEFAULT;
+      return Math.min(BULK_PARALLELISM_MAX, Math.max(BULK_PARALLELISM_MIN, n));
+    }
+
+    function getBulkParallelismForSubmit() {
+      const el = document.getElementById('bulk-gcs-parallelism');
+      const value = clampBulkParallelismValue(el?.value);
+      if (el) el.value = String(value);
+      return value;
+    }
+
+    function sanitizeBulkParallelismInputField(el) {
+      if (!el) return;
+      let v = String(el.value).replace(/[^\d]/g, '');
+      if (v.length > 2) v = v.slice(0, 2);
+      el.value = v;
+    }
+
+    function commitBulkParallelismInputField(el) {
+      if (!el) return;
+      el.value = String(clampBulkParallelismValue(el.value));
+    }
+
+    function validateBulkGcsRoot(value) {
+      const path = (value || '').trim();
+      if (!path) return 'Root GCS folder is required.';
+      if (!path.startsWith('gs://')) return 'Path must start with gs://.';
+      if (path.length <= 'gs://'.length) return 'Enter a bucket and folder (e.g. gs://my-bucket/imports/).';
+      return null;
+    }
+
+    function bulkFolderDisplayName(folderPrefix) {
+      const p = (folderPrefix || '').replace(/\/+$/, '');
+      if (!p) return folderPrefix || '';
+      const parts = p.split('/');
+      return parts[parts.length - 1] || p;
+    }
+
+    function setBulkGcsRootValidation(showErrors) {
+      const input = document.getElementById('bulk-gcs-root');
+      const errEl = document.getElementById('bulk-gcs-root-error');
+      if (!input || !errEl) return null;
+      const msg = validateBulkGcsRoot(input.value);
+      if (showErrors && msg) {
+        errEl.textContent = msg;
+        errEl.style.display = '';
+        input.classList.add('input-invalid');
+        input.setAttribute('aria-invalid', 'true');
+      } else {
+        errEl.textContent = '';
+        errEl.style.display = 'none';
+        input.classList.remove('input-invalid');
+        input.removeAttribute('aria-invalid');
+      }
+      return msg;
+    }
+
+    function clearInactiveGcsPathFields() {
+      if (gcsValidationMode === 'bulk') {
+        ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path'].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+      } else {
+        const root = document.getElementById('bulk-gcs-root');
+        if (root) root.value = '';
+        setBulkGcsRootValidation(false);
+      }
+    }
+
+    function setGcsValidationMode(mode) {
+      gcsValidationMode = mode === 'bulk' ? 'bulk' : 'single';
+      const singleBtn = document.getElementById('gcs-mode-single-btn');
+      const bulkBtn = document.getElementById('gcs-mode-bulk-btn');
+      if (singleBtn) {
+        const on = gcsValidationMode === 'single';
+        singleBtn.classList.toggle('active', on);
+        singleBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+      if (bulkBtn) {
+        const on = gcsValidationMode === 'bulk';
+        bulkBtn.classList.toggle('active', on);
+        bulkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+      syncGcsValidationModeUi();
+    }
+
+    function setCustomDatasetNameBulkHidden(isBulk) {
+      const nameRow = document.querySelector('.custom-dataset-name-row');
+      const nameInput = document.getElementById('custom-dataset-name');
+      const nameHint = document.getElementById('custom-dataset-name-hint');
+      if (isBulk) {
+        if (nameInput) {
+          nameInput.value = '';
+          nameInput.setAttribute('tabindex', '-1');
+          nameInput.setAttribute('aria-hidden', 'true');
+          nameInput.disabled = true;
+        }
+        if (nameHint) {
+          nameHint.setAttribute('tabindex', '-1');
+          nameHint.setAttribute('aria-hidden', 'true');
+        }
+        if (nameRow) {
+          nameRow.classList.add('is-bulk-hidden');
+          nameRow.setAttribute('hidden', '');
+          nameRow.setAttribute('aria-hidden', 'true');
+        }
+        lastRunCustomDatasetName = null;
+      } else {
+        if (nameInput) {
+          nameInput.removeAttribute('tabindex');
+          nameInput.removeAttribute('aria-hidden');
+          if (!runAbortController) nameInput.disabled = false;
+        }
+        if (nameHint) {
+          nameHint.removeAttribute('tabindex');
+          nameHint.removeAttribute('aria-hidden');
+        }
+        if (nameRow) {
+          nameRow.classList.remove('is-bulk-hidden');
+          nameRow.removeAttribute('hidden');
+          nameRow.removeAttribute('aria-hidden');
+        }
+      }
+    }
+
+    function syncGcsValidationModeUi() {
+      const isBulk = gcsValidationMode === 'bulk';
+      const singleEl = document.getElementById('gcs-single-dataset-fields');
+      const bulkEl = document.getElementById('gcs-bulk-folder-fields');
+      const rulesNote = document.getElementById('bulk-rules-sidebar-note');
+      const descEl = document.getElementById('dataset-desc');
+      if (singleEl) singleEl.style.display = isBulk ? 'none' : '';
+      if (bulkEl) bulkEl.style.display = isBulk ? '' : 'none';
+      setCustomDatasetNameBulkHidden(isBulk && customInputMode === 'gcs');
+      if (rulesNote) rulesNote.style.display = (isBulk && customInputMode === 'gcs') ? '' : 'none';
+      if (descEl && customInputMode === 'gcs') {
+        descEl.textContent = isBulk
+          ? 'Validate each immediate subfolder under a GCS root as a separate Batch job.'
+          : 'Provide TMCF + CSV paths from GCS to validate.';
+      }
+      clearInactiveGcsPathFields();
+      updateRunButtonState();
+    }
+
+    function stopBulkRunsPoll() {
+      bulkRunsPollGeneration += 1;
+      if (bulkRunsPollTimer) {
+        clearInterval(bulkRunsPollTimer);
+        bulkRunsPollTimer = null;
+      }
+    }
+
+    function hideBulkRunsPanel() {
+      const panel = document.getElementById('bulk-runs-panel');
+      if (panel) panel.style.display = 'none';
+      const discoveryEl = document.getElementById('bulk-discovery-status');
+      const statsEl = document.getElementById('bulk-runs-stats');
+      if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
+      if (statsEl) statsEl.style.display = 'none';
+      stopBulkRunsPoll();
+    }
+
+    function bulkRunStatsFromResponse(data) {
+      const discovered = parseInt(data.datasets_found, 10) || 0;
+      const validRuns = parseInt(data.submitted, 10) || 0;
+      const skipped = parseInt(data.skipped, 10) ||
+        (Array.isArray(data.skipped_folders) ? data.skipped_folders.length : 0);
+      return { discovered, runnable: validRuns, skipped };
+    }
+
+    function setBulkDiscoveryStatus(visible, text) {
+      const el = document.getElementById('bulk-discovery-status');
+      if (!el) return;
+      if (visible) {
+        el.textContent = text || BULK_DISCOVERY_MSG;
+        el.style.display = '';
+      } else {
+        el.textContent = '';
+        el.style.display = 'none';
+      }
+    }
+
+    function renderBulkRunsPanel(data) {
+      const panel = document.getElementById('bulk-runs-panel');
+      const summary = document.getElementById('bulk-runs-summary');
+      const statsEl = document.getElementById('bulk-runs-stats');
+      const tbody = document.getElementById('bulk-runs-tbody');
+      const skippedEl = document.getElementById('bulk-skipped-list');
+      if (!panel || !tbody) return;
+      setBulkDiscoveryStatus(false);
+      panel.style.display = 'block';
+      const stats = bulkRunStatsFromResponse(data);
+      if (statsEl) {
+        const d = document.getElementById('bulk-stat-discovered');
+        const v = document.getElementById('bulk-stat-runnable');
+        const s = document.getElementById('bulk-stat-skipped');
+        if (d) d.textContent = String(stats.discovered);
+        if (v) v.textContent = String(stats.runnable);
+        if (s) s.textContent = String(stats.skipped);
+        statsEl.style.display = '';
+      }
+      if (summary) {
+        summary.textContent = data.bulk_run_id
+          ? `Bulk run ${data.bulk_run_id}`
+          : '';
+        summary.style.display = summary.textContent ? '' : 'none';
+      }
+      tbody.innerHTML = '';
+      (data.runs || []).forEach((row) => {
+        const tr = document.createElement('tr');
+        tr.dataset.runId = row.run_id || '';
+        const reportCell = row.run_id
+          ? `<a href="${API}/api/runs/${encodeURIComponent(row.run_id)}/report" target="_blank" rel="noopener">Open</a>`
+          : '—';
+        tr.innerHTML =
+          `<td>${escapeHtml(row.dataset || '')}</td>` +
+          `<td class="bulk-run-status">${escapeHtml(row.status || '')}</td>` +
+          `<td><code>${escapeHtml(row.run_id || '')}</code></td>` +
+          `<td>${reportCell}</td>`;
+        if (row.error) {
+          tr.title = row.error;
+        }
+        tbody.appendChild(tr);
+      });
+      if (skippedEl) {
+        skippedEl.innerHTML = '';
+        const skipped = data.skipped_folders || [];
+        skipped.forEach((item) => {
+          const li = document.createElement('li');
+          li.className = 'bulk-skipped-item';
+          const folder = item.folder || '';
+          const name = bulkFolderDisplayName(folder);
+          li.innerHTML =
+            `<span class="bulk-skipped-folder">${escapeHtml(name)}</span>` +
+            `<span class="bulk-skipped-reason">${escapeHtml(item.reason || '')}</span>`;
+          if (folder && name !== folder) {
+            li.title = folder;
+          }
+          skippedEl.appendChild(li);
+        });
+      }
+      startBulkRunsStatusPoll(data.runs || []);
+    }
+
+    function startBulkRunsStatusPoll(runs) {
+      stopBulkRunsPoll();
+      const active = (runs || []).filter((r) => r.run_id && r.status === 'submitted');
+      if (active.length === 0) return;
+      const pollGen = bulkRunsPollGeneration;
+      bulkRunsPollTimer = setInterval(async () => {
+        if (pollGen !== bulkRunsPollGeneration) return;
+        let anyActive = false;
+        for (const row of active) {
+          const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${row.run_id}"]`);
+          const statusCell = tr?.querySelector('.bulk-run-status');
+          if (!statusCell) continue;
+          try {
+            const resp = await fetch(API + '/api/runs/' + encodeURIComponent(row.run_id));
+            if (!resp.ok) continue;
+            const st = await resp.json();
+            const status = st.status || 'unknown';
+            statusCell.textContent = status;
+            if (status === 'running' || status === 'starting' || status === 'queued') {
+              anyActive = true;
+            }
+          } catch (_) { /* ignore poll errors */ }
+        }
+        if (!anyActive) stopBulkRunsPoll();
+      }, 5000);
+    }
+
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
       // Reset artifact-readiness state from any prior run so the new run starts clean.
       // Must happen before polling begins — prevents the poll from a previous run
@@ -4020,6 +4469,67 @@
             setOutputContent('GCS path mode requires GCS to be configured on this server (GCS_REPORTS_BUCKET).', false);
             return;
           }
+          hideBulkRunsPanel();
+          const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
+          if (gcsValidationMode === 'bulk') {
+            lastRunCustomDatasetName = null;
+            const bulkRootErr = setBulkGcsRootValidation(true);
+            if (bulkRootErr) {
+              document.getElementById('bulk-gcs-root')?.focus();
+              return;
+            }
+            const bulkRoot = (document.getElementById('bulk-gcs-root')?.value || '').trim();
+            const parallelism = getBulkParallelismForSubmit(); // server clamps again via MAX_BULK_PARALLELISM
+            const bulkPanel = document.getElementById('bulk-runs-panel');
+            if (bulkPanel) bulkPanel.style.display = 'block';
+            setBulkDiscoveryStatus(true);
+            const _bulkStats = document.getElementById('bulk-runs-stats');
+            if (_bulkStats) _bulkStats.style.display = 'none';
+            document.getElementById('bulk-runs-tbody')?.replaceChildren();
+            document.getElementById('bulk-skipped-list')?.replaceChildren();
+            _setActiveStep('Discovering datasets and submitting Batch jobs\u2026');
+            const bulkResp = await fetch(API + '/api/bulk-runs', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                root_gcs_path: bulkRoot,
+                parallelism,
+                llm_review: true,
+                rules: rulesParam,
+                skip_rules: '',
+                custom_rules: selectedCustomRules,
+                validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
+                import_resolution_mode: 'LOCAL',
+                existence_checks: existenceChecks,
+                ..._getPerfOpts(),
+              }),
+              signal: runAbortController.signal,
+            });
+            if (!bulkResp.ok) {
+              const errJson = await bulkResp.json().catch(() => ({}));
+              const detail = errJson.detail;
+              const msg = typeof detail === 'string' ? detail
+                : (detail && detail.message) ? detail.message
+                : 'Bulk validation failed (' + bulkResp.status + ')';
+              throw new Error(msg);
+            }
+            const bulkData = await bulkResp.json();
+            renderBulkRunsPanel(bulkData);
+            const skippedNote = (bulkData.skipped_folders || []).length
+              ? `\nSkipped ${bulkData.skipped_folders.length} folder(s) — see list below the table.`
+              : '';
+            data = {
+              success: bulkData.submitted > 0,
+              cancelled: false,
+              run_id: bulkData.bulk_run_id,
+              output: `Bulk validation: submitted ${bulkData.submitted} job(s) for ${bulkData.datasets_found} folder(s).${skippedNote}`,
+              failure_code: null,
+              failure_step: null,
+              failure_message: null,
+              failure_details: null,
+              baseline_id: null,
+            };
+          } else {
           const tmcfGcsPath = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
           const csvGcsPaths = (document.getElementById('csv-gcs-paths')?.value || '').trim();
           if (!tmcfGcsPath || !csvGcsPaths) {
@@ -4027,7 +4537,6 @@
             return;
           }
           lastRunCustomDatasetName = (document.getElementById('custom-dataset-name')?.value || '').trim() || null;
-          const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
           const statVarsMcfGcsPath = (document.getElementById('stat-vars-mcf-gcs-path')?.value || '').trim();
           const statVarsSchemaMcfGcsPath = (document.getElementById('stat-vars-schema-mcf-gcs-path')?.value || '').trim();
           const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -4052,6 +4561,7 @@
             validation_config_url: (document.getElementById('validation-config-url')?.value || '').trim(),
             ..._getPerfOpts(),
           }, runAbortController.signal);
+          }
         } else if (runDataset === 'custom') {
           if (!customTmcfFile || customCsvFiles.length === 0) {
             setOutputContent('Please select both TMCF and CSV files.', false);
@@ -4516,7 +5026,11 @@
       } catch (e) {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
+        if (gcsValidationMode === 'bulk' && customInputMode === 'gcs') {
+          setBulkDiscoveryStatus(false);
+        }
         if (e.name === 'AbortError' && runAbortController?.signal?.aborted) {
+          stopBulkRunsPoll();
           const durationSec = Math.floor((Date.now() - runStartTime) / 1000);
           const executionHeaderStatus = document.getElementById('execution-header-status');
           const resultsSection = document.getElementById('results-section');
@@ -4549,7 +5063,15 @@
         progressRunStartTime = null;
         runAbortController = null;
         const _nameInputRestore = document.getElementById('custom-dataset-name');
-        if (_nameInputRestore) _nameInputRestore.disabled = false;
+        if (_nameInputRestore) {
+          const _hideName = gcsValidationMode === 'bulk' && customInputMode === 'gcs';
+          _nameInputRestore.disabled = _hideName;
+          if (!_hideName) {
+            _nameInputRestore.removeAttribute('tabindex');
+            _nameInputRestore.removeAttribute('aria-hidden');
+          }
+        }
+        setCustomDatasetNameBulkHidden(gcsValidationMode === 'bulk' && customInputMode === 'gcs');
         document.getElementById('dataset').disabled = false;
         const datasetTrigger = document.getElementById('dataset-trigger');
         if (datasetTrigger) datasetTrigger.disabled = false;
@@ -6350,9 +6872,18 @@
         uploadSection.style.display = isGcs ? 'none' : '';
         gcsSection.style.display = isGcs ? '' : 'none';
         const descEl = document.getElementById('dataset-desc');
-        if (descEl) descEl.textContent = isGcs
-          ? 'Provide TMCF + CSV paths from GCS to validate.'
-          : 'Upload TMCF + CSV files to validate.';
+        if (descEl) {
+          descEl.textContent = isGcs
+            ? (gcsValidationMode === 'bulk'
+              ? 'Validate each immediate subfolder under a GCS root as a separate Batch job.'
+              : 'Provide TMCF + CSV paths from GCS to validate.')
+            : 'Upload TMCF + CSV files to validate.';
+        }
+        if (isGcs) {
+          syncGcsValidationModeUi();
+        } else {
+          setCustomDatasetNameBulkHidden(false);
+        }
         // Clear the inputs of the mode being hidden so stale values don't carry over.
         // Show/hide the validation config file row based on mode.
         // In GCS/Batch mode, file upload isn't supported — only URL is used.
@@ -6381,8 +6912,11 @@
             const el = document.getElementById(id); if (el) el.style.display = 'none';
           });
         } else {
-          ['tmcf-gcs-path','csv-gcs-paths','stat-vars-mcf-gcs-path','stat-vars-schema-mcf-gcs-path'].forEach(id => {
-            const el = document.getElementById(id); if (el) el.value = '';
+          hideBulkRunsPanel();
+          setGcsValidationMode('single');
+          ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path', 'bulk-gcs-root'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
           });
         }
         updateRunButtonState();
@@ -6390,9 +6924,49 @@
       uploadBtn.addEventListener('click', () => setMode('upload'));
       gcsBtn.addEventListener('click', () => setMode('gcs'));
       // Update run button state when GCS path inputs change.
-      ['tmcf-gcs-path', 'csv-gcs-paths'].forEach(id => {
-        document.getElementById(id)?.addEventListener('input', updateRunButtonState);
+      ['tmcf-gcs-path', 'csv-gcs-paths', 'bulk-gcs-root'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+          if (id === 'bulk-gcs-root') setBulkGcsRootValidation(false);
+          updateRunButtonState();
+        });
       });
+      (function() {
+        const bulkParEl = document.getElementById('bulk-gcs-parallelism');
+        if (!bulkParEl) return;
+        bulkParEl.addEventListener('input', () => {
+          sanitizeBulkParallelismInputField(bulkParEl);
+          updateRunButtonState();
+        });
+        bulkParEl.addEventListener('change', () => {
+          commitBulkParallelismInputField(bulkParEl);
+          updateRunButtonState();
+        });
+        bulkParEl.addEventListener('blur', () => {
+          commitBulkParallelismInputField(bulkParEl);
+          updateRunButtonState();
+        });
+        bulkParEl.addEventListener('keydown', (e) => {
+          if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-' || e.key === '.') {
+            e.preventDefault();
+          }
+        });
+        bulkParEl.addEventListener('paste', (e) => {
+          e.preventDefault();
+          const pasted = (e.clipboardData || window.clipboardData).getData('text') || '';
+          bulkParEl.value = pasted.replace(/[^\d]/g, '').slice(0, 2);
+          commitBulkParallelismInputField(bulkParEl);
+          updateRunButtonState();
+        });
+      })();
+      document.getElementById('gcs-mode-single-btn')?.addEventListener('click', () => setGcsValidationMode('single'));
+      document.getElementById('gcs-mode-bulk-btn')?.addEventListener('click', () => setGcsValidationMode('bulk'));
+      document.getElementById('gcs-mode-single-btn')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setGcsValidationMode('single'); }
+      });
+      document.getElementById('gcs-mode-bulk-btn')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setGcsValidationMode('bulk'); }
+      });
+      syncGcsValidationModeUi();
     })();
 
     setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { customTmcfFile = f; }, () => { customTmcfFile = null; });
