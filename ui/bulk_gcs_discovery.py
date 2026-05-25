@@ -15,10 +15,40 @@ _MAX_DATASET_ID_LEN = 48
 _MIN_DATASET_ID_LEN = 3
 DEFAULT_MAX_BULK_PARALLELISM = 5
 
-# Known optional MCF basenames (case-insensitive).
-_STAT_VARS_MCF_NAMES = frozenset({"stat_vars.mcf"})
-_SCHEMA_MCF_NAMES = frozenset({"stat_vars_schema.mcf", "schema.mcf"})
 _VALIDATION_CONFIG_NAME = "validation_config.json"
+_STAT_VARS_MCF_SUFFIX = "_stat_vars.mcf"
+_STAT_VARS_SCHEMA_MCF_SUFFIX = "_stat_vars_schema.mcf"
+_OUTPUT_TMCF_SUFFIX = "_output.tmcf"
+_OUTPUT_CSV_SUFFIX = "_output.csv"
+
+
+def _is_output_tmcf_basename(basename_lower: str) -> bool:
+    return basename_lower.endswith(_OUTPUT_TMCF_SUFFIX)
+
+
+def _is_output_csv_basename(basename_lower: str) -> bool:
+    return basename_lower.endswith(_OUTPUT_CSV_SUFFIX)
+
+
+def _output_tmcf_stem(basename_lower: str) -> str:
+    """Stem for ``sample_output.tmcf`` -> ``sample_output``."""
+    return basename_lower[: -len(".tmcf")]
+
+
+def _is_aux_stat_vars_mcf_basename(basename_lower: str) -> bool:
+    """e.g. ``StatisticsPoland_output_stat_vars.mcf`` (also bare ``stat_vars.mcf``)."""
+    return (
+        basename_lower.endswith(_STAT_VARS_MCF_SUFFIX)
+        or basename_lower == "stat_vars.mcf"
+    )
+
+
+def _is_aux_stat_vars_schema_mcf_basename(basename_lower: str) -> bool:
+    """e.g. ``*_stat_vars_schema.mcf`` (also bare ``stat_vars_schema.mcf``)."""
+    return (
+        basename_lower.endswith(_STAT_VARS_SCHEMA_MCF_SUFFIX)
+        or basename_lower == "stat_vars_schema.mcf"
+    )
 
 
 @dataclass(frozen=True)
@@ -133,41 +163,67 @@ def classify_folder_objects(
             continue
         basenames[base.lower()] = name
 
-    csv_paths: list[str] = []
-    tmcf_paths: list[str] = []
-    stat_vars_path = ""
-    schema_path = ""
+    output_tmcf_entries: list[tuple[str, str]] = []  # (basename_lower, gs_uri)
+    output_csv_basenames: list[str] = []
+    stat_vars_mcf_basenames: list[str] = []
+    stat_vars_schema_mcf_basenames: list[str] = []
     validation_config_path = ""
 
     for base_lower, full_name in basenames.items():
         if base_lower == _VALIDATION_CONFIG_NAME:
             validation_config_path = gs_uri(bucket, full_name)
             continue
-        if base_lower.endswith(".csv"):
-            csv_paths.append(gs_uri(bucket, full_name))
+        if _is_aux_stat_vars_schema_mcf_basename(base_lower):
+            stat_vars_schema_mcf_basenames.append(base_lower)
             continue
-        if base_lower.endswith(".tmcf"):
-            tmcf_paths.append(gs_uri(bucket, full_name))
+        if _is_aux_stat_vars_mcf_basename(base_lower):
+            stat_vars_mcf_basenames.append(base_lower)
             continue
-        if base_lower in _STAT_VARS_MCF_NAMES:
-            if stat_vars_path:
-                return None, "multiple stat_vars.mcf files"
-            stat_vars_path = gs_uri(bucket, full_name)
+        if _is_output_tmcf_basename(base_lower):
+            output_tmcf_entries.append((base_lower, gs_uri(bucket, full_name)))
             continue
-        if base_lower in _SCHEMA_MCF_NAMES:
-            if schema_path:
-                return None, "multiple schema MCF files"
-            schema_path = gs_uri(bucket, full_name)
+        if _is_output_csv_basename(base_lower):
+            output_csv_basenames.append(base_lower)
             continue
+        # Ignore unrelated CSVs, TMCFs, and other files.
 
-    if len(csv_paths) == 0:
-        return None, "missing CSV (exactly one .csv required)"
-    if len(csv_paths) > 1:
-        return None, f"multiple CSV files ({len(csv_paths)})"
-    if len(tmcf_paths) == 0:
-        return None, "missing TMCF (exactly one .tmcf required)"
-    if len(tmcf_paths) > 1:
-        return None, f"multiple TMCF files ({len(tmcf_paths)})"
+    if len(stat_vars_mcf_basenames) > 1:
+        names = ", ".join(sorted(stat_vars_mcf_basenames))
+        return None, f"multiple *_stat_vars.mcf files ({names})"
+    if len(stat_vars_schema_mcf_basenames) > 1:
+        names = ", ".join(sorted(stat_vars_schema_mcf_basenames))
+        return None, f"multiple *_stat_vars_schema.mcf files ({names})"
+
+    stat_vars_path = ""
+    if len(stat_vars_mcf_basenames) == 1:
+        stat_vars_path = gs_uri(bucket, basenames[stat_vars_mcf_basenames[0]])
+    schema_path = ""
+    if len(stat_vars_schema_mcf_basenames) == 1:
+        schema_path = gs_uri(bucket, basenames[stat_vars_schema_mcf_basenames[0]])
+
+    if len(output_tmcf_entries) == 0:
+        return None, "missing *_output.tmcf (exactly one required)"
+    if len(output_tmcf_entries) > 1:
+        names = ", ".join(e[0] for e in sorted(output_tmcf_entries))
+        return None, f"multiple *_output.tmcf files ({names})"
+
+    tmcf_basename_lower, tmcf_path = output_tmcf_entries[0]
+    tmcf_stem_lower = _output_tmcf_stem(tmcf_basename_lower)
+    expected_csv_lower = f"{tmcf_stem_lower}.csv"
+    csv_blob_name = basenames.get(expected_csv_lower)
+    csv_path = gs_uri(bucket, csv_blob_name) if csv_blob_name else ""
+
+    if len(output_csv_basenames) > 1:
+        names = ", ".join(sorted(output_csv_basenames))
+        return None, f"multiple *_output.csv files ({names})"
+    if not csv_path:
+        if output_csv_basenames:
+            only = output_csv_basenames[0]
+            return None, (
+                f"no *_output.csv matching {tmcf_basename_lower} "
+                f"(found {only} instead)"
+            )
+        return None, f"no matching *_output.csv for {tmcf_basename_lower}"
 
     folder_name = folder_name_from_prefix(folder_prefix, root_prefix)
     dataset_id = normalize_dataset_id(folder_name)
@@ -178,8 +234,8 @@ def classify_folder_objects(
         DiscoveredDataset(
             folder_prefix=folder_prefix,
             dataset_id=dataset_id,
-            csv_gcs_path=csv_paths[0],
-            tmcf_gcs_path=tmcf_paths[0],
+            csv_gcs_path=csv_path,
+            tmcf_gcs_path=tmcf_path,
             stat_vars_mcf_gcs_path=stat_vars_path,
             stat_vars_schema_mcf_gcs_path=schema_path,
             validation_config_gcs_path=validation_config_path,
@@ -264,7 +320,9 @@ def discover_datasets_under_root(
             skipped.append(SkippedFolder(folder_prefix=folder_prefix, reason=err or "unknown"))
             continue
         csv_total = sum(
-            size for name, size in objects if name.lower().endswith(".csv")
+            size
+            for name, size in objects
+            if gs_uri(bucket, name) == ds.csv_gcs_path
         )
         discovered.append(
             DiscoveredDataset(
