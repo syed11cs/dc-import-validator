@@ -72,7 +72,7 @@ class TestBulkResponseOutcome(unittest.TestCase):
         assert out is not None
         self.assertEqual(out["code"], "empty_root")
         self.assertEqual(out["severity"], "info")
-        self.assertEqual(out["title"], "Bulk discovery completed")
+        self.assertEqual(out["title"], "Discovery complete")
 
     def test_empty_root_inferred_severity(self) -> None:
         out = bulk_response_outcome({"submitted": 0, "datasets_found": 0})

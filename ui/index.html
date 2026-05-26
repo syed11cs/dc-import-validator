@@ -1515,8 +1515,45 @@
     .bulk-runs-panel--empty #bulk-live-status-summary,
     .bulk-runs-panel--empty #bulk-poll-refreshing,
     .bulk-runs-panel--empty #bulk-final-completion,
-    .bulk-runs-panel--empty #bulk-run-id-row {
+    .bulk-runs-panel--empty #bulk-run-id-row,
+    .bulk-runs-panel--empty #bulk-orchestration-banner {
       display: none !important;
+    }
+    .bulk-orchestration-banner {
+      font-size: 0.78rem;
+      margin: 0 0 8px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      line-height: 1.45;
+      color: #cbd5e1;
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.28);
+    }
+    .bulk-orchestration-banner strong { color: #e2e8f0; font-weight: 600; }
+    .bulk-runs-panel--validating {
+      border-color: rgba(99, 102, 241, 0.35);
+      box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.12);
+    }
+    .bulk-poll-warning {
+      font-size: 0.72rem;
+      margin: 0 0 8px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      color: #fcd34d;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      line-height: 1.4;
+    }
+    .bulk-live-status-summary--active {
+      border-color: rgba(99, 102, 241, 0.35);
+      background: rgba(99, 102, 241, 0.06);
+    }
+    .bulk-runs-table tr.bulk-row--active td {
+      background: rgba(99, 102, 241, 0.06);
+    }
+    .bulk-runs-table tr.bulk-row--active .bulk-status-pill--running,
+    .bulk-runs-table tr.bulk-row--active .bulk-status-pill--submitted {
+      box-shadow: 0 0 0 1px rgba(196, 181, 253, 0.35);
     }
     .bulk-submission-error {
       font-size: 0.78rem;
@@ -2133,6 +2170,7 @@
         </div>
         <div id="bulk-runs-panel" class="bulk-runs-panel" style="display: none;" aria-live="polite">
           <h3 style="font-size: 0.95rem; margin: 0 0 8px;">Bulk validation runs</h3>
+          <p id="bulk-orchestration-banner" class="bulk-orchestration-banner" style="display: none;" role="status"></p>
           <p id="bulk-discovery-status" class="bulk-discovery-status" style="display: none;"></p>
           <div id="bulk-runs-stats" class="bulk-runs-stats" style="display: none;" aria-label="Bulk discovery summary">
             <span>Discovered: <strong id="bulk-stat-discovered">0</strong></span>
@@ -2145,6 +2183,7 @@
           </div>
           <p id="bulk-submission-error" class="bulk-submission-error" style="display: none;" role="alert"></p>
           <div id="bulk-live-status-summary" class="bulk-live-status-summary" style="display: none;" role="status" aria-live="polite"></div>
+          <p id="bulk-poll-warning" class="bulk-poll-warning" style="display: none;" role="status"></p>
           <p id="bulk-poll-refreshing" class="bulk-poll-refreshing" style="display: none;" aria-hidden="true">
             <span class="bulk-poll-refreshing-dot" aria-hidden="true"></span>
             <span class="bulk-poll-refreshing-label">Updating job statuses…</span>
@@ -2252,8 +2291,18 @@
     let bulkRunsPollGeneration = 0;
     let lastRunWasBulkSubmission = false;
     let lastBulkDiscoveryInformational = false;
-    /** True while bulk dataset Batch jobs are non-terminal (submitted/starting/running). */
+    /** idle | discovering | orchestration_done | validating | finished */
+    let bulkExecutionPhase = 'idle';
+    /** Child runs to poll (set after POST /api/bulk-runs). */
+    let bulkPollTargets = [];
+    let bulkPollErrorStreak = 0;
+    let bulkPollCancelInProgress = false;
+  /** True while bulk dataset Batch jobs are non-terminal (submitted/starting/running). */
     let bulkDatasetJobsActive = false;
+    /** True during POST /api/bulk-runs (AbortController applies). */
+    let bulkSubmitInProgress = false;
+    const BULK_POLL_INTERVAL_MS = 5000;
+    const BULK_POLL_MAX_ERRORS = 5;
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
 
@@ -2962,9 +3011,95 @@
 
     function setBulkSubmissionMode(active) {
       lastRunWasBulkSubmission = !!active;
-      if (!active) lastBulkDiscoveryInformational = false;
+      if (!active) {
+        lastBulkDiscoveryInformational = false;
+        setBulkExecutionPhase('idle');
+      }
       const label = document.querySelector('.execution-label');
-      if (label) label.textContent = active ? 'Bulk submission' : 'Execution';
+      if (label) label.textContent = active ? 'Bulk validation' : 'Execution';
+    }
+
+    function setBulkExecutionPhase(phase) {
+      bulkExecutionPhase = phase || 'idle';
+      const panel = document.getElementById('bulk-runs-panel');
+      if (panel) {
+        panel.classList.toggle('bulk-runs-panel--validating', phase === 'validating');
+      }
+      updateBulkExecutionHeader();
+    }
+
+    function bulkActiveJobCountsFromTable() {
+      const counts = { starting: 0, running: 0, succeeded: 0, failed: 0, total: 0 };
+      document.querySelectorAll('#bulk-runs-tbody tr[data-run-id]').forEach((tr) => {
+        const cell = tr.querySelector('.bulk-run-status');
+        if (!cell) return;
+        counts.total += 1;
+        const group = bulkStatusGroup(cell.dataset.status || '');
+        counts[group] = (counts[group] || 0) + 1;
+      });
+      return counts;
+    }
+
+    function updateBulkExecutionHeader() {
+      const executionHeaderStatus = document.getElementById('execution-header-status');
+      if (!executionHeaderStatus || !lastRunWasBulkSubmission) return;
+      if (bulkExecutionPhase === 'discovering') {
+        executionHeaderStatus.textContent = 'Discovering & submitting…';
+        executionHeaderStatus.classList.add('running');
+        return;
+      }
+      if (bulkExecutionPhase === 'validating') {
+        const c = bulkActiveJobCountsFromTable();
+        const active = (c.starting || 0) + (c.running || 0);
+        executionHeaderStatus.textContent = active > 0
+          ? 'Dataset validation in progress · ' + active + ' active'
+          : 'Finalizing dataset results…';
+        executionHeaderStatus.classList.add('running');
+        return;
+      }
+      if (bulkExecutionPhase === 'finished') {
+        const c = bulkActiveJobCountsFromTable();
+        executionHeaderStatus.textContent =
+          '\u2713 All dataset validations finished · ' + (c.succeeded || 0) + ' succeeded';
+        executionHeaderStatus.classList.remove('running');
+        return;
+      }
+      if (bulkExecutionPhase === 'orchestration_done' && lastBulkDiscoveryInformational) {
+        executionHeaderStatus.textContent = '\u2713 Discovery complete';
+        executionHeaderStatus.classList.remove('running');
+      }
+    }
+
+    function setBulkOrchestrationBanner(visible, submittedCount) {
+      const el = document.getElementById('bulk-orchestration-banner');
+      if (!el) return;
+      if (!visible || submittedCount <= 0) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        return;
+      }
+      el.style.display = '';
+      el.innerHTML =
+        '<strong>Discovery &amp; submit complete.</strong> ' +
+        escapeHtml(String(submittedCount)) + ' dataset job' + (submittedCount === 1 ? '' : 's') +
+        ' submitted to Cloud Batch. Validations run below — this is not the final result.';
+    }
+
+    function setBulkPollWarning(message) {
+      const el = document.getElementById('bulk-poll-warning');
+      if (!el) return;
+      if (!message) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.style.display = '';
+      el.textContent = message;
+    }
+
+    function clearBulkPollWarning() {
+      bulkPollErrorStreak = 0;
+      setBulkPollWarning('');
     }
 
     function setBulkSubmissionSummaryCard(opts) {
@@ -2984,7 +3119,7 @@
         card.classList.add('outcome-pass');
         statusDot.classList.add('summary-card-status-dot--pass');
         outcomeText.style.color = 'var(--success)';
-        outcomeText.textContent = opts.outcomeTitle || 'Jobs submitted to Batch';
+        outcomeText.textContent = opts.outcomeTitle || 'Jobs submitted';
       } else {
         card.classList.add('outcome-fail');
         statusDot.classList.add('summary-card-status-dot--fail');
@@ -3004,6 +3139,13 @@
         outcome.appendChild(headerRight);
       }
       content.appendChild(outcome);
+      if (opts.subtitle) {
+        const sub = document.createElement('div');
+        sub.className = 'summary-card-badge';
+        sub.style.cssText = 'font-size:0.78em;color:var(--text-muted);margin-top:6px;line-height:1.4;';
+        sub.textContent = opts.subtitle;
+        content.appendChild(sub);
+      }
       if (opts.detail) {
         const badge = document.createElement('div');
         badge.className = 'summary-card-badge';
@@ -3048,19 +3190,27 @@
       return active;
     }
 
-    function setBulkRunButtonBusy(busy) {
+    function setBulkRunButtonBusy(mode) {
       const btn = document.getElementById('run-btn');
       if (!btn) return;
-      if (busy) {
+      if (mode === 'submit') {
         btn.disabled = true;
-        btn.classList.remove('btn-stop');
-        btn.classList.add('btn-bulk-running');
+        btn.classList.remove('btn-stop', 'btn-bulk-running');
         btn.setAttribute('aria-busy', 'true');
-        btn.textContent = 'Bulk jobs running\u2026';
-        btn.title = 'Waiting for all batch jobs to finish';
+        btn.textContent = 'Discovering & submitting\u2026';
+        btn.title = 'Stop cancels discovery and submit';
         return;
       }
-      btn.classList.remove('btn-bulk-running');
+      if (mode === 'jobs') {
+        btn.disabled = false;
+        btn.classList.add('btn-stop', 'btn-bulk-running');
+        btn.classList.remove('btn-bulk-running-only');
+        btn.removeAttribute('aria-busy');
+        btn.textContent = '\u25A0 Cancel dataset jobs';
+        btn.title = 'Request cancellation for all active Batch jobs in this bulk run';
+        return;
+      }
+      btn.classList.remove('btn-bulk-running', 'btn-bulk-running-only');
       btn.removeAttribute('aria-busy');
       if (!runAbortController) {
         btn.title = '';
@@ -3071,13 +3221,53 @@
       const activeJobs = bulkActiveJobCountFromTable();
       if (activeJobs > 0) {
         bulkDatasetJobsActive = true;
-        setBulkRunButtonBusy(true);
+        setBulkRunButtonBusy('jobs');
         return;
       }
       bulkDatasetJobsActive = false;
       setBulkRunButtonBusy(false);
       if (!runAbortController) {
         updateRunButtonState();
+      }
+    }
+
+    async function cancelBulkChildJobs() {
+      if (bulkPollCancelInProgress) return;
+      const btn = document.getElementById('run-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Cancelling jobs\u2026';
+      }
+      bulkPollCancelInProgress = true;
+      const targets = bulkPollTargets.length
+        ? bulkPollTargets
+        : Array.from(document.querySelectorAll('#bulk-runs-tbody tr[data-run-id]')).map((tr) => ({
+            run_id: tr.dataset.runId,
+          }));
+      let cancelled = 0;
+      for (const row of targets) {
+        const runId = row.run_id;
+        if (!runId) continue;
+        const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${CSS.escape(runId)}"]`);
+        const status = tr?.querySelector('.bulk-run-status')?.dataset.status || '';
+        if (!isBulkJobStatusActive(status) && status !== 'submitted') continue;
+        try {
+          const resp = await fetch(API + '/api/runs/' + encodeURIComponent(runId) + '/cancel', {
+            method: 'POST',
+          });
+          if (resp.ok) cancelled += 1;
+        } catch (_) { /* best effort */ }
+      }
+      bulkPollCancelInProgress = false;
+      setOutputContent(
+        cancelled > 0
+          ? 'Cancellation requested for ' + cancelled + ' active job(s). Status will update on the next poll.'
+          : 'No active jobs to cancel (they may have already finished).',
+        false,
+      );
+      if (btn) {
+        btn.disabled = false;
+        setBulkRunButtonBusy('jobs');
       }
     }
 
@@ -3108,8 +3298,8 @@
 
     function bulkOutcomeTitle(code) {
       const titles = {
-        empty_root: 'Bulk discovery completed',
-        no_runnable: 'Bulk discovery completed',
+        empty_root: 'Discovery complete',
+        no_runnable: 'Discovery complete',
         submit_failed: 'Submission failed',
         gcs_not_found: 'GCS path not found',
         gcs_access_denied: 'Access denied',
@@ -3368,6 +3558,7 @@
       stopBulkRunsPoll();
       panel.style.display = 'block';
       applyBulkOutcomePresentation(outcome, false);
+      setBulkOrchestrationBanner(false, 0);
       setBulkRunIdDisplay('');
       const statsEl = document.getElementById('bulk-runs-stats');
       if (statsEl) statsEl.style.display = 'none';
@@ -3458,6 +3649,7 @@
       const counts = { starting: 0, running: 0, succeeded: 0, failed: 0 };
       let polledRows = 0;
       let allTerminal = true;
+      let anyActive = false;
       cells.forEach((cell) => {
         const status = cell.dataset.status || cell.textContent.trim() || 'unknown';
         const group = bulkStatusGroup(status);
@@ -3465,20 +3657,27 @@
         const tr = cell.closest('tr');
         if (tr && tr.dataset.runId) {
           polledRows += 1;
+          const active = isBulkJobStatusActive(status);
+          tr.classList.toggle('bulk-row--active', active);
+          if (active) anyActive = true;
           if (!isBulkTerminalStatus(status)) allTerminal = false;
         }
       });
       if (cells.length === 0) {
         summaryEl.style.display = 'none';
+        summaryEl.classList.remove('bulk-live-status-summary--active');
         return;
       }
       summaryEl.style.display = '';
+      summaryEl.classList.toggle('bulk-live-status-summary--active', anyActive);
+      const phaseLabel = anyActive ? 'Dataset validation in progress' : 'Dataset job status';
       summaryEl.innerHTML =
-        '<span class="bulk-live-status-label">Batch job status</span>' +
+        '<span class="bulk-live-status-label">' + escapeHtml(phaseLabel) + '</span>' +
         bulkLiveMetricHtml(counts.starting, 'starting', 'starting') +
         bulkLiveMetricHtml(counts.running, 'running', 'running') +
         bulkLiveMetricHtml(counts.succeeded, 'succeeded', 'succeeded') +
         bulkLiveMetricHtml(counts.failed, 'failed', 'failed');
+      updateBulkExecutionHeader();
       if (finalEl && finalEl.style.display !== 'none') {
         summaryEl.style.display = 'none';
       } else if (polledRows > 0 && allTerminal) {
@@ -3492,9 +3691,16 @@
       finalEl.dataset.complete = '1';
       const succeeded = counts.succeeded || 0;
       const failed = counts.failed || 0;
+      setBulkExecutionPhase('finished');
+      clearBulkPollWarning();
+      const completedEl = document.getElementById('log-completed-at');
+      if (completedEl) {
+        completedEl.textContent = 'All dataset validations finished at ' + formatRunTimestamp(new Date());
+        completedEl.style.display = 'block';
+      }
       finalEl.style.display = '';
       finalEl.innerHTML =
-        'Bulk validation completed' +
+        'All dataset validations finished' +
         '<span class="bulk-final-completion-detail"> · ' +
         succeeded + ' succeeded · ' + failed + ' failed</span>';
       setBulkPollRefreshing(false);
@@ -4186,9 +4392,13 @@
 
     function updateRunButtonState() {
       const btn = document.getElementById('run-btn');
+      if (bulkSubmitInProgress) {
+        btn.disabled = true;
+        return;
+      }
       if (bulkDatasetJobsActive || bulkActiveJobCountFromTable() > 0) {
         bulkDatasetJobsActive = true;
-        setBulkRunButtonBusy(true);
+        setBulkRunButtonBusy('jobs');
         return;
       }
       const hasRules = document.querySelectorAll('.rule-checkbox').length > 0;
@@ -4225,13 +4435,14 @@
     // Run
     // ═══════════════════════════════════════════════════════════════
     function onRunButtonClick() {
+      if (bulkDatasetJobsActive && !runAbortController) {
+        cancelBulkChildJobs();
+        return;
+      }
       if (runAbortController) {
         const btn = document.getElementById('run-btn');
         if (btn) btn.textContent = 'Cancelling\u2026';
         runAbortController.abort();
-        return;
-      }
-      if (bulkDatasetJobsActive) {
         return;
       }
       runValidation();
@@ -4587,11 +4798,29 @@
       const executionHeaderStatus = document.getElementById('execution-header-status');
       if (success) {
         if (pctEl) pctEl.textContent = '';
-        if (executionHeaderStatus) {
-          const bulkDone = lastRunWasBulkSubmission && lastBulkDiscoveryInformational;
-          executionHeaderStatus.textContent = bulkDone
-            ? '\u2713 Bulk discovery completed · ' + formatElapsed(sec)
-            : '\u2713 Completed · ' + formatElapsed(sec);
+        if (lastRunWasBulkSubmission) {
+          if (lastBulkDiscoveryInformational) {
+            if (executionHeaderStatus) {
+              executionHeaderStatus.textContent = '\u2713 Discovery complete · ' + formatElapsed(sec);
+              executionHeaderStatus.classList.remove('running');
+            }
+            setBulkExecutionPhase('orchestration_done');
+          } else if (bulkDatasetJobsActive || bulkPollTargets.length > 0) {
+            if (executionHeaderStatus) {
+              executionHeaderStatus.textContent =
+                '\u2713 Discovery & submit complete · ' + formatElapsed(sec);
+              executionHeaderStatus.classList.add('running');
+            }
+            setBulkExecutionPhase('validating');
+          } else {
+            if (executionHeaderStatus) {
+              executionHeaderStatus.textContent = '\u2713 Discovery & submit complete · ' + formatElapsed(sec);
+              executionHeaderStatus.classList.remove('running');
+            }
+            setBulkExecutionPhase('orchestration_done');
+          }
+        } else if (executionHeaderStatus) {
+          executionHeaderStatus.textContent = '\u2713 Completed · ' + formatElapsed(sec);
           executionHeaderStatus.classList.remove('running');
         }
         setRunPhase('success');
@@ -4599,10 +4828,11 @@
         if (pctEl) pctEl.textContent = '';
         if (executionHeaderStatus) {
           executionHeaderStatus.textContent = lastRunWasBulkSubmission
-            ? '\u2715 Submission failed · ' + formatElapsed(sec)
+            ? '\u2715 Discovery & submit failed · ' + formatElapsed(sec)
             : '\u2715 Failed · ' + formatElapsed(sec);
           executionHeaderStatus.classList.remove('running');
         }
+        if (lastRunWasBulkSubmission) setBulkExecutionPhase('idle');
         setRunPhase('failed');
       }
       for (let i = 0; i < progressStepCount; i++) {
@@ -4931,8 +5161,13 @@
       if (panel) panel.style.display = 'none';
       stopBulkRunsPoll();
       clearBulkDatasetJobsTracking();
+      bulkPollTargets = [];
+      bulkSubmitInProgress = false;
       setBulkPanelFailureMode(false);
       setBulkPanelEmptyMode(false);
+      setBulkExecutionPhase('idle');
+      setBulkOrchestrationBanner(false, 0);
+      clearBulkPollWarning();
       const discoveryEl = document.getElementById('bulk-discovery-status');
       const statsEl = document.getElementById('bulk-runs-stats');
       if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
@@ -5035,6 +5270,8 @@
           tbody.appendChild(tr);
         });
         updateBulkLiveStatusSummary();
+        const submittedCount = runs.filter((r) => r.run_id && r.status === 'submitted').length;
+        setBulkOrchestrationBanner(true, submittedCount);
         startBulkRunsStatusPoll(runs);
       }
       if (skippedEl) {
@@ -5061,21 +5298,27 @@
 
     function startBulkRunsStatusPoll(runs) {
       stopBulkRunsPoll();
-      const pollTargets = (runs || []).filter((r) => r.run_id);
-      if (pollTargets.length === 0) {
+      bulkPollTargets = (runs || []).filter((r) => r.run_id);
+      clearBulkPollWarning();
+      if (bulkPollTargets.length === 0) {
         releaseBulkRunButtonIfIdle();
         updateBulkLiveStatusSummary();
         return;
       }
+      setBulkExecutionPhase('validating');
       bulkDatasetJobsActive = true;
-      setBulkRunButtonBusy(true);
+      setBulkRunButtonBusy('jobs');
       const pollGen = bulkRunsPollGeneration;
+      // Per-child GET /api/runs/{id}. A future GET /api/bulk-runs/{bulk_run_id} aggregate
+      // endpoint could reduce fan-out for large batches; deferred until scale requires it.
       const pollOnce = async () => {
         if (pollGen !== bulkRunsPollGeneration) return;
         setBulkPollRefreshing(true);
         let anyJobActive = false;
         let keepPollingForReports = false;
-        for (const row of pollTargets) {
+        let pollSuccesses = 0;
+        let pollFailures = 0;
+        for (const row of bulkPollTargets) {
           const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${CSS.escape(row.run_id)}"]`);
           const statusCell = tr?.querySelector('.bulk-run-status');
           const reportCell = tr?.querySelector('.bulk-report-cell');
@@ -5084,12 +5327,17 @@
           try {
             const resp = await fetch(API + '/api/runs/' + encodeURIComponent(row.run_id));
             if (resp.ok) {
+              pollSuccesses += 1;
               const st = await resp.json();
               status = st.status || 'unknown';
               statusCell.dataset.status = status;
               statusCell.innerHTML = bulkStatusBadgeHtml(status);
+            } else {
+              pollFailures += 1;
             }
-          } catch (_) { /* ignore poll errors */ }
+          } catch (_) {
+            pollFailures += 1;
+          }
           if (isBulkJobStatusActive(status)) {
             anyJobActive = true;
             updateBulkReportCell(reportCell, row.run_id, false);
@@ -5099,12 +5347,26 @@
           updateBulkReportCell(reportCell, row.run_id, reportReady);
           if (isBulkSuccessStatus(status) && !reportReady) keepPollingForReports = true;
         }
+        if (pollSuccesses > 0) {
+          bulkPollErrorStreak = 0;
+          setBulkPollWarning('');
+        } else if (pollFailures > 0) {
+          bulkPollErrorStreak += 1;
+          if (bulkPollErrorStreak >= BULK_POLL_MAX_ERRORS) {
+            setBulkPollWarning(
+              'Lost connection while updating job statuses. Retrying every ' +
+              (BULK_POLL_INTERVAL_MS / 1000) + 's…',
+            );
+          } else {
+            setBulkPollWarning('Temporary error updating statuses. Retrying…');
+          }
+        }
         updateBulkLiveStatusSummary();
         if (!anyJobActive) {
           releaseBulkRunButtonIfIdle();
         } else {
           bulkDatasetJobsActive = true;
-          setBulkRunButtonBusy(true);
+          setBulkRunButtonBusy('jobs');
         }
         if (!anyJobActive && !keepPollingForReports) {
           stopBulkRunsPoll();
@@ -5112,7 +5374,7 @@
         }
       };
       pollOnce();
-      bulkRunsPollTimer = setInterval(pollOnce, 5000);
+      bulkRunsPollTimer = setInterval(pollOnce, BULK_POLL_INTERVAL_MS);
     }
 
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
@@ -5434,6 +5696,9 @@
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
           if (gcsValidationMode === 'bulk') {
             setBulkSubmissionMode(true);
+            setBulkExecutionPhase('discovering');
+            bulkSubmitInProgress = true;
+            setBulkRunButtonBusy('submit');
             lastRunCustomDatasetName = null;
             const bulkRootErr = setBulkGcsRootValidation(true);
             if (bulkRootErr) {
@@ -5481,13 +5746,16 @@
               throw new Error(logMsg);
             }
             const bulkData = await bulkResp.json();
+            bulkSubmitInProgress = false;
             renderBulkRunsPanel(bulkData);
             const bulkLog = formatBulkRunLogMessage(bulkData);
             const bulkOutcome = classifyBulkResponseOutcome(bulkData);
             lastBulkDiscoveryInformational = isBulkInformationalOutcome(bulkOutcome);
+            const bulkSubmitted = parseInt(bulkData.submitted, 10) || 0;
             data = {
               success: bulkData.submitted > 0 || lastBulkDiscoveryInformational,
               bulkDiscoveryInformational: lastBulkDiscoveryInformational,
+              bulkSubmittedCount: bulkSubmitted,
               cancelled: false,
               run_id: bulkData.bulk_run_id,
               output: bulkLog,
@@ -5748,14 +6016,24 @@
             btn.classList.remove('btn-stop');
             updateRunButtonState();
           } else if (btn && bulkDatasetJobsActive) {
-            setBulkRunButtonBusy(true);
+            setBulkRunButtonBusy('jobs');
           }
         }
         showStatusBanner(data);
         const runCompletedAt = new Date();
         const completedEl = document.getElementById('log-completed-at');
-        completedEl.textContent = (lastRunWasBulkSubmission ? 'Submitted at ' : 'Completed at ') +
-          formatRunTimestamp(runCompletedAt);
+        if (lastRunWasBulkSubmission) {
+          if (lastBulkDiscoveryInformational) {
+            completedEl.textContent = 'Discovery finished at ' + formatRunTimestamp(runCompletedAt);
+          } else if (bulkDatasetJobsActive || bulkPollTargets.length > 0) {
+            completedEl.textContent = 'Discovery & submit finished at ' + formatRunTimestamp(runCompletedAt) +
+              ' (dataset validations still running)';
+          } else {
+            completedEl.textContent = 'Discovery & submit finished at ' + formatRunTimestamp(runCompletedAt);
+          }
+        } else {
+          completedEl.textContent = 'Completed at ' + formatRunTimestamp(runCompletedAt);
+        }
         completedEl.style.display = 'block';
         if (!lastRunWasBulkSubmission) {
           await loadLLMReportSection(runDataset);
@@ -5774,12 +6052,21 @@
           const geminiSkippedNoKey = (output.includes('LLM review skipped') || output.includes('no API key'));
           if (data.success) {
             if (lastRunWasBulkSubmission) {
+              const submittedN = data.bulkSubmittedCount || bulkPollTargets.length || 0;
               setBulkSubmissionSummaryCard({
                 success: true,
                 durationSec: lastRunDurationSec,
-                outcomeTitle: data.bulkDiscoveryInformational ? 'Bulk discovery completed' : undefined,
+                outcomeTitle: data.bulkDiscoveryInformational
+                  ? 'Discovery complete'
+                  : 'Discovery & submit complete',
+                subtitle: data.bulkDiscoveryInformational
+                  ? undefined
+                  : 'Dataset validations are running in Cloud Batch — monitor the dashboard below until all jobs finish.',
                 detail: (data.output || '').trim(),
               });
+              if (!data.bulkDiscoveryInformational && submittedN > 0) {
+                setBulkOrchestrationBanner(true, submittedN);
+              }
             } else {
               lastRunSummary = {
                 dataset: runDataset || null,
@@ -6030,6 +6317,7 @@
       } catch (e) {
         if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
         progressRunStartTime = null;
+        bulkSubmitInProgress = false;
         if (gcsValidationMode === 'bulk' && customInputMode === 'gcs') {
           setBulkDiscoveryStatus(false);
         }

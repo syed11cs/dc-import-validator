@@ -43,8 +43,8 @@ def bulk_outcome_title(outcome_code: str) -> str:
         "gcs_access_denied": "Access denied",
         "gcs_invalid_path": "Invalid GCS path",
         "gcs_error": "Discovery failed",
-        "empty_root": "Bulk discovery completed",
-        "no_runnable": "Bulk discovery completed",
+        "empty_root": "Discovery complete",
+        "no_runnable": "Discovery complete",
         "submit_failed": "Submission failed",
     }
     return titles.get(outcome_code, "Bulk discovery issue")
