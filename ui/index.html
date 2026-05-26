@@ -1470,6 +1470,110 @@
       color: var(--text-muted); opacity: 0.9;
     }
     .bulk-runs-stats strong { font-weight: 600; color: var(--text); }
+    .bulk-run-id-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+    }
+    .bulk-run-id-label { color: var(--text-muted); font-weight: 500; }
+    .bulk-run-id-value {
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 2px 6px;
+    }
+    .bulk-live-status-summary {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin: 0 0 6px;
+      line-height: 1.4;
+    }
+    .bulk-poll-refreshing {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin: 0 0 8px;
+      opacity: 0.85;
+    }
+    .bulk-poll-refreshing.is-active::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-right: 6px;
+      vertical-align: middle;
+      animation: progressPulse 1.4s ease-in-out infinite;
+    }
+    .bulk-final-completion {
+      font-size: 0.8rem;
+      color: var(--text);
+      margin: 0 0 8px;
+      font-weight: 500;
+    }
+    .bulk-final-completion-detail {
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    .bulk-status-pill {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 600;
+      line-height: 1.2;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
+    .bulk-status-pill--submitted {
+      color: #a3a3a3;
+      background: rgba(163, 163, 163, 0.12);
+      border-color: rgba(115, 115, 115, 0.35);
+    }
+    .bulk-status-pill--starting {
+      color: #93c5fd;
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.35);
+    }
+    .bulk-status-pill--running {
+      color: #c4b5fd;
+      background: rgba(139, 92, 246, 0.12);
+      border-color: rgba(139, 92, 246, 0.35);
+    }
+    .bulk-status-pill--completed {
+      color: #86efac;
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+    .bulk-status-pill--failed {
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+    .bulk-report-btn {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      text-decoration: none;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+    .bulk-report-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(99, 102, 241, 0.08);
+    }
     .bulk-skipped-list { margin-top: 8px; padding: 0; list-style: none; }
     .bulk-skipped-item {
       display: flex; flex-direction: column; gap: 1px;
@@ -1849,7 +1953,13 @@
             <span>Runnable: <strong id="bulk-stat-runnable">0</strong></span>
             <span>Skipped: <strong id="bulk-stat-skipped">0</strong></span>
           </div>
-          <p id="bulk-runs-summary" class="field-hint" style="display: none; margin: 0 0 8px;"></p>
+          <div id="bulk-run-id-row" class="bulk-run-id-row" style="display: none;">
+            <span class="bulk-run-id-label">Bulk run ID</span>
+            <code id="bulk-run-id-value" class="bulk-run-id-value"></code>
+          </div>
+          <p id="bulk-live-status-summary" class="bulk-live-status-summary" style="display: none;" aria-live="polite"></p>
+          <p id="bulk-poll-refreshing" class="bulk-poll-refreshing" style="display: none;" aria-hidden="true">Refreshing…</p>
+          <p id="bulk-final-completion" class="bulk-final-completion" style="display: none;" aria-live="polite"></p>
           <table id="bulk-runs-table" class="bulk-runs-table">
             <thead>
               <tr><th>Dataset</th><th>Status</th><th>Run ID</th><th>Report</th></tr>
@@ -1949,6 +2059,7 @@
     let gcsValidationMode = 'single'; // 'single' | 'bulk'
     let bulkRunsPollTimer = null;
     let bulkRunsPollGeneration = 0;
+    let lastRunWasBulkSubmission = false;
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
 
@@ -2653,6 +2764,165 @@
       if (banner) banner.style.display = 'none';
       const llmBanner = document.getElementById('llm-results-banner');
       if (llmBanner) llmBanner.style.display = 'none';
+    }
+
+    function setBulkSubmissionMode(active) {
+      lastRunWasBulkSubmission = !!active;
+      const label = document.querySelector('.execution-label');
+      if (label) label.textContent = active ? 'Bulk submission' : 'Execution';
+    }
+
+    function setBulkSubmissionSummaryCard(opts) {
+      const card = document.getElementById('summary-card');
+      const content = document.getElementById('summary-card-content');
+      if (!card || !content) return;
+      card.classList.remove('outcome-pass', 'outcome-warnings', 'outcome-fail');
+      content.innerHTML = '';
+      const outcome = document.createElement('div');
+      outcome.className = 'summary-card-outcome';
+      const outcomeLeft = document.createElement('div');
+      outcomeLeft.className = 'summary-card-outcome-left';
+      const statusDot = document.createElement('span');
+      statusDot.className = 'summary-card-status-dot';
+      const outcomeText = document.createElement('span');
+      if (opts.success) {
+        card.classList.add('outcome-pass');
+        statusDot.classList.add('summary-card-status-dot--pass');
+        outcomeText.style.color = 'var(--success)';
+        outcomeText.textContent = 'Jobs submitted to Batch';
+      } else {
+        card.classList.add('outcome-fail');
+        statusDot.classList.add('summary-card-status-dot--fail');
+        outcomeText.style.color = 'var(--fail)';
+        outcomeText.textContent = 'Bulk submission failed';
+      }
+      outcomeLeft.appendChild(statusDot);
+      outcomeLeft.appendChild(outcomeText);
+      outcome.appendChild(outcomeLeft);
+      if (opts.durationSec != null) {
+        const headerRight = document.createElement('div');
+        headerRight.className = 'summary-card-header-right';
+        const durationEl = document.createElement('span');
+        durationEl.className = 'summary-card-duration';
+        durationEl.textContent = opts.durationSec.toFixed(1) + 's';
+        headerRight.appendChild(durationEl);
+        outcome.appendChild(headerRight);
+      }
+      content.appendChild(outcome);
+      if (opts.detail) {
+        const badge = document.createElement('div');
+        badge.className = 'summary-card-badge';
+        badge.style.cssText = 'font-size:0.8em;color:var(--text-muted);margin-top:4px;line-height:1.4;';
+        badge.textContent = opts.detail;
+        content.appendChild(badge);
+      }
+      card.style.display = '';
+      setReportActionsVisible(false, false);
+    }
+
+    function bulkStatusGroup(status) {
+      const s = (status || '').toLowerCase();
+      if (s === 'submitted' || s === 'starting' || s === 'queued') return 'starting';
+      if (s === 'running') return 'running';
+      if (s === 'succeeded' || s === 'completed' || s === 'success') return 'completed';
+      if (s === 'failed' || s === 'cancelled') return 'failed';
+      return 'starting';
+    }
+
+    function isBulkTerminalStatus(status) {
+      const s = (status || '').toLowerCase();
+      return s === 'succeeded' || s === 'completed' || s === 'success' || s === 'failed' || s === 'cancelled';
+    }
+
+    function bulkStatusPillClass(status) {
+      const s = (status || '').toLowerCase();
+      if (s === 'submitted') return 'submitted';
+      return bulkStatusGroup(status);
+    }
+
+    function bulkStatusBadgeHtml(status) {
+      const raw = (status || 'unknown').trim();
+      const pillClass = bulkStatusPillClass(raw);
+      return '<span class="bulk-status-pill bulk-status-pill--' + pillClass + '">' + escapeHtml(raw) + '</span>';
+    }
+
+    function setBulkPollRefreshing(active) {
+      const el = document.getElementById('bulk-poll-refreshing');
+      if (!el) return;
+      el.style.display = active ? '' : 'none';
+      el.classList.toggle('is-active', !!active);
+      el.setAttribute('aria-hidden', active ? 'false' : 'true');
+    }
+
+    function updateBulkLiveStatusSummary() {
+      const summaryEl = document.getElementById('bulk-live-status-summary');
+      const finalEl = document.getElementById('bulk-final-completion');
+      if (!summaryEl) return;
+      const cells = document.querySelectorAll('#bulk-runs-tbody .bulk-run-status');
+      const counts = { starting: 0, running: 0, completed: 0, failed: 0 };
+      let polledRows = 0;
+      let allTerminal = true;
+      cells.forEach((cell) => {
+        const status = cell.dataset.status || cell.textContent.trim() || 'unknown';
+        const group = bulkStatusGroup(status);
+        counts[group] = (counts[group] || 0) + 1;
+        const tr = cell.closest('tr');
+        if (tr && tr.dataset.runId) {
+          polledRows += 1;
+          if (!isBulkTerminalStatus(status)) allTerminal = false;
+        }
+      });
+      if (cells.length === 0) {
+        summaryEl.style.display = 'none';
+        return;
+      }
+      summaryEl.style.display = '';
+      summaryEl.textContent =
+        counts.starting + ' starting · ' +
+        counts.running + ' running · ' +
+        counts.completed + ' completed · ' +
+        counts.failed + ' failed';
+      if (finalEl && finalEl.style.display !== 'none') {
+        summaryEl.style.display = 'none';
+      } else if (polledRows > 0 && allTerminal) {
+        showBulkFinalCompletionSummary(counts);
+      }
+    }
+
+    function showBulkFinalCompletionSummary(counts) {
+      const finalEl = document.getElementById('bulk-final-completion');
+      if (!finalEl || finalEl.dataset.complete === '1') return;
+      finalEl.dataset.complete = '1';
+      const succeeded = counts.completed || 0;
+      const failed = counts.failed || 0;
+      finalEl.style.display = '';
+      finalEl.innerHTML =
+        'Bulk validation completed' +
+        '<span class="bulk-final-completion-detail"> · ' +
+        succeeded + ' succeeded · ' + failed + ' failed</span>';
+      setBulkPollRefreshing(false);
+    }
+
+    function hideBulkFinalCompletionSummary() {
+      const finalEl = document.getElementById('bulk-final-completion');
+      if (finalEl) {
+        finalEl.dataset.complete = '';
+        finalEl.style.display = 'none';
+        finalEl.textContent = '';
+      }
+    }
+
+    function setBulkRunIdDisplay(bulkRunId) {
+      const row = document.getElementById('bulk-run-id-row');
+      const val = document.getElementById('bulk-run-id-value');
+      if (!row || !val) return;
+      if (bulkRunId) {
+        val.textContent = bulkRunId;
+        row.style.display = '';
+      } else {
+        val.textContent = '';
+        row.style.display = 'none';
+      }
     }
 
     async function fetchValidationCounts(dataset, runId) {
@@ -3720,7 +3990,9 @@
       } else {
         if (pctEl) pctEl.textContent = '';
         if (executionHeaderStatus) {
-          executionHeaderStatus.textContent = '\u2715 Failed · ' + formatElapsed(sec);
+          executionHeaderStatus.textContent = lastRunWasBulkSubmission
+            ? '\u2715 Submission failed · ' + formatElapsed(sec)
+            : '\u2715 Failed · ' + formatElapsed(sec);
           executionHeaderStatus.classList.remove('running');
         }
         setRunPhase('failed');
@@ -4048,6 +4320,11 @@
       const statsEl = document.getElementById('bulk-runs-stats');
       if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
       if (statsEl) statsEl.style.display = 'none';
+      setBulkRunIdDisplay('');
+      hideBulkFinalCompletionSummary();
+      setBulkPollRefreshing(false);
+      const live = document.getElementById('bulk-live-status-summary');
+      if (live) live.style.display = 'none';
       stopBulkRunsPoll();
     }
 
@@ -4073,12 +4350,12 @@
 
     function renderBulkRunsPanel(data) {
       const panel = document.getElementById('bulk-runs-panel');
-      const summary = document.getElementById('bulk-runs-summary');
       const statsEl = document.getElementById('bulk-runs-stats');
       const tbody = document.getElementById('bulk-runs-tbody');
       const skippedEl = document.getElementById('bulk-skipped-list');
       if (!panel || !tbody) return;
       setBulkDiscoveryStatus(false);
+      hideBulkFinalCompletionSummary();
       panel.style.display = 'block';
       const stats = bulkRunStatsFromResponse(data);
       if (statsEl) {
@@ -4090,22 +4367,18 @@
         if (s) s.textContent = String(stats.skipped);
         statsEl.style.display = '';
       }
-      if (summary) {
-        summary.textContent = data.bulk_run_id
-          ? `Bulk run ${data.bulk_run_id}`
-          : '';
-        summary.style.display = summary.textContent ? '' : 'none';
-      }
+      setBulkRunIdDisplay(data.bulk_run_id || '');
       tbody.innerHTML = '';
       (data.runs || []).forEach((row) => {
         const tr = document.createElement('tr');
         tr.dataset.runId = row.run_id || '';
+        const status = row.status || (row.run_id ? 'submitted' : 'failed');
         const reportCell = row.run_id
-          ? `<a href="${API}/api/runs/${encodeURIComponent(row.run_id)}/report" target="_blank" rel="noopener">Open</a>`
+          ? `<a class="bulk-report-btn" href="${API}/api/runs/${encodeURIComponent(row.run_id)}/report" target="_blank" rel="noopener">Open Report</a>`
           : '—';
         tr.innerHTML =
           `<td>${escapeHtml(row.dataset || '')}</td>` +
-          `<td class="bulk-run-status">${escapeHtml(row.status || '')}</td>` +
+          `<td class="bulk-run-status" data-status="${escapeHtml(status)}">${bulkStatusBadgeHtml(status)}</td>` +
           `<td><code>${escapeHtml(row.run_id || '')}</code></td>` +
           `<td>${reportCell}</td>`;
         if (row.error) {
@@ -4113,6 +4386,7 @@
         }
         tbody.appendChild(tr);
       });
+      updateBulkLiveStatusSummary();
       if (skippedEl) {
         skippedEl.innerHTML = '';
         const skipped = data.skipped_folders || [];
@@ -4135,14 +4409,18 @@
 
     function startBulkRunsStatusPoll(runs) {
       stopBulkRunsPoll();
-      const active = (runs || []).filter((r) => r.run_id && r.status === 'submitted');
-      if (active.length === 0) return;
+      const pollTargets = (runs || []).filter((r) => r.run_id);
+      if (pollTargets.length === 0) {
+        updateBulkLiveStatusSummary();
+        return;
+      }
       const pollGen = bulkRunsPollGeneration;
-      bulkRunsPollTimer = setInterval(async () => {
+      const pollOnce = async () => {
         if (pollGen !== bulkRunsPollGeneration) return;
+        setBulkPollRefreshing(true);
         let anyActive = false;
-        for (const row of active) {
-          const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${row.run_id}"]`);
+        for (const row of pollTargets) {
+          const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${CSS.escape(row.run_id)}"]`);
           const statusCell = tr?.querySelector('.bulk-run-status');
           if (!statusCell) continue;
           try {
@@ -4150,14 +4428,19 @@
             if (!resp.ok) continue;
             const st = await resp.json();
             const status = st.status || 'unknown';
-            statusCell.textContent = status;
-            if (status === 'running' || status === 'starting' || status === 'queued') {
-              anyActive = true;
-            }
+            statusCell.dataset.status = status;
+            statusCell.innerHTML = bulkStatusBadgeHtml(status);
+            if (!isBulkTerminalStatus(status)) anyActive = true;
           } catch (_) { /* ignore poll errors */ }
         }
-        if (!anyActive) stopBulkRunsPoll();
-      }, 5000);
+        updateBulkLiveStatusSummary();
+        if (!anyActive) {
+          stopBulkRunsPoll();
+          setBulkPollRefreshing(false);
+        }
+      };
+      pollOnce();
+      bulkRunsPollTimer = setInterval(pollOnce, 5000);
     }
 
     async function _submitAndPollBatchJob(runId, dataset, opts, signal) {
@@ -4387,6 +4670,7 @@
 
     async function runValidation() {
       if (!currentDataset) return;
+      setBulkSubmissionMode(false);
       const runDataset = currentDataset;
       const btn = document.getElementById('run-btn');
       runAbortController = new AbortController();
@@ -4474,6 +4758,7 @@
           hideBulkRunsPanel();
           const existenceChecks = document.getElementById('existence-checks-toggle')?.checked ? 'true' : 'false';
           if (gcsValidationMode === 'bulk') {
+            setBulkSubmissionMode(true);
             lastRunCustomDatasetName = null;
             const bulkRootErr = setBulkGcsRootValidation(true);
             if (bulkRootErr) {
@@ -4786,9 +5071,12 @@
         showStatusBanner(data);
         const runCompletedAt = new Date();
         const completedEl = document.getElementById('log-completed-at');
-        completedEl.textContent = 'Completed at ' + formatRunTimestamp(runCompletedAt);
+        completedEl.textContent = (lastRunWasBulkSubmission ? 'Submitted at ' : 'Completed at ') +
+          formatRunTimestamp(runCompletedAt);
         completedEl.style.display = 'block';
-        await loadLLMReportSection(runDataset);
+        if (!lastRunWasBulkSubmission) {
+          await loadLLMReportSection(runDataset);
+        }
         if (!data.cancelled) {
           lastRunDurationSec = runStartTime != null ? (runCompletedAt - runStartTime) / 1000 : null;
           const hasWarnings = (data.output || '').toLowerCase().includes('converted to warning');
@@ -4802,26 +5090,40 @@
           const output = data.output || '';
           const geminiSkippedNoKey = (output.includes('LLM review skipped') || output.includes('no API key'));
           if (data.success) {
-            lastRunSummary = {
-              dataset: runDataset || null,
-              run_id: data.run_id ?? null,
-              success: true,
-              cancelled: false,
-              pipelineFailedBeforeValidation: false,
-              failure_code: data.failure_code ?? null,
-              failure_step: data.failure_step,
-              failure_message: data.failure_message ?? null,
-              failure_details: data.failure_details || undefined,
-              runCount: 0,
-              failCount: 0,
-              warnCount: 0,
-              aiAdvisoryCount: 0,
-              failedRules: [],
-              warningRules: [],
+            if (lastRunWasBulkSubmission) {
+              setBulkSubmissionSummaryCard({
+                success: true,
+                durationSec: lastRunDurationSec,
+                detail: (data.output || '').trim(),
+              });
+            } else {
+              lastRunSummary = {
+                dataset: runDataset || null,
+                run_id: data.run_id ?? null,
+                success: true,
+                cancelled: false,
+                pipelineFailedBeforeValidation: false,
+                failure_code: data.failure_code ?? null,
+                failure_step: data.failure_step,
+                failure_message: data.failure_message ?? null,
+                failure_details: data.failure_details || undefined,
+                runCount: 0,
+                failCount: 0,
+                warnCount: 0,
+                aiAdvisoryCount: 0,
+                failedRules: [],
+                warningRules: [],
+                durationSec: lastRunDurationSec,
+                hasWarnings: hasWarnings || false,
+              };
+              setReportActionsVisible(true, false);
+            }
+          } else if (lastRunWasBulkSubmission) {
+            setBulkSubmissionSummaryCard({
+              success: false,
               durationSec: lastRunDurationSec,
-              hasWarnings: hasWarnings || false,
-            };
-            setReportActionsVisible(true, false);
+              detail: (data.failure_message || data.output || '').trim(),
+            });
           } else {
             const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
             let aiAdvisoryCount = 0;
@@ -4890,7 +5192,13 @@
         }
         const _restoreNotice = document.getElementById('custom-restore-notice');
         if (_restoreNotice) _restoreNotice.style.display = 'none';
-        if (!data.cancelled && data.success) {
+        if (!data.cancelled && data.success && lastRunWasBulkSubmission) {
+          lastRunDataset = runDataset;
+          lastRunStatus = 'success';
+          _sessionRunDatasets.add(runDataset);
+          lastRunReportId = null;
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'passed');
+        } else if (!data.cancelled && data.success) {
           lastRunDataset = runDataset;
           lastRunStatus = 'success';
           _sessionRunDatasets.add(runDataset);
@@ -4996,6 +5304,12 @@
           lastRunReportId = null;
           localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'cancelled');
           clearValidationResults();
+        } else if (lastRunWasBulkSubmission) {
+          lastRunDataset = runDataset;
+          lastRunStatus = 'failed';
+          _sessionRunDatasets.add(runDataset);
+          lastRunReportId = null;
+          localStorage.setItem(LAST_OUTCOME_KEY + runDataset, 'failed');
         } else {
           lastRunDataset = runDataset;
           lastRunStatus = 'failed';

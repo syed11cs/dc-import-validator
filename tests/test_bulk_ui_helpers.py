@@ -105,6 +105,20 @@ class TestIndexHtmlBulkUiContract(unittest.TestCase):
         idx_hint = self.html.find("id=\"bulk-folder-structure-hint\"")
         self.assertGreater(idx_hint, idx)
 
+    def test_bulk_dashboard_ux_polish_contract(self) -> None:
+        self.assertIn("id=\"bulk-run-id-row\"", self.html)
+        self.assertIn("Bulk run ID", self.html)
+        self.assertIn("id=\"bulk-live-status-summary\"", self.html)
+        self.assertIn("id=\"bulk-final-completion\"", self.html)
+        self.assertIn("id=\"bulk-poll-refreshing\"", self.html)
+        self.assertIn("bulk-status-pill--submitted", self.html)
+        self.assertIn("bulk-report-btn", self.html)
+        self.assertIn("Open Report</a>", self.html)
+        self.assertIn("setBulkSubmissionMode", self.html)
+        self.assertIn("Jobs submitted to Batch", self.html)
+        self.assertIn("Submitted at ", self.html)
+        self.assertNotIn("Bulk run bulk", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
