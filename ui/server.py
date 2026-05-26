@@ -4420,7 +4420,10 @@ async def _batch_run_html_report(run_id: str) -> HTMLResponse:
         raise HTTPException(status_code=500, detail=f"Failed to read run status: {exc}")
 
     if status is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Report not available yet — run not found or still starting",
+        )
 
     dataset = status.get("dataset", "")
     if not dataset:

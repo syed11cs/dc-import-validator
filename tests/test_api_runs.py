@@ -278,6 +278,17 @@ class TestServerRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         mock_cancel.assert_called_once_with("projects/p/jobs/j1")
 
+    @patch("ui.server.is_gcs_configured", return_value=True)
+    @patch("ui.server._get_job_status", return_value=None)
+    def test_run_report_not_found_message(self, _status, _gcs) -> None:
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        client = TestClient(app)
+        resp = client.get("/api/runs/missing-run/report")
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn("Report not available yet", resp.json()["detail"])
+
     @patch("ui.server._batch_run_html_report")
     def test_runs_report_alias(self, mock_report) -> None:
         from fastapi.responses import HTMLResponse

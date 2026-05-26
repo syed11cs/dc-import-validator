@@ -1487,28 +1487,60 @@
       border-radius: 3px;
       padding: 2px 6px;
     }
+    .bulk-submission-error {
+      font-size: 0.78rem;
+      margin: 0 0 8px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      line-height: 1.45;
+      border: 1px solid transparent;
+    }
+    .bulk-submission-error--error {
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.08);
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+    .bulk-submission-error--warning {
+      color: #fcd34d;
+      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(245, 158, 11, 0.28);
+    }
     .bulk-live-status-summary {
       font-size: 0.78rem;
       color: var(--text-muted);
       margin: 0 0 6px;
-      line-height: 1.4;
+      line-height: 1.5;
+      letter-spacing: 0.01em;
+    }
+    .bulk-live-status-summary .bulk-status-sep {
+      color: var(--border);
+      margin: 0 2px;
     }
     .bulk-poll-refreshing {
       font-size: 0.72rem;
       color: var(--text-muted);
       margin: 0 0 8px;
-      opacity: 0.85;
+      opacity: 0.9;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .bulk-poll-refreshing.is-active::before {
-      content: '';
-      display: inline-block;
+    .bulk-poll-refreshing.is-active .bulk-poll-refreshing-dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
       background: var(--accent);
-      margin-right: 6px;
-      vertical-align: middle;
+      flex-shrink: 0;
       animation: progressPulse 1.4s ease-in-out infinite;
+    }
+    .bulk-runs-empty {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 4px;
+      line-height: 1.45;
     }
     .bulk-final-completion {
       font-size: 0.8rem;
@@ -1546,7 +1578,7 @@
       background: rgba(139, 92, 246, 0.12);
       border-color: rgba(139, 92, 246, 0.35);
     }
-    .bulk-status-pill--completed {
+    .bulk-status-pill--succeeded {
       color: #86efac;
       background: rgba(34, 197, 94, 0.12);
       border-color: rgba(34, 197, 94, 0.35);
@@ -1573,6 +1605,19 @@
       border-color: var(--accent);
       color: var(--accent);
       background: rgba(99, 102, 241, 0.08);
+    }
+    .bulk-report-btn--pending {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px dashed var(--border);
+      color: var(--text-muted);
+      line-height: 1.3;
+      white-space: nowrap;
+      cursor: default;
+      opacity: 0.85;
     }
     .bulk-skipped-list { margin-top: 8px; padding: 0; list-style: none; }
     .bulk-skipped-item {
@@ -1957,9 +2002,14 @@
             <span class="bulk-run-id-label">Bulk run ID</span>
             <code id="bulk-run-id-value" class="bulk-run-id-value"></code>
           </div>
+          <p id="bulk-submission-error" class="bulk-submission-error" style="display: none;" role="alert"></p>
           <p id="bulk-live-status-summary" class="bulk-live-status-summary" style="display: none;" aria-live="polite"></p>
-          <p id="bulk-poll-refreshing" class="bulk-poll-refreshing" style="display: none;" aria-hidden="true">Refreshing…</p>
+          <p id="bulk-poll-refreshing" class="bulk-poll-refreshing" style="display: none;" aria-hidden="true">
+            <span class="bulk-poll-refreshing-dot" aria-hidden="true"></span>
+            <span class="bulk-poll-refreshing-label">Updating job statuses…</span>
+          </p>
           <p id="bulk-final-completion" class="bulk-final-completion" style="display: none;" aria-live="polite"></p>
+          <p id="bulk-runs-empty" class="bulk-runs-empty" style="display: none;" role="status"></p>
           <table id="bulk-runs-table" class="bulk-runs-table">
             <thead>
               <tr><th>Dataset</th><th>Status</th><th>Run ID</th><th>Report</th></tr>
@@ -2824,7 +2874,7 @@
       const s = (status || '').toLowerCase();
       if (s === 'submitted' || s === 'starting' || s === 'queued') return 'starting';
       if (s === 'running') return 'running';
-      if (s === 'succeeded' || s === 'completed' || s === 'success') return 'completed';
+      if (s === 'succeeded' || s === 'completed' || s === 'success') return 'succeeded';
       if (s === 'failed' || s === 'cancelled') return 'failed';
       return 'starting';
     }
@@ -2832,6 +2882,127 @@
     function isBulkTerminalStatus(status) {
       const s = (status || '').toLowerCase();
       return s === 'succeeded' || s === 'completed' || s === 'success' || s === 'failed' || s === 'cancelled';
+    }
+
+    function isBulkSuccessStatus(status) {
+      const s = (status || '').toLowerCase();
+      return s === 'succeeded' || s === 'completed' || s === 'success';
+    }
+
+    function formatBulkApiErrorDetail(detail) {
+      if (!detail) return '';
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((d) => (d && (d.msg || d.message)) || JSON.stringify(d)).join('; ');
+      }
+      if (typeof detail === 'object') {
+        if (detail.message) return String(detail.message);
+        if (detail.msg) return String(detail.msg);
+      }
+      try {
+        return JSON.stringify(detail);
+      } catch (_) {
+        return String(detail);
+      }
+    }
+
+    function bulkEmptyStateMessage(data) {
+      const discovered = parseInt(data.datasets_found, 10) || 0;
+      const submitted = parseInt(data.submitted, 10) || 0;
+      if (submitted > 0) return '';
+      if (discovered === 0) {
+        return 'No dataset folders found under this GCS root. Check the path, permissions, and expected folder layout.';
+      }
+      const runs = data.runs || [];
+      if (runs.length === 0) {
+        return 'No runnable datasets discovered. Every folder was skipped or did not match the expected artifact layout.';
+      }
+      return 'No runnable datasets were submitted. Review skipped folders and per-row errors below.';
+    }
+
+    function formatBulkRunLogMessage(bulkData) {
+      const submitted = parseInt(bulkData.submitted, 10) || 0;
+      const found = parseInt(bulkData.datasets_found, 10) || 0;
+      const skipped = (bulkData.skipped_folders || []).length;
+      const lines = [
+        `Submitted ${submitted} dataset job${submitted === 1 ? '' : 's'} from ${found} folder${found === 1 ? '' : 's'}.`,
+      ];
+      if (skipped) {
+        lines.push(`Skipped ${skipped} folder${skipped === 1 ? '' : 's'} (see list below).`);
+      }
+      const emptyMsg = bulkEmptyStateMessage(bulkData);
+      if (emptyMsg) lines.push(emptyMsg);
+      return lines.join('\n');
+    }
+
+    function setBulkSubmissionError(message, kind) {
+      const el = document.getElementById('bulk-submission-error');
+      if (!el) return;
+      const text = (message || '').trim();
+      if (!text) {
+        el.textContent = '';
+        el.style.display = 'none';
+        el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
+        return;
+      }
+      el.textContent = text;
+      el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
+      el.classList.add(kind === 'warning' ? 'bulk-submission-error--warning' : 'bulk-submission-error--error');
+      el.style.display = '';
+    }
+
+    function clearBulkSubmissionError() {
+      setBulkSubmissionError('', 'error');
+    }
+
+    function setBulkTableEmptyState(message) {
+      const emptyEl = document.getElementById('bulk-runs-empty');
+      const table = document.getElementById('bulk-runs-table');
+      if (!emptyEl) return;
+      const text = (message || '').trim();
+      if (!text) {
+        emptyEl.textContent = '';
+        emptyEl.style.display = 'none';
+        if (table) table.style.display = '';
+        return;
+      }
+      emptyEl.textContent = text;
+      emptyEl.style.display = '';
+      if (table) table.style.display = 'none';
+    }
+
+    function hideBulkTableEmptyState() {
+      setBulkTableEmptyState('');
+    }
+
+    function updateBulkReportCell(cell, runId, ready) {
+      if (!cell) return;
+      if (!runId) {
+        cell.innerHTML = '—';
+        cell.dataset.reportReady = '';
+        return;
+      }
+      cell.dataset.reportReady = ready ? '1' : '0';
+      if (ready) {
+        cell.innerHTML =
+          `<a class="bulk-report-btn" href="${API}/api/runs/${encodeURIComponent(runId)}/report" ` +
+          'target="_blank" rel="noopener">Open Report</a>';
+      } else {
+        cell.innerHTML = '<span class="bulk-report-btn--pending" aria-disabled="true">Preparing…</span>';
+      }
+    }
+
+    async function bulkReportEndpointReady(runId) {
+      if (!runId) return false;
+      try {
+        const resp = await fetch(
+          API + '/api/runs/' + encodeURIComponent(runId) + '/report',
+          { method: 'HEAD', cache: 'no-store' },
+        );
+        return resp.ok;
+      } catch (_) {
+        return false;
+      }
     }
 
     function bulkStatusPillClass(status) {
@@ -2859,7 +3030,7 @@
       const finalEl = document.getElementById('bulk-final-completion');
       if (!summaryEl) return;
       const cells = document.querySelectorAll('#bulk-runs-tbody .bulk-run-status');
-      const counts = { starting: 0, running: 0, completed: 0, failed: 0 };
+      const counts = { starting: 0, running: 0, succeeded: 0, failed: 0 };
       let polledRows = 0;
       let allTerminal = true;
       cells.forEach((cell) => {
@@ -2877,10 +3048,13 @@
         return;
       }
       summaryEl.style.display = '';
-      summaryEl.textContent =
-        counts.starting + ' starting · ' +
-        counts.running + ' running · ' +
-        counts.completed + ' completed · ' +
+      summaryEl.innerHTML =
+        counts.starting + ' starting' +
+        '<span class="bulk-status-sep"> · </span>' +
+        counts.running + ' running' +
+        '<span class="bulk-status-sep"> · </span>' +
+        counts.succeeded + ' succeeded' +
+        '<span class="bulk-status-sep"> · </span>' +
         counts.failed + ' failed';
       if (finalEl && finalEl.style.display !== 'none') {
         summaryEl.style.display = 'none';
@@ -2893,7 +3067,7 @@
       const finalEl = document.getElementById('bulk-final-completion');
       if (!finalEl || finalEl.dataset.complete === '1') return;
       finalEl.dataset.complete = '1';
-      const succeeded = counts.completed || 0;
+      const succeeded = counts.succeeded || 0;
       const failed = counts.failed || 0;
       finalEl.style.display = '';
       finalEl.innerHTML =
@@ -4321,6 +4495,8 @@
       if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
       if (statsEl) statsEl.style.display = 'none';
       setBulkRunIdDisplay('');
+      clearBulkSubmissionError();
+      hideBulkTableEmptyState();
       hideBulkFinalCompletionSummary();
       setBulkPollRefreshing(false);
       const live = document.getElementById('bulk-live-status-summary');
@@ -4357,6 +4533,12 @@
       setBulkDiscoveryStatus(false);
       hideBulkFinalCompletionSummary();
       panel.style.display = 'block';
+      const emptyMsg = bulkEmptyStateMessage(data);
+      if (emptyMsg && (parseInt(data.submitted, 10) || 0) === 0) {
+        setBulkSubmissionError(emptyMsg, 'warning');
+      } else {
+        clearBulkSubmissionError();
+      }
       const stats = bulkRunStatsFromResponse(data);
       if (statsEl) {
         const d = document.getElementById('bulk-stat-discovered');
@@ -4369,24 +4551,38 @@
       }
       setBulkRunIdDisplay(data.bulk_run_id || '');
       tbody.innerHTML = '';
-      (data.runs || []).forEach((row) => {
-        const tr = document.createElement('tr');
-        tr.dataset.runId = row.run_id || '';
-        const status = row.status || (row.run_id ? 'submitted' : 'failed');
-        const reportCell = row.run_id
-          ? `<a class="bulk-report-btn" href="${API}/api/runs/${encodeURIComponent(row.run_id)}/report" target="_blank" rel="noopener">Open Report</a>`
-          : '—';
-        tr.innerHTML =
-          `<td>${escapeHtml(row.dataset || '')}</td>` +
-          `<td class="bulk-run-status" data-status="${escapeHtml(status)}">${bulkStatusBadgeHtml(status)}</td>` +
-          `<td><code>${escapeHtml(row.run_id || '')}</code></td>` +
-          `<td>${reportCell}</td>`;
-        if (row.error) {
-          tr.title = row.error;
-        }
-        tbody.appendChild(tr);
-      });
-      updateBulkLiveStatusSummary();
+      const runs = data.runs || [];
+      if (runs.length === 0) {
+        setBulkTableEmptyState(emptyMsg || 'No dataset jobs to display.');
+        updateBulkLiveStatusSummary();
+      } else {
+        hideBulkTableEmptyState();
+        runs.forEach((row) => {
+          const tr = document.createElement('tr');
+          tr.dataset.runId = row.run_id || '';
+          const status = row.status || (row.run_id ? 'submitted' : 'failed');
+          tr.innerHTML =
+            `<td>${escapeHtml(row.dataset || '')}</td>` +
+            `<td class="bulk-run-status" data-status="${escapeHtml(status)}">${bulkStatusBadgeHtml(status)}</td>` +
+            `<td><code>${escapeHtml(row.run_id || '')}</code></td>` +
+            '<td class="bulk-report-cell"></td>';
+          const reportCell = tr.querySelector('.bulk-report-cell');
+          updateBulkReportCell(reportCell, row.run_id || '', false);
+          if (row.error) {
+            tr.title = row.error;
+            const firstTd = tr.querySelector('td');
+            if (firstTd) {
+              const errNote = document.createElement('div');
+              errNote.className = 'bulk-row-error';
+              errNote.style.cssText = 'font-size:0.68rem;color:var(--fail);margin-top:2px;line-height:1.35;';
+              errNote.textContent = row.error;
+              firstTd.appendChild(errNote);
+            }
+          }
+          tbody.appendChild(tr);
+        });
+        updateBulkLiveStatusSummary();
+      }
       if (skippedEl) {
         skippedEl.innerHTML = '';
         const skipped = data.skipped_folders || [];
@@ -4404,7 +4600,7 @@
           skippedEl.appendChild(li);
         });
       }
-      startBulkRunsStatusPoll(data.runs || []);
+      startBulkRunsStatusPoll(runs);
     }
 
     function startBulkRunsStatusPoll(runs) {
@@ -4422,16 +4618,26 @@
         for (const row of pollTargets) {
           const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${CSS.escape(row.run_id)}"]`);
           const statusCell = tr?.querySelector('.bulk-run-status');
+          const reportCell = tr?.querySelector('.bulk-report-cell');
           if (!statusCell) continue;
+          let status = statusCell.dataset.status || 'unknown';
           try {
             const resp = await fetch(API + '/api/runs/' + encodeURIComponent(row.run_id));
-            if (!resp.ok) continue;
-            const st = await resp.json();
-            const status = st.status || 'unknown';
-            statusCell.dataset.status = status;
-            statusCell.innerHTML = bulkStatusBadgeHtml(status);
-            if (!isBulkTerminalStatus(status)) anyActive = true;
+            if (resp.ok) {
+              const st = await resp.json();
+              status = st.status || 'unknown';
+              statusCell.dataset.status = status;
+              statusCell.innerHTML = bulkStatusBadgeHtml(status);
+            }
           } catch (_) { /* ignore poll errors */ }
+          if (!isBulkTerminalStatus(status)) {
+            anyActive = true;
+            updateBulkReportCell(reportCell, row.run_id, false);
+            continue;
+          }
+          const reportReady = await bulkReportEndpointReady(row.run_id);
+          updateBulkReportCell(reportCell, row.run_id, reportReady);
+          if (isBulkSuccessStatus(status) && !reportReady) anyActive = true;
         }
         updateBulkLiveStatusSummary();
         if (!anyActive) {
@@ -4763,8 +4969,13 @@
             const bulkRootErr = setBulkGcsRootValidation(true);
             if (bulkRootErr) {
               document.getElementById('bulk-gcs-root')?.focus();
+              const bulkPanelEarly = document.getElementById('bulk-runs-panel');
+              if (bulkPanelEarly) bulkPanelEarly.style.display = 'block';
+              setBulkSubmissionError(bulkRootErr, 'error');
+              setOutputContent(bulkRootErr, false);
               return;
             }
+            clearBulkSubmissionError();
             const bulkRoot = (document.getElementById('bulk-gcs-root')?.value || '').trim();
             const parallelism = getBulkParallelismForSubmit(); // server clamps again via MAX_BULK_PARALLELISM
             const bulkPanel = document.getElementById('bulk-runs-panel');
@@ -4794,25 +5005,25 @@
             });
             if (!bulkResp.ok) {
               const errJson = await bulkResp.json().catch(() => ({}));
-              const detail = errJson.detail;
-              const msg = typeof detail === 'string' ? detail
-                : (detail && detail.message) ? detail.message
-                : 'Bulk validation failed (' + bulkResp.status + ')';
+              const msg = formatBulkApiErrorDetail(errJson.detail) ||
+                'Bulk validation failed (' + bulkResp.status + ')';
+              setBulkDiscoveryStatus(false);
+              setBulkSubmissionError(msg, 'error');
+              setBulkTableEmptyState('');
               throw new Error(msg);
             }
             const bulkData = await bulkResp.json();
             renderBulkRunsPanel(bulkData);
-            const skippedNote = (bulkData.skipped_folders || []).length
-              ? `\nSkipped ${bulkData.skipped_folders.length} folder(s) — see list below the table.`
-              : '';
+            const bulkLog = formatBulkRunLogMessage(bulkData);
+            const bulkEmpty = bulkEmptyStateMessage(bulkData);
             data = {
               success: bulkData.submitted > 0,
               cancelled: false,
               run_id: bulkData.bulk_run_id,
-              output: `Bulk validation: submitted ${bulkData.submitted} job(s) for ${bulkData.datasets_found} folder(s).${skippedNote}`,
+              output: bulkLog,
               failure_code: null,
               failure_step: null,
-              failure_message: null,
+              failure_message: bulkEmpty || null,
               failure_details: null,
               baseline_id: null,
             };
@@ -5345,6 +5556,7 @@
         if (gcsValidationMode === 'bulk' && customInputMode === 'gcs') {
           setBulkDiscoveryStatus(false);
         }
+        const isBulkGcsRun = gcsValidationMode === 'bulk' && customInputMode === 'gcs';
         if (e.name === 'AbortError' && runAbortController?.signal?.aborted) {
           stopBulkRunsPoll();
           const durationSec = Math.floor((Date.now() - runStartTime) / 1000);
@@ -5365,6 +5577,17 @@
           const userMsg = (e && typeof e.message === 'string' && e.message.trim())
             ? e.message.trim()
             : 'Connection lost. The validation run may have been interrupted \u2014 please try again.';
+          if (isBulkGcsRun) {
+            setBulkSubmissionMode(true);
+            const bulkPanelErr = document.getElementById('bulk-runs-panel');
+            if (bulkPanelErr) bulkPanelErr.style.display = 'block';
+            setBulkSubmissionError(userMsg, 'error');
+            setBulkSubmissionSummaryCard({
+              success: false,
+              durationSec,
+              detail: userMsg,
+            });
+          }
           setOutputContent(userMsg, false);
           console.error('Validation error:', e);
           showStatusBanner({ success: false, cancelled: false });
