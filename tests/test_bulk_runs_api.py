@@ -281,6 +281,52 @@ class TestBulkRunsEndpoint(unittest.TestCase):
         self.assertEqual(len(data["skipped_folders"]), 1)
         mock_submit.assert_awaited_once()
 
+    @patch("ui.server.resolve_executor")
+    @patch("ui.server._gcs_uploads.is_gcs_uploads_configured", return_value=True)
+    @patch("ui.server._bulk_gcs.discover_datasets_under_root")
+    def test_empty_root_outcome_in_response(
+        self,
+        mock_discover,
+        _mock_gcs,
+        mock_resolve,
+    ) -> None:
+        mock_resolve.return_value = ExecutorResolution(
+            executor=BATCH, profile=PRODUCTION, reason="test"
+        )
+        mock_discover.return_value = ([], [])
+
+        client = self._client()
+        with self._env_patch():
+            resp = client.post("/api/bulk-runs", json={"root_gcs_path": "gs://b/empty/"})
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["submitted"], 0)
+        self.assertEqual(data["outcome"], "empty_root")
+        self.assertIn("No dataset folders", data["outcome_message"])
+
+    @patch("ui.server.resolve_executor")
+    @patch("ui.server._gcs_uploads.is_gcs_uploads_configured", return_value=True)
+    @patch("ui.server._bulk_gcs.discover_datasets_under_root")
+    def test_discovery_not_found_returns_404(
+        self,
+        mock_discover,
+        _mock_gcs,
+        mock_resolve,
+    ) -> None:
+        mock_resolve.return_value = ExecutorResolution(
+            executor=BATCH, profile=PRODUCTION, reason="test"
+        )
+        mock_discover.side_effect = Exception("404 Not Found")
+
+        client = self._client()
+        with self._env_patch():
+            resp = client.post("/api/bulk-runs", json={"root_gcs_path": "gs://b/missing/"})
+
+        self.assertEqual(resp.status_code, 404)
+        detail = resp.json()["detail"]
+        self.assertEqual(detail["code"], "gcs_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

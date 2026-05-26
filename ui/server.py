@@ -4312,7 +4312,8 @@ async def create_bulk_runs(body: _BulkRunsRequest):
         )
     except Exception as exc:
         logger.exception("bulk_runs discovery failed root=%s", root)
-        raise HTTPException(status_code=500, detail=f"Failed to list GCS folders: {exc}")
+        status_code, err_body = _bulk_gcs.classify_gcs_discovery_error(exc)
+        raise HTTPException(status_code=status_code, detail=err_body)
 
     bulk_run_id = _new_bulk_run_id()
     skipped_folders = [
@@ -4369,6 +4370,13 @@ async def create_bulk_runs(body: _BulkRunsRequest):
 
     submitted = sum(1 for r in runs if r.get("status") == "submitted")
     datasets_found = len(discovered) + len(skipped)
+    outcome_code, outcome_message = _bulk_gcs.bulk_discovery_outcome(
+        datasets_found=datasets_found,
+        submitted=submitted,
+        discovered_count=len(discovered),
+        skipped_count=len(skipped_folders),
+        run_count=len(runs),
+    )
     logger.info(
         "bulk_runs_complete bulk_run_id=%s root=%s datasets_found=%d submitted=%d skipped=%d",
         bulk_run_id,
@@ -4383,6 +4391,8 @@ async def create_bulk_runs(body: _BulkRunsRequest):
         "datasets_found": datasets_found,
         "submitted": submitted,
         "skipped": len(skipped_folders),
+        "outcome": outcome_code,
+        "outcome_message": outcome_message,
         "runs": runs,
         "skipped_folders": skipped_folders,
     }
@@ -4405,8 +4415,8 @@ async def get_batch_job_status(run_id: str):
         raise
 
 
-async def _batch_run_html_report(run_id: str) -> HTMLResponse:
-    """Fetch validation_report.html for a Batch run (dataset from status.json)."""
+async def _resolve_batch_run_report(run_id: str) -> tuple[str, bytes | None]:
+    """Return (dataset, report bytes). bytes is None when the HTML report is not in GCS yet."""
     if not is_gcs_configured():
         raise HTTPException(
             status_code=503,
@@ -4441,19 +4451,44 @@ async def _batch_run_html_report(run_id: str) -> HTMLResponse:
         )
         raise HTTPException(status_code=500, detail=f"Failed to read report: {exc}")
 
-    if content is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Report not available yet — the run may still be in progress",
-        )
+    return dataset, content
 
+
+_REPORT_NOT_READY_DETAIL = "Report not available yet — the run may still be in progress"
+
+
+async def _batch_run_html_report(run_id: str) -> HTMLResponse:
+    """Fetch validation_report.html for a Batch run (dataset from status.json)."""
+    _dataset, content = await _resolve_batch_run_report(run_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_READY_DETAIL)
     return HTMLResponse(content=content.decode("utf-8", errors="replace"))
+
+
+async def _batch_run_report_head(run_id: str) -> Response:
+    """HEAD probe for bulk UI report-link readiness (no response body)."""
+    _dataset, content = await _resolve_batch_run_report(run_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_READY_DETAIL)
+    return Response(status_code=200)
+
+
+@app.head("/api/runs/{run_id}/report")
+async def head_run_report(run_id: str):
+    """Report availability probe used by the bulk dashboard (GET serves HTML)."""
+    return await _batch_run_report_head(run_id)
 
 
 @app.get("/api/runs/{run_id}/report", response_class=HTMLResponse)
 async def get_run_report(run_id: str):
     """Canonical HTML report for a completed Batch run."""
     return await _batch_run_html_report(run_id)
+
+
+@app.head("/api/jobs/{run_id}/report")
+async def head_batch_job_report(run_id: str):
+    """Legacy alias for HEAD /api/runs/{run_id}/report."""
+    return await _batch_run_report_head(run_id)
 
 
 @app.get("/api/jobs/{run_id}/report", response_class=HTMLResponse)

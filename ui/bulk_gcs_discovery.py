@@ -295,6 +295,89 @@ def list_objects_under_prefix(
     return out
 
 
+def classify_gcs_discovery_error(exc: BaseException) -> tuple[int, dict[str, str]]:
+    """Map a GCS listing failure to HTTP status and a structured error payload."""
+    raw = str(exc).strip()
+    code = "gcs_error"
+    message = "Failed to access the GCS path. Check the URL and try again."
+    status = 500
+
+    try:
+        from google.api_core import exceptions as gexc
+
+        if isinstance(exc, gexc.NotFound):
+            return 404, {
+                "code": "gcs_not_found",
+                "message": "GCS path not found. Check the bucket and folder path.",
+                "detail": raw,
+            }
+        if isinstance(exc, gexc.Forbidden):
+            return 403, {
+                "code": "gcs_access_denied",
+                "message": "Access denied to GCS path. Verify bucket IAM for the service account.",
+                "detail": raw,
+            }
+        if isinstance(exc, gexc.Unauthorized):
+            return 403, {
+                "code": "gcs_access_denied",
+                "message": "Access denied to GCS path. Verify credentials and bucket permissions.",
+                "detail": raw,
+            }
+    except ImportError:
+        pass
+
+    lower = raw.lower()
+    if "404" in lower or "not found" in lower or "nosuchbucket" in lower or "no such object" in lower:
+        status, code = 404, "gcs_not_found"
+        message = "GCS path not found. Check the bucket and folder path."
+    elif (
+        "403" in lower
+        or "forbidden" in lower
+        or "access denied" in lower
+        or "permission" in lower
+        or "caller does not have" in lower
+    ):
+        status, code = 403, "gcs_access_denied"
+        message = "Access denied to GCS path. Verify bucket IAM for the service account."
+    elif "invalid" in lower and "bucket" in lower:
+        status, code = 400, "gcs_invalid_path"
+        message = "Invalid GCS path. Check the bucket name and folder prefix."
+
+    return status, {"code": code, "message": message, "detail": raw}
+
+
+def bulk_discovery_outcome(
+    *,
+    datasets_found: int,
+    submitted: int,
+    discovered_count: int,
+    skipped_count: int,
+    run_count: int,
+) -> tuple[str, str]:
+    """Return (outcome_code, user_message) for a completed bulk discovery response."""
+    if datasets_found == 0:
+        return (
+            "empty_root",
+            "No dataset folders found under the provided GCS path.",
+        )
+    if submitted > 0:
+        return "ok", ""
+    if discovered_count == 0 and skipped_count > 0:
+        return (
+            "no_runnable",
+            "No runnable dataset folders discovered. Every folder was skipped — see reasons below.",
+        )
+    if run_count > 0:
+        return (
+            "submit_failed",
+            "No jobs were submitted. Review per-dataset errors in the table below.",
+        )
+    return (
+        "no_runnable",
+        "No runnable dataset folders discovered.",
+    )
+
+
 def discover_datasets_under_root(
     root_gcs_path: str,
     *,

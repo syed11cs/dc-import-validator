@@ -7,7 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -288,6 +288,27 @@ class TestServerRoutes(unittest.TestCase):
         resp = client.get("/api/runs/missing-run/report")
         self.assertEqual(resp.status_code, 404)
         self.assertIn("Report not available yet", resp.json()["detail"])
+
+    @patch("ui.server._resolve_batch_run_report", new_callable=AsyncMock)
+    def test_run_report_head_ready(self, mock_resolve) -> None:
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        mock_resolve.return_value = ("custom", b"<html>ok</html>")
+        client = TestClient(app)
+        resp = client.head("/api/runs/run-xyz/report")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.content, b"")
+
+    @patch("ui.server._resolve_batch_run_report", new_callable=AsyncMock)
+    def test_run_report_head_not_ready(self, mock_resolve) -> None:
+        from fastapi.testclient import TestClient
+        from ui.server import app
+
+        mock_resolve.return_value = ("custom", None)
+        client = TestClient(app)
+        resp = client.head("/api/runs/run-xyz/report")
+        self.assertEqual(resp.status_code, 404)
 
     @patch("ui.server._batch_run_html_report")
     def test_runs_report_alias(self, mock_report) -> None:

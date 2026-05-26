@@ -161,6 +161,23 @@
     .btn.btn-stop { background: var(--fail); }
     .btn.btn-stop:hover { background: #e11d48; }
     #run-btn.btn-stop:hover:not(:disabled) { background: #e11d48; box-shadow: 0 0 0 1px var(--fail), 0 6px 20px rgba(244, 63, 94, 0.25); }
+    #run-btn.btn-bulk-running:disabled {
+      opacity: 0.72;
+      cursor: wait;
+      background: var(--accent);
+      box-shadow: var(--shadow-sm);
+    }
+    #run-btn.btn-bulk-running:disabled::after {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-left: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.9);
+      vertical-align: middle;
+      animation: progressPulse 1.4s ease-in-out infinite;
+    }
     .main { padding: 28px 32px; overflow-y: auto; min-height: 0; }
     .section { margin-bottom: 36px; }
     .section h2 {
@@ -1487,6 +1504,14 @@
       border-radius: 3px;
       padding: 2px 6px;
     }
+    .bulk-runs-panel--failure .bulk-runs-stats,
+    .bulk-runs-panel--failure #bulk-runs-table,
+    .bulk-runs-panel--failure #bulk-live-status-summary,
+    .bulk-runs-panel--failure #bulk-poll-refreshing,
+    .bulk-runs-panel--failure #bulk-final-completion,
+    .bulk-runs-panel--failure #bulk-run-id-row {
+      display: none !important;
+    }
     .bulk-submission-error {
       font-size: 0.78rem;
       margin: 0 0 8px;
@@ -1495,32 +1520,100 @@
       line-height: 1.45;
       border: 1px solid transparent;
     }
+    .bulk-submission-error-title {
+      font-weight: 600;
+      font-size: 0.82rem;
+      margin: 0 0 4px;
+    }
+    .bulk-submission-error-message {
+      margin: 0;
+      line-height: 1.45;
+    }
+    .bulk-submission-error-detail {
+      margin: 6px 0 0;
+      font-family: ui-monospace, monospace;
+      font-size: 0.68rem;
+      opacity: 0.9;
+      word-break: break-word;
+    }
     .bulk-submission-error--error {
       color: #fca5a5;
       background: rgba(239, 68, 68, 0.08);
       border-color: rgba(239, 68, 68, 0.28);
     }
+    .bulk-submission-error--error .bulk-submission-error-title { color: #fecaca; }
     .bulk-submission-error--warning {
       color: #fcd34d;
       background: rgba(245, 158, 11, 0.08);
       border-color: rgba(245, 158, 11, 0.28);
     }
+    .bulk-submission-error--warning .bulk-submission-error-title { color: #fde68a; }
     .bulk-live-status-summary {
-      font-size: 0.78rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 0;
+      margin: 0 0 8px;
+      padding: 8px 10px;
+      font-size: 0.8rem;
+      line-height: 1.3;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .bulk-live-status-label {
+      flex: 0 0 100%;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
       color: var(--text-muted);
-      margin: 0 0 6px;
-      line-height: 1.5;
-      letter-spacing: 0.01em;
+      margin: 0 0 4px;
+      opacity: 0.9;
     }
-    .bulk-live-status-summary .bulk-status-sep {
-      color: var(--border);
-      margin: 0 2px;
+    .bulk-live-metric {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 5px;
+      padding: 0 12px;
     }
+    .bulk-live-metric:first-of-type {
+      padding-left: 0;
+    }
+    .bulk-live-metric + .bulk-live-metric {
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .bulk-live-metric-n {
+      font-weight: 700;
+      font-size: 0.95rem;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .bulk-live-metric-l {
+      font-weight: 500;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: lowercase;
+    }
+    .bulk-live-metric--zero .bulk-live-metric-n {
+      font-weight: 600;
+      color: var(--text-muted);
+      opacity: 0.55;
+    }
+    .bulk-live-metric--zero .bulk-live-metric-l {
+      opacity: 0.65;
+    }
+    .bulk-live-metric--starting:not(.bulk-live-metric--zero) .bulk-live-metric-n { color: #93c5fd; }
+    .bulk-live-metric--running:not(.bulk-live-metric--zero) .bulk-live-metric-n { color: #c4b5fd; }
+    .bulk-live-metric--succeeded:not(.bulk-live-metric--zero) .bulk-live-metric-n { color: #86efac; }
+    .bulk-live-metric--failed:not(.bulk-live-metric--zero) .bulk-live-metric-n { color: #fca5a5; }
     .bulk-poll-refreshing {
       font-size: 0.72rem;
       color: var(--text-muted);
-      margin: 0 0 8px;
-      opacity: 0.9;
+      margin: -2px 0 8px;
+      padding-left: 2px;
+      opacity: 0.95;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -1542,14 +1635,36 @@
       border-radius: 4px;
       line-height: 1.45;
     }
+    .bulk-runs-empty-title {
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 4px;
+      font-size: 0.8rem;
+    }
+    .bulk-runs-empty--discovery-failure {
+      border-color: rgba(239, 68, 68, 0.35);
+      background: rgba(239, 68, 68, 0.05);
+    }
+    .bulk-runs-empty--empty-root {
+      border-color: rgba(245, 158, 11, 0.35);
+      background: rgba(245, 158, 11, 0.04);
+    }
+    .bulk-runs-empty--no-runnable {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(245, 158, 11, 0.03);
+    }
     .bulk-final-completion {
       font-size: 0.8rem;
       color: var(--text);
       margin: 0 0 8px;
-      font-weight: 500;
+      padding: 8px 10px;
+      font-weight: 600;
+      background: rgba(34, 197, 94, 0.06);
+      border: 1px solid rgba(34, 197, 94, 0.22);
+      border-radius: 4px;
     }
     .bulk-final-completion-detail {
-      font-weight: 400;
+      font-weight: 500;
       color: var(--text-muted);
     }
     .bulk-status-pill {
@@ -2003,7 +2118,7 @@
             <code id="bulk-run-id-value" class="bulk-run-id-value"></code>
           </div>
           <p id="bulk-submission-error" class="bulk-submission-error" style="display: none;" role="alert"></p>
-          <p id="bulk-live-status-summary" class="bulk-live-status-summary" style="display: none;" aria-live="polite"></p>
+          <div id="bulk-live-status-summary" class="bulk-live-status-summary" style="display: none;" role="status" aria-live="polite"></div>
           <p id="bulk-poll-refreshing" class="bulk-poll-refreshing" style="display: none;" aria-hidden="true">
             <span class="bulk-poll-refreshing-dot" aria-hidden="true"></span>
             <span class="bulk-poll-refreshing-label">Updating job statuses…</span>
@@ -2110,6 +2225,8 @@
     let bulkRunsPollTimer = null;
     let bulkRunsPollGeneration = 0;
     let lastRunWasBulkSubmission = false;
+    /** True while bulk dataset Batch jobs are non-terminal (submitted/starting/running). */
+    let bulkDatasetJobsActive = false;
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
     let gcsUploadsConfigured = false;
 
@@ -2844,7 +2961,7 @@
         card.classList.add('outcome-fail');
         statusDot.classList.add('summary-card-status-dot--fail');
         outcomeText.style.color = 'var(--fail)';
-        outcomeText.textContent = 'Bulk submission failed';
+        outcomeText.textContent = opts.outcomeTitle || 'Discovery failed';
       }
       outcomeLeft.appendChild(statusDot);
       outcomeLeft.appendChild(outcomeText);
@@ -2889,6 +3006,53 @@
       return s === 'succeeded' || s === 'completed' || s === 'success';
     }
 
+    function isBulkJobStatusActive(status) {
+      const s = (status || '').toLowerCase();
+      return s === 'submitted' || s === 'starting' || s === 'queued' || s === 'running';
+    }
+
+    function bulkActiveJobCountFromTable() {
+      let active = 0;
+      document.querySelectorAll('#bulk-runs-tbody .bulk-run-status').forEach((cell) => {
+        const status = cell.dataset.status || '';
+        if (isBulkJobStatusActive(status)) active += 1;
+      });
+      return active;
+    }
+
+    function setBulkRunButtonBusy(busy) {
+      const btn = document.getElementById('run-btn');
+      if (!btn) return;
+      if (busy) {
+        btn.disabled = true;
+        btn.classList.remove('btn-stop');
+        btn.classList.add('btn-bulk-running');
+        btn.setAttribute('aria-busy', 'true');
+        btn.textContent = 'Bulk jobs running\u2026';
+        btn.title = 'Waiting for all batch jobs to finish';
+        return;
+      }
+      btn.classList.remove('btn-bulk-running');
+      btn.removeAttribute('aria-busy');
+      if (!runAbortController) {
+        btn.title = '';
+      }
+    }
+
+    function releaseBulkRunButtonIfIdle() {
+      const activeJobs = bulkActiveJobCountFromTable();
+      if (activeJobs > 0) {
+        bulkDatasetJobsActive = true;
+        setBulkRunButtonBusy(true);
+        return;
+      }
+      bulkDatasetJobsActive = false;
+      setBulkRunButtonBusy(false);
+      if (!runAbortController) {
+        updateRunButtonState();
+      }
+    }
+
     function formatBulkApiErrorDetail(detail) {
       if (!detail) return '';
       if (typeof detail === 'string') return detail;
@@ -2906,21 +3070,123 @@
       }
     }
 
-    function bulkEmptyStateMessage(data) {
-      const discovered = parseInt(data.datasets_found, 10) || 0;
+    function classifyBulkResponseOutcome(data) {
       const submitted = parseInt(data.submitted, 10) || 0;
-      if (submitted > 0) return '';
-      if (discovered === 0) {
-        return 'No dataset folders found under this GCS root. Check the path, permissions, and expected folder layout.';
+      if (submitted > 0) return null;
+      const code = (data.outcome || '').trim();
+      const message = (data.outcome_message || '').trim();
+      const titles = {
+        empty_root: 'No dataset folders found',
+        no_runnable: 'No runnable datasets',
+        submit_failed: 'Submission failed',
+        ok: '',
+      };
+      if (code && code !== 'ok' && message) {
+        const severity = (code === 'no_runnable' || code === 'submit_failed') ? 'warning' : 'error';
+        return { code, title: titles[code] || 'Bulk discovery issue', message, severity };
       }
+      const discovered = parseInt(data.datasets_found, 10) || 0;
+      const skipped = (data.skipped_folders || []).length;
       const runs = data.runs || [];
-      if (runs.length === 0) {
-        return 'No runnable datasets discovered. Every folder was skipped or did not match the expected artifact layout.';
+      if (discovered === 0 && skipped === 0) {
+        return {
+          code: 'empty_root',
+          title: 'No dataset folders found',
+          message: 'No dataset folders found under the provided GCS path.',
+          severity: 'error',
+        };
       }
-      return 'No runnable datasets were submitted. Review skipped folders and per-row errors below.';
+      if (!runs.length && skipped > 0) {
+        return {
+          code: 'no_runnable',
+          title: 'No runnable datasets',
+          message: 'No runnable dataset folders discovered. Every folder was skipped.',
+          severity: 'warning',
+        };
+      }
+      if (runs.length) {
+        return {
+          code: 'submit_failed',
+          title: 'Submission failed',
+          message: 'No jobs were submitted. Review per-dataset errors below.',
+          severity: 'warning',
+        };
+      }
+      return {
+        code: 'no_runnable',
+        title: 'No runnable datasets',
+        message: 'No runnable dataset folders discovered.',
+        severity: 'warning',
+      };
+    }
+
+    function friendlyBulkApiDiscoveryOutcome(detail, httpStatus) {
+      let code = '';
+      let message = '';
+      let raw = '';
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        code = (detail.code || '').toLowerCase();
+        message = (detail.message || detail.msg || '').trim();
+        raw = (detail.detail || '').trim();
+      } else {
+        message = formatBulkApiErrorDetail(detail);
+        raw = message;
+      }
+      const m = (message + ' ' + raw).toLowerCase();
+      if (code === 'gcs_not_found' || httpStatus === 404 || m.includes('not found') || m.includes('nosuchbucket')) {
+        return {
+          code: 'gcs_not_found',
+          title: 'GCS path not found',
+          message: message || 'The bucket or folder path does not exist.',
+          detail: raw || message,
+          severity: 'error',
+        };
+      }
+      if (code === 'gcs_access_denied' || httpStatus === 403 || m.includes('access denied') || m.includes('forbidden') || m.includes('permission')) {
+        return {
+          code: 'gcs_access_denied',
+          title: 'Access denied',
+          message: message || 'Access denied to GCS path. Verify bucket IAM for the service account.',
+          detail: raw || message,
+          severity: 'error',
+        };
+      }
+      if (code === 'gcs_invalid_path' || httpStatus === 400) {
+        return {
+          code: 'gcs_invalid_path',
+          title: 'Invalid GCS path',
+          message: message || 'Check the bucket name and folder prefix.',
+          detail: raw || message,
+          severity: 'error',
+        };
+      }
+      return {
+        code: code || 'gcs_error',
+        title: 'Discovery failed',
+        message: message || 'Could not list dataset folders under the GCS path.',
+        detail: raw || message,
+        severity: 'error',
+      };
+    }
+
+    function clientBulkRootOutcome(message) {
+      const m = (message || '').toLowerCase();
+      if (m.includes('gs://') && m.includes('required')) {
+        return { code: 'gcs_invalid_path', title: 'Invalid GCS path', message, severity: 'error' };
+      }
+      return { code: 'gcs_invalid_path', title: 'Invalid GCS path', message, severity: 'error' };
     }
 
     function formatBulkRunLogMessage(bulkData) {
+      const outcome = classifyBulkResponseOutcome(bulkData);
+      if (outcome) {
+        const lines = [outcome.title + ': ' + outcome.message];
+        const skipped = (bulkData.skipped_folders || []).length;
+        if (skipped) {
+          lines.push(`Skipped ${skipped} folder${skipped === 1 ? '' : 's'} (see list below).`);
+        }
+        return lines.join('\n');
+      }
       const submitted = parseInt(bulkData.submitted, 10) || 0;
       const found = parseInt(bulkData.datasets_found, 10) || 0;
       const skipped = (bulkData.skipped_folders || []).length;
@@ -2930,49 +3196,104 @@
       if (skipped) {
         lines.push(`Skipped ${skipped} folder${skipped === 1 ? '' : 's'} (see list below).`);
       }
-      const emptyMsg = bulkEmptyStateMessage(bulkData);
-      if (emptyMsg) lines.push(emptyMsg);
       return lines.join('\n');
     }
 
-    function setBulkSubmissionError(message, kind) {
+    function setBulkSubmissionError(outcome) {
       const el = document.getElementById('bulk-submission-error');
       if (!el) return;
-      const text = (message || '').trim();
-      if (!text) {
-        el.textContent = '';
+      if (!outcome || !(outcome.title || outcome.message)) {
+        el.innerHTML = '';
         el.style.display = 'none';
         el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
         return;
       }
-      el.textContent = text;
+      const severity = outcome.severity === 'warning' ? 'warning' : 'error';
       el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
-      el.classList.add(kind === 'warning' ? 'bulk-submission-error--warning' : 'bulk-submission-error--error');
+      el.classList.add(severity === 'warning' ? 'bulk-submission-error--warning' : 'bulk-submission-error--error');
+      let html = '<div class="bulk-submission-error-title">' + escapeHtml(outcome.title || 'Error') + '</div>' +
+        '<p class="bulk-submission-error-message">' + escapeHtml(outcome.message || '') + '</p>';
+      const detail = (outcome.detail || '').trim();
+      if (detail && detail !== (outcome.message || '').trim()) {
+        html += '<p class="bulk-submission-error-detail">' + escapeHtml(detail) + '</p>';
+      }
+      el.innerHTML = html;
       el.style.display = '';
     }
 
     function clearBulkSubmissionError() {
-      setBulkSubmissionError('', 'error');
+      setBulkSubmissionError(null);
     }
 
-    function setBulkTableEmptyState(message) {
+    function setBulkPanelFailureMode(active) {
+      const panel = document.getElementById('bulk-runs-panel');
+      if (panel) panel.classList.toggle('bulk-runs-panel--failure', !!active);
+    }
+
+    function setBulkTableEmptyState(outcome) {
       const emptyEl = document.getElementById('bulk-runs-empty');
       const table = document.getElementById('bulk-runs-table');
       if (!emptyEl) return;
-      const text = (message || '').trim();
-      if (!text) {
-        emptyEl.textContent = '';
+      if (!outcome || !(outcome.title || outcome.message)) {
+        emptyEl.innerHTML = '';
+        emptyEl.className = 'bulk-runs-empty';
         emptyEl.style.display = 'none';
         if (table) table.style.display = '';
         return;
       }
-      emptyEl.textContent = text;
+      const kindClass = {
+        gcs_not_found: 'bulk-runs-empty--discovery-failure',
+        gcs_access_denied: 'bulk-runs-empty--discovery-failure',
+        gcs_error: 'bulk-runs-empty--discovery-failure',
+        gcs_invalid_path: 'bulk-runs-empty--discovery-failure',
+        empty_root: 'bulk-runs-empty--empty-root',
+        no_runnable: 'bulk-runs-empty--no-runnable',
+        submit_failed: 'bulk-runs-empty--no-runnable',
+      };
+      emptyEl.className = 'bulk-runs-empty ' + (kindClass[outcome.code] || 'bulk-runs-empty--discovery-failure');
+      emptyEl.innerHTML =
+        '<div class="bulk-runs-empty-title">' + escapeHtml(outcome.title || '') + '</div>' +
+        '<p>' + escapeHtml(outcome.message || '') + '</p>';
       emptyEl.style.display = '';
       if (table) table.style.display = 'none';
     }
 
     function hideBulkTableEmptyState() {
-      setBulkTableEmptyState('');
+      setBulkTableEmptyState(null);
+    }
+
+    function showBulkDiscoveryFailurePanel(outcome, skippedFolders) {
+      const panel = document.getElementById('bulk-runs-panel');
+      const tbody = document.getElementById('bulk-runs-tbody');
+      const skippedEl = document.getElementById('bulk-skipped-list');
+      if (!panel) return;
+      setBulkDiscoveryStatus(false);
+      hideBulkFinalCompletionSummary();
+      stopBulkRunsPoll();
+      panel.style.display = 'block';
+      setBulkPanelFailureMode(true);
+      setBulkSubmissionError(outcome);
+      setBulkTableEmptyState(outcome);
+      setBulkRunIdDisplay('');
+      const statsEl = document.getElementById('bulk-runs-stats');
+      if (statsEl) statsEl.style.display = 'none';
+      if (tbody) tbody.innerHTML = '';
+      const live = document.getElementById('bulk-live-status-summary');
+      if (live) { live.style.display = 'none'; live.textContent = ''; }
+      setBulkPollRefreshing(false);
+      if (skippedEl) {
+        skippedEl.innerHTML = '';
+        (skippedFolders || []).forEach((item) => {
+          const li = document.createElement('li');
+          li.className = 'bulk-skipped-item';
+          const folder = item.folder || '';
+          const name = bulkFolderDisplayName(folder);
+          li.innerHTML =
+            `<span class="bulk-skipped-folder">${escapeHtml(name)}</span>` +
+            `<span class="bulk-skipped-reason">${escapeHtml(item.reason || '')}</span>`;
+          skippedEl.appendChild(li);
+        });
+      }
     }
 
     function updateBulkReportCell(cell, runId, ready) {
@@ -3025,6 +3346,16 @@
       el.setAttribute('aria-hidden', active ? 'false' : 'true');
     }
 
+    function bulkLiveMetricHtml(count, label, kind) {
+      const n = count || 0;
+      const zeroClass = n === 0 ? ' bulk-live-metric--zero' : '';
+      return (
+        '<span class="bulk-live-metric bulk-live-metric--' + kind + zeroClass + '">' +
+        '<span class="bulk-live-metric-n">' + n + '</span>' +
+        '<span class="bulk-live-metric-l">' + escapeHtml(label) + '</span></span>'
+      );
+    }
+
     function updateBulkLiveStatusSummary() {
       const summaryEl = document.getElementById('bulk-live-status-summary');
       const finalEl = document.getElementById('bulk-final-completion');
@@ -3049,13 +3380,11 @@
       }
       summaryEl.style.display = '';
       summaryEl.innerHTML =
-        counts.starting + ' starting' +
-        '<span class="bulk-status-sep"> · </span>' +
-        counts.running + ' running' +
-        '<span class="bulk-status-sep"> · </span>' +
-        counts.succeeded + ' succeeded' +
-        '<span class="bulk-status-sep"> · </span>' +
-        counts.failed + ' failed';
+        '<span class="bulk-live-status-label">Batch job status</span>' +
+        bulkLiveMetricHtml(counts.starting, 'starting', 'starting') +
+        bulkLiveMetricHtml(counts.running, 'running', 'running') +
+        bulkLiveMetricHtml(counts.succeeded, 'succeeded', 'succeeded') +
+        bulkLiveMetricHtml(counts.failed, 'failed', 'failed');
       if (finalEl && finalEl.style.display !== 'none') {
         summaryEl.style.display = 'none';
       } else if (polledRows > 0 && allTerminal) {
@@ -3763,6 +4092,11 @@
 
     function updateRunButtonState() {
       const btn = document.getElementById('run-btn');
+      if (bulkDatasetJobsActive || bulkActiveJobCountFromTable() > 0) {
+        bulkDatasetJobsActive = true;
+        setBulkRunButtonBusy(true);
+        return;
+      }
       const hasRules = document.querySelectorAll('.rule-checkbox').length > 0;
       const atLeastOneRule = document.querySelectorAll('.rule-checkbox:checked').length > 0;
       if (!currentDataset || (hasRules && !atLeastOneRule)) {
@@ -3801,6 +4135,9 @@
         const btn = document.getElementById('run-btn');
         if (btn) btn.textContent = 'Cancelling\u2026';
         runAbortController.abort();
+        return;
+      }
+      if (bulkDatasetJobsActive) {
         return;
       }
       runValidation();
@@ -4487,9 +4824,17 @@
       }
     }
 
+    function clearBulkDatasetJobsTracking() {
+      bulkDatasetJobsActive = false;
+      setBulkRunButtonBusy(false);
+    }
+
     function hideBulkRunsPanel() {
       const panel = document.getElementById('bulk-runs-panel');
       if (panel) panel.style.display = 'none';
+      stopBulkRunsPoll();
+      clearBulkDatasetJobsTracking();
+      setBulkPanelFailureMode(false);
       const discoveryEl = document.getElementById('bulk-discovery-status');
       const statsEl = document.getElementById('bulk-runs-stats');
       if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
@@ -4501,7 +4846,6 @@
       setBulkPollRefreshing(false);
       const live = document.getElementById('bulk-live-status-summary');
       if (live) live.style.display = 'none';
-      stopBulkRunsPoll();
     }
 
     function bulkRunStatsFromResponse(data) {
@@ -4524,6 +4868,11 @@
       }
     }
 
+    function bulkPanelIsOperational(outcome, runs) {
+      if (!outcome) return true;
+      return outcome.code === 'submit_failed' && runs.length > 0;
+    }
+
     function renderBulkRunsPanel(data) {
       const panel = document.getElementById('bulk-runs-panel');
       const statsEl = document.getElementById('bulk-runs-stats');
@@ -4533,9 +4882,12 @@
       setBulkDiscoveryStatus(false);
       hideBulkFinalCompletionSummary();
       panel.style.display = 'block';
-      const emptyMsg = bulkEmptyStateMessage(data);
-      if (emptyMsg && (parseInt(data.submitted, 10) || 0) === 0) {
-        setBulkSubmissionError(emptyMsg, 'warning');
+      const runs = data.runs || [];
+      const outcome = classifyBulkResponseOutcome(data);
+      const operational = bulkPanelIsOperational(outcome, runs);
+      setBulkPanelFailureMode(!operational);
+      if (outcome) {
+        setBulkSubmissionError(outcome);
       } else {
         clearBulkSubmissionError();
       }
@@ -4547,13 +4899,18 @@
         if (d) d.textContent = String(stats.discovered);
         if (v) v.textContent = String(stats.runnable);
         if (s) s.textContent = String(stats.skipped);
-        statsEl.style.display = '';
+        statsEl.style.display = operational ? '' : 'none';
       }
-      setBulkRunIdDisplay(data.bulk_run_id || '');
+      setBulkRunIdDisplay(operational ? (data.bulk_run_id || '') : '');
       tbody.innerHTML = '';
-      const runs = data.runs || [];
-      if (runs.length === 0) {
-        setBulkTableEmptyState(emptyMsg || 'No dataset jobs to display.');
+      if (!operational) {
+        setBulkTableEmptyState(outcome);
+        setBulkPollRefreshing(false);
+        const live = document.getElementById('bulk-live-status-summary');
+        if (live) { live.style.display = 'none'; live.textContent = ''; }
+        updateBulkLiveStatusSummary();
+      } else if (runs.length === 0) {
+        hideBulkTableEmptyState();
         updateBulkLiveStatusSummary();
       } else {
         hideBulkTableEmptyState();
@@ -4582,6 +4939,7 @@
           tbody.appendChild(tr);
         });
         updateBulkLiveStatusSummary();
+        startBulkRunsStatusPoll(runs);
       }
       if (skippedEl) {
         skippedEl.innerHTML = '';
@@ -4600,21 +4958,27 @@
           skippedEl.appendChild(li);
         });
       }
-      startBulkRunsStatusPoll(runs);
+      if (!operational) {
+        startBulkRunsStatusPoll([]);
+      }
     }
 
     function startBulkRunsStatusPoll(runs) {
       stopBulkRunsPoll();
       const pollTargets = (runs || []).filter((r) => r.run_id);
       if (pollTargets.length === 0) {
+        releaseBulkRunButtonIfIdle();
         updateBulkLiveStatusSummary();
         return;
       }
+      bulkDatasetJobsActive = true;
+      setBulkRunButtonBusy(true);
       const pollGen = bulkRunsPollGeneration;
       const pollOnce = async () => {
         if (pollGen !== bulkRunsPollGeneration) return;
         setBulkPollRefreshing(true);
-        let anyActive = false;
+        let anyJobActive = false;
+        let keepPollingForReports = false;
         for (const row of pollTargets) {
           const tr = document.querySelector(`#bulk-runs-tbody tr[data-run-id="${CSS.escape(row.run_id)}"]`);
           const statusCell = tr?.querySelector('.bulk-run-status');
@@ -4630,17 +4994,23 @@
               statusCell.innerHTML = bulkStatusBadgeHtml(status);
             }
           } catch (_) { /* ignore poll errors */ }
-          if (!isBulkTerminalStatus(status)) {
-            anyActive = true;
+          if (isBulkJobStatusActive(status)) {
+            anyJobActive = true;
             updateBulkReportCell(reportCell, row.run_id, false);
             continue;
           }
           const reportReady = await bulkReportEndpointReady(row.run_id);
           updateBulkReportCell(reportCell, row.run_id, reportReady);
-          if (isBulkSuccessStatus(status) && !reportReady) anyActive = true;
+          if (isBulkSuccessStatus(status) && !reportReady) keepPollingForReports = true;
         }
         updateBulkLiveStatusSummary();
-        if (!anyActive) {
+        if (!anyJobActive) {
+          releaseBulkRunButtonIfIdle();
+        } else {
+          bulkDatasetJobsActive = true;
+          setBulkRunButtonBusy(true);
+        }
+        if (!anyJobActive && !keepPollingForReports) {
           stopBulkRunsPoll();
           setBulkPollRefreshing(false);
         }
@@ -4876,7 +5246,10 @@
 
     async function runValidation() {
       if (!currentDataset) return;
+      if (bulkDatasetJobsActive) return;
       setBulkSubmissionMode(false);
+      stopBulkRunsPoll();
+      clearBulkDatasetJobsTracking();
       const runDataset = currentDataset;
       const btn = document.getElementById('run-btn');
       runAbortController = new AbortController();
@@ -4969,10 +5342,9 @@
             const bulkRootErr = setBulkGcsRootValidation(true);
             if (bulkRootErr) {
               document.getElementById('bulk-gcs-root')?.focus();
-              const bulkPanelEarly = document.getElementById('bulk-runs-panel');
-              if (bulkPanelEarly) bulkPanelEarly.style.display = 'block';
-              setBulkSubmissionError(bulkRootErr, 'error');
-              setOutputContent(bulkRootErr, false);
+              const rootOutcome = clientBulkRootOutcome(bulkRootErr);
+              showBulkDiscoveryFailurePanel(rootOutcome, []);
+              setOutputContent(rootOutcome.title + ': ' + rootOutcome.message, false);
               return;
             }
             clearBulkSubmissionError();
@@ -5005,17 +5377,17 @@
             });
             if (!bulkResp.ok) {
               const errJson = await bulkResp.json().catch(() => ({}));
-              const msg = formatBulkApiErrorDetail(errJson.detail) ||
-                'Bulk validation failed (' + bulkResp.status + ')';
+              const apiOutcome = friendlyBulkApiDiscoveryOutcome(errJson.detail, bulkResp.status);
               setBulkDiscoveryStatus(false);
-              setBulkSubmissionError(msg, 'error');
-              setBulkTableEmptyState('');
-              throw new Error(msg);
+              showBulkDiscoveryFailurePanel(apiOutcome, []);
+              const logMsg = apiOutcome.title + ': ' + apiOutcome.message +
+                (apiOutcome.detail ? '\n' + apiOutcome.detail : '');
+              throw new Error(logMsg);
             }
             const bulkData = await bulkResp.json();
             renderBulkRunsPanel(bulkData);
             const bulkLog = formatBulkRunLogMessage(bulkData);
-            const bulkEmpty = bulkEmptyStateMessage(bulkData);
+            const bulkOutcome = classifyBulkResponseOutcome(bulkData);
             data = {
               success: bulkData.submitted > 0,
               cancelled: false,
@@ -5023,7 +5395,7 @@
               output: bulkLog,
               failure_code: null,
               failure_step: null,
-              failure_message: bulkEmpty || null,
+              failure_message: bulkOutcome ? bulkOutcome.message : null,
               failure_details: null,
               baseline_id: null,
             };
@@ -5272,11 +5644,13 @@
         }
         if (!data.cancelled) {
           const btn = document.getElementById('run-btn');
-          if (btn) {
+          if (btn && !bulkDatasetJobsActive) {
             btn.textContent = '\u25B6 Run validation';
             btn.title = '';
             btn.classList.remove('btn-stop');
             updateRunButtonState();
+          } else if (btn && bulkDatasetJobsActive) {
+            setBulkRunButtonBusy(true);
           }
         }
         showStatusBanner(data);
@@ -5330,10 +5704,14 @@
               setReportActionsVisible(true, false);
             }
           } else if (lastRunWasBulkSubmission) {
+            const out = (data.output || data.failure_message || '').trim();
+            const colon = out.indexOf(':');
+            const outcomeTitle = colon > 0 ? out.slice(0, colon).trim() : 'Discovery failed';
             setBulkSubmissionSummaryCard({
               success: false,
               durationSec: lastRunDurationSec,
-              detail: (data.failure_message || data.output || '').trim(),
+              outcomeTitle,
+              detail: out,
             });
           } else {
             const counts = pipelineFailedBeforeValidation ? { runCount: 0, failCount: 0, warnCount: 0, failedRules: [], warningRules: [] } : await fetchValidationCounts(runDataset, runIdForResult);
@@ -5579,13 +5957,17 @@
             : 'Connection lost. The validation run may have been interrupted \u2014 please try again.';
           if (isBulkGcsRun) {
             setBulkSubmissionMode(true);
-            const bulkPanelErr = document.getElementById('bulk-runs-panel');
-            if (bulkPanelErr) bulkPanelErr.style.display = 'block';
-            setBulkSubmissionError(userMsg, 'error');
+            const errOutcome = friendlyBulkApiDiscoveryOutcome(
+              { message: userMsg.split('\n')[0], detail: userMsg },
+              0,
+            );
+            showBulkDiscoveryFailurePanel(errOutcome, []);
             setBulkSubmissionSummaryCard({
               success: false,
               durationSec,
-              detail: userMsg,
+              outcomeTitle: errOutcome.title,
+              detail: errOutcome.message + (errOutcome.detail && errOutcome.detail !== errOutcome.message
+                ? '\n' + errOutcome.detail : ''),
             });
           }
           setOutputContent(userMsg, false);
@@ -5631,10 +6013,14 @@
         document.getElementById('validation-config-clear-btn').disabled = false;
         syncValidationConfigOverrideUi();
         setRulesSectionDisabled(false);
-        btn.textContent = '\u25B6 Run validation';
-        btn.title = '';
-        btn.classList.remove('btn-stop');
-        updateRunButtonState();
+        if (bulkDatasetJobsActive) {
+          setBulkRunButtonBusy(true);
+        } else {
+          btn.textContent = '\u25B6 Run validation';
+          btn.title = '';
+          btn.classList.remove('btn-stop');
+          updateRunButtonState();
+        }
         if (pendingHomeReset) {
           pendingHomeReset = false;
           setTimeout(() => resetAppNow(), 0);
