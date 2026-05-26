@@ -23,6 +23,19 @@ def bulk_folder_display_name(folder_prefix: str) -> str:
     return p.split("/")[-1] or p
 
 
+# Discovery succeeded but nothing to run — not a submission/system failure.
+BULK_INFORMATIONAL_OUTCOMES = frozenset({"empty_root", "no_runnable"})
+
+
+def bulk_outcome_severity(outcome_code: str) -> str:
+    """UI severity: error (red), warning (amber), info (neutral empty discovery)."""
+    if outcome_code in BULK_INFORMATIONAL_OUTCOMES:
+        return "info"
+    if outcome_code == "submit_failed":
+        return "warning"
+    return "error"
+
+
 def bulk_outcome_title(outcome_code: str) -> str:
     """Short heading for bulk dashboard empty / failure states."""
     titles = {
@@ -30,8 +43,8 @@ def bulk_outcome_title(outcome_code: str) -> str:
         "gcs_access_denied": "Access denied",
         "gcs_invalid_path": "Invalid GCS path",
         "gcs_error": "Discovery failed",
-        "empty_root": "No dataset folders found",
-        "no_runnable": "No runnable datasets",
+        "empty_root": "Bulk discovery completed",
+        "no_runnable": "Bulk discovery completed",
         "submit_failed": "Submission failed",
     }
     return titles.get(outcome_code, "Bulk discovery issue")
@@ -52,7 +65,7 @@ def bulk_response_outcome(data: dict) -> dict[str, str] | None:
             "code": code,
             "title": bulk_outcome_title(code),
             "message": message,
-            "severity": "warning" if code in ("no_runnable", "submit_failed") else "error",
+            "severity": bulk_outcome_severity(code),
         }
     discovered = int(data.get("datasets_found") or 0)
     skipped = len(data.get("skipped_folders") or [])
@@ -61,28 +74,28 @@ def bulk_response_outcome(data: dict) -> dict[str, str] | None:
         return {
             "code": "empty_root",
             "title": bulk_outcome_title("empty_root"),
-            "message": "No dataset folders found under the provided GCS path.",
-            "severity": "error",
+            "message": "No dataset folders found under this path.",
+            "severity": bulk_outcome_severity("empty_root"),
         }
     if not runs and skipped > 0:
         return {
             "code": "no_runnable",
             "title": bulk_outcome_title("no_runnable"),
-            "message": "No runnable dataset folders discovered. Every folder was skipped.",
-            "severity": "warning",
+            "message": "No runnable dataset folders. Every folder was skipped — see list below.",
+            "severity": bulk_outcome_severity("no_runnable"),
         }
     if runs:
         return {
             "code": "submit_failed",
             "title": bulk_outcome_title("submit_failed"),
             "message": "No jobs were submitted. Review per-dataset errors below.",
-            "severity": "warning",
+            "severity": bulk_outcome_severity("submit_failed"),
         }
     return {
         "code": "no_runnable",
         "title": bulk_outcome_title("no_runnable"),
-        "message": "No runnable dataset folders discovered.",
-        "severity": "warning",
+        "message": "No runnable dataset folders under this path.",
+        "severity": bulk_outcome_severity("no_runnable"),
     }
 
 

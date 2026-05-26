@@ -1509,7 +1509,13 @@
     .bulk-runs-panel--failure #bulk-live-status-summary,
     .bulk-runs-panel--failure #bulk-poll-refreshing,
     .bulk-runs-panel--failure #bulk-final-completion,
-    .bulk-runs-panel--failure #bulk-run-id-row {
+    .bulk-runs-panel--failure #bulk-run-id-row,
+    .bulk-runs-panel--empty .bulk-runs-stats,
+    .bulk-runs-panel--empty #bulk-runs-table,
+    .bulk-runs-panel--empty #bulk-live-status-summary,
+    .bulk-runs-panel--empty #bulk-poll-refreshing,
+    .bulk-runs-panel--empty #bulk-final-completion,
+    .bulk-runs-panel--empty #bulk-run-id-row {
       display: none !important;
     }
     .bulk-submission-error {
@@ -1548,6 +1554,12 @@
       border-color: rgba(245, 158, 11, 0.28);
     }
     .bulk-submission-error--warning .bulk-submission-error-title { color: #fde68a; }
+    .bulk-submission-error--info {
+      color: #cbd5e1;
+      background: rgba(148, 163, 184, 0.08);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+    .bulk-submission-error--info .bulk-submission-error-title { color: #e2e8f0; }
     .bulk-live-status-summary {
       display: flex;
       flex-wrap: wrap;
@@ -1652,6 +1664,20 @@
     .bulk-runs-empty--no-runnable {
       border-color: rgba(245, 158, 11, 0.28);
       background: rgba(245, 158, 11, 0.03);
+    }
+    .bulk-runs-empty--info {
+      border-color: rgba(148, 163, 184, 0.32);
+      background: rgba(148, 163, 184, 0.06);
+      color: var(--text-muted);
+    }
+    .bulk-runs-empty--info .bulk-runs-empty-title {
+      color: #e2e8f0;
+    }
+    .bulk-runs-empty-hint {
+      margin: 6px 0 0;
+      font-size: 0.72rem;
+      opacity: 0.88;
+      line-height: 1.4;
     }
     .bulk-final-completion {
       font-size: 0.8rem;
@@ -2225,6 +2251,7 @@
     let bulkRunsPollTimer = null;
     let bulkRunsPollGeneration = 0;
     let lastRunWasBulkSubmission = false;
+    let lastBulkDiscoveryInformational = false;
     /** True while bulk dataset Batch jobs are non-terminal (submitted/starting/running). */
     let bulkDatasetJobsActive = false;
     /** True when the server has GCS_REPORTS_BUCKET set and can issue signed upload URLs. */
@@ -2935,6 +2962,7 @@
 
     function setBulkSubmissionMode(active) {
       lastRunWasBulkSubmission = !!active;
+      if (!active) lastBulkDiscoveryInformational = false;
       const label = document.querySelector('.execution-label');
       if (label) label.textContent = active ? 'Bulk submission' : 'Execution';
     }
@@ -2956,7 +2984,7 @@
         card.classList.add('outcome-pass');
         statusDot.classList.add('summary-card-status-dot--pass');
         outcomeText.style.color = 'var(--success)';
-        outcomeText.textContent = 'Jobs submitted to Batch';
+        outcomeText.textContent = opts.outcomeTitle || 'Jobs submitted to Batch';
       } else {
         card.classList.add('outcome-fail');
         statusDot.classList.add('summary-card-status-dot--fail');
@@ -3070,20 +3098,43 @@
       }
     }
 
+    const BULK_INFO_OUTCOME_CODES = new Set(['empty_root', 'no_runnable']);
+
+    function bulkOutcomeSeverity(code) {
+      if (BULK_INFO_OUTCOME_CODES.has(code)) return 'info';
+      if (code === 'submit_failed') return 'warning';
+      return 'error';
+    }
+
+    function bulkOutcomeTitle(code) {
+      const titles = {
+        empty_root: 'Bulk discovery completed',
+        no_runnable: 'Bulk discovery completed',
+        submit_failed: 'Submission failed',
+        gcs_not_found: 'GCS path not found',
+        gcs_access_denied: 'Access denied',
+        gcs_invalid_path: 'Invalid GCS path',
+        gcs_error: 'Discovery failed',
+      };
+      return titles[code] || 'Bulk discovery issue';
+    }
+
+    function isBulkInformationalOutcome(outcome) {
+      return !!(outcome && outcome.severity === 'info');
+    }
+
     function classifyBulkResponseOutcome(data) {
       const submitted = parseInt(data.submitted, 10) || 0;
       if (submitted > 0) return null;
       const code = (data.outcome || '').trim();
       const message = (data.outcome_message || '').trim();
-      const titles = {
-        empty_root: 'No dataset folders found',
-        no_runnable: 'No runnable datasets',
-        submit_failed: 'Submission failed',
-        ok: '',
-      };
       if (code && code !== 'ok' && message) {
-        const severity = (code === 'no_runnable' || code === 'submit_failed') ? 'warning' : 'error';
-        return { code, title: titles[code] || 'Bulk discovery issue', message, severity };
+        return {
+          code,
+          title: bulkOutcomeTitle(code),
+          message,
+          severity: bulkOutcomeSeverity(code),
+        };
       }
       const discovered = parseInt(data.datasets_found, 10) || 0;
       const skipped = (data.skipped_folders || []).length;
@@ -3091,32 +3142,32 @@
       if (discovered === 0 && skipped === 0) {
         return {
           code: 'empty_root',
-          title: 'No dataset folders found',
-          message: 'No dataset folders found under the provided GCS path.',
-          severity: 'error',
+          title: bulkOutcomeTitle('empty_root'),
+          message: 'No dataset folders found under this path.',
+          severity: 'info',
         };
       }
       if (!runs.length && skipped > 0) {
         return {
           code: 'no_runnable',
-          title: 'No runnable datasets',
-          message: 'No runnable dataset folders discovered. Every folder was skipped.',
-          severity: 'warning',
+          title: bulkOutcomeTitle('no_runnable'),
+          message: 'No runnable dataset folders. Every folder was skipped — see list below.',
+          severity: 'info',
         };
       }
       if (runs.length) {
         return {
           code: 'submit_failed',
-          title: 'Submission failed',
+          title: bulkOutcomeTitle('submit_failed'),
           message: 'No jobs were submitted. Review per-dataset errors below.',
           severity: 'warning',
         };
       }
       return {
         code: 'no_runnable',
-        title: 'No runnable datasets',
-        message: 'No runnable dataset folders discovered.',
-        severity: 'warning',
+        title: bulkOutcomeTitle('no_runnable'),
+        message: 'No runnable dataset folders under this path.',
+        severity: 'info',
       };
     }
 
@@ -3180,9 +3231,16 @@
     function formatBulkRunLogMessage(bulkData) {
       const outcome = classifyBulkResponseOutcome(bulkData);
       if (outcome) {
+        if (isBulkInformationalOutcome(outcome)) {
+          const skipped = (bulkData.skipped_folders || []).length;
+          if (outcome.code === 'no_runnable' && skipped) {
+            return outcome.message;
+          }
+          return outcome.message;
+        }
         const lines = [outcome.title + ': ' + outcome.message];
         const skipped = (bulkData.skipped_folders || []).length;
-        if (skipped) {
+        if (skipped && outcome.code !== 'no_runnable') {
           lines.push(`Skipped ${skipped} folder${skipped === 1 ? '' : 's'} (see list below).`);
         }
         return lines.join('\n');
@@ -3202,14 +3260,14 @@
     function setBulkSubmissionError(outcome) {
       const el = document.getElementById('bulk-submission-error');
       if (!el) return;
-      if (!outcome || !(outcome.title || outcome.message)) {
+      if (!outcome || !(outcome.title || outcome.message) || isBulkInformationalOutcome(outcome)) {
         el.innerHTML = '';
         el.style.display = 'none';
-        el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
+        el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning', 'bulk-submission-error--info');
         return;
       }
       const severity = outcome.severity === 'warning' ? 'warning' : 'error';
-      el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning');
+      el.classList.remove('bulk-submission-error--error', 'bulk-submission-error--warning', 'bulk-submission-error--info');
       el.classList.add(severity === 'warning' ? 'bulk-submission-error--warning' : 'bulk-submission-error--error');
       let html = '<div class="bulk-submission-error-title">' + escapeHtml(outcome.title || 'Error') + '</div>' +
         '<p class="bulk-submission-error-message">' + escapeHtml(outcome.message || '') + '</p>';
@@ -3230,6 +3288,42 @@
       if (panel) panel.classList.toggle('bulk-runs-panel--failure', !!active);
     }
 
+    function setBulkPanelEmptyMode(active) {
+      const panel = document.getElementById('bulk-runs-panel');
+      if (panel) panel.classList.toggle('bulk-runs-panel--empty', !!active);
+    }
+
+    function bulkEmptyStateHint(code) {
+      if (code === 'empty_root') {
+        return 'The path is valid and accessible. Add subfolders with matching *_output.tmcf and *_output.csv pairs to run validations.';
+      }
+      return '';
+    }
+
+    function applyBulkOutcomePresentation(outcome, operational) {
+      setBulkPanelFailureMode(false);
+      setBulkPanelEmptyMode(false);
+      if (!outcome) {
+        clearBulkSubmissionError();
+        hideBulkTableEmptyState();
+        return;
+      }
+      if (isBulkInformationalOutcome(outcome)) {
+        clearBulkSubmissionError();
+        setBulkPanelEmptyMode(true);
+        setBulkTableEmptyState(outcome);
+        return;
+      }
+      hideBulkTableEmptyState();
+      if (operational) {
+        setBulkPanelFailureMode(false);
+        setBulkSubmissionError(outcome);
+        return;
+      }
+      setBulkPanelFailureMode(true);
+      setBulkSubmissionError(outcome);
+    }
+
     function setBulkTableEmptyState(outcome) {
       const emptyEl = document.getElementById('bulk-runs-empty');
       const table = document.getElementById('bulk-runs-table');
@@ -3246,14 +3340,16 @@
         gcs_access_denied: 'bulk-runs-empty--discovery-failure',
         gcs_error: 'bulk-runs-empty--discovery-failure',
         gcs_invalid_path: 'bulk-runs-empty--discovery-failure',
-        empty_root: 'bulk-runs-empty--empty-root',
-        no_runnable: 'bulk-runs-empty--no-runnable',
+        empty_root: 'bulk-runs-empty--info',
+        no_runnable: 'bulk-runs-empty--info',
         submit_failed: 'bulk-runs-empty--no-runnable',
       };
       emptyEl.className = 'bulk-runs-empty ' + (kindClass[outcome.code] || 'bulk-runs-empty--discovery-failure');
+      const hint = bulkEmptyStateHint(outcome.code);
       emptyEl.innerHTML =
         '<div class="bulk-runs-empty-title">' + escapeHtml(outcome.title || '') + '</div>' +
-        '<p>' + escapeHtml(outcome.message || '') + '</p>';
+        '<p>' + escapeHtml(outcome.message || '') + '</p>' +
+        (hint ? '<p class="bulk-runs-empty-hint">' + escapeHtml(hint) + '</p>' : '');
       emptyEl.style.display = '';
       if (table) table.style.display = 'none';
     }
@@ -3271,9 +3367,7 @@
       hideBulkFinalCompletionSummary();
       stopBulkRunsPoll();
       panel.style.display = 'block';
-      setBulkPanelFailureMode(true);
-      setBulkSubmissionError(outcome);
-      setBulkTableEmptyState(outcome);
+      applyBulkOutcomePresentation(outcome, false);
       setBulkRunIdDisplay('');
       const statsEl = document.getElementById('bulk-runs-stats');
       if (statsEl) statsEl.style.display = 'none';
@@ -4494,7 +4588,10 @@
       if (success) {
         if (pctEl) pctEl.textContent = '';
         if (executionHeaderStatus) {
-          executionHeaderStatus.textContent = '\u2713 Completed · ' + formatElapsed(sec);
+          const bulkDone = lastRunWasBulkSubmission && lastBulkDiscoveryInformational;
+          executionHeaderStatus.textContent = bulkDone
+            ? '\u2713 Bulk discovery completed · ' + formatElapsed(sec)
+            : '\u2713 Completed · ' + formatElapsed(sec);
           executionHeaderStatus.classList.remove('running');
         }
         setRunPhase('success');
@@ -4835,6 +4932,7 @@
       stopBulkRunsPoll();
       clearBulkDatasetJobsTracking();
       setBulkPanelFailureMode(false);
+      setBulkPanelEmptyMode(false);
       const discoveryEl = document.getElementById('bulk-discovery-status');
       const statsEl = document.getElementById('bulk-runs-stats');
       if (discoveryEl) { discoveryEl.style.display = 'none'; discoveryEl.textContent = ''; }
@@ -4885,11 +4983,10 @@
       const runs = data.runs || [];
       const outcome = classifyBulkResponseOutcome(data);
       const operational = bulkPanelIsOperational(outcome, runs);
-      setBulkPanelFailureMode(!operational);
       if (outcome) {
-        setBulkSubmissionError(outcome);
+        applyBulkOutcomePresentation(outcome, operational);
       } else {
-        clearBulkSubmissionError();
+        applyBulkOutcomePresentation(null, true);
       }
       const stats = bulkRunStatsFromResponse(data);
       if (statsEl) {
@@ -4904,7 +5001,6 @@
       setBulkRunIdDisplay(operational ? (data.bulk_run_id || '') : '');
       tbody.innerHTML = '';
       if (!operational) {
-        setBulkTableEmptyState(outcome);
         setBulkPollRefreshing(false);
         const live = document.getElementById('bulk-live-status-summary');
         if (live) { live.style.display = 'none'; live.textContent = ''; }
@@ -5388,8 +5484,10 @@
             renderBulkRunsPanel(bulkData);
             const bulkLog = formatBulkRunLogMessage(bulkData);
             const bulkOutcome = classifyBulkResponseOutcome(bulkData);
+            lastBulkDiscoveryInformational = isBulkInformationalOutcome(bulkOutcome);
             data = {
-              success: bulkData.submitted > 0,
+              success: bulkData.submitted > 0 || lastBulkDiscoveryInformational,
+              bulkDiscoveryInformational: lastBulkDiscoveryInformational,
               cancelled: false,
               run_id: bulkData.bulk_run_id,
               output: bulkLog,
@@ -5679,6 +5777,7 @@
               setBulkSubmissionSummaryCard({
                 success: true,
                 durationSec: lastRunDurationSec,
+                outcomeTitle: data.bulkDiscoveryInformational ? 'Bulk discovery completed' : undefined,
                 detail: (data.output || '').trim(),
               });
             } else {

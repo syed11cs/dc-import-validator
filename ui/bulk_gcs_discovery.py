@@ -358,7 +358,7 @@ def bulk_discovery_outcome(
     if datasets_found == 0:
         return (
             "empty_root",
-            "No dataset folders found under the provided GCS path.",
+            "No dataset folders found under this path.",
         )
     if submitted > 0:
         return "ok", ""

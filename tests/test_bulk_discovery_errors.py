@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ui import bulk_gcs_discovery as bgd
-from ui.bulk_ui_helpers import bulk_response_outcome
+from ui.bulk_ui_helpers import bulk_outcome_severity, bulk_response_outcome
 
 
 class TestClassifyGcsDiscoveryError(unittest.TestCase):
@@ -71,10 +71,28 @@ class TestBulkResponseOutcome(unittest.TestCase):
         self.assertIsNotNone(out)
         assert out is not None
         self.assertEqual(out["code"], "empty_root")
-        self.assertEqual(out["severity"], "error")
+        self.assertEqual(out["severity"], "info")
+        self.assertEqual(out["title"], "Bulk discovery completed")
+
+    def test_empty_root_inferred_severity(self) -> None:
+        out = bulk_response_outcome({"submitted": 0, "datasets_found": 0})
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["code"], "empty_root")
+        self.assertEqual(out["severity"], "info")
 
     def test_none_when_jobs_submitted(self) -> None:
         self.assertIsNone(bulk_response_outcome({"submitted": 2, "datasets_found": 2}))
+
+
+class TestBulkOutcomeSeverity(unittest.TestCase):
+    def test_informational_codes(self) -> None:
+        self.assertEqual(bulk_outcome_severity("empty_root"), "info")
+        self.assertEqual(bulk_outcome_severity("no_runnable"), "info")
+
+    def test_failure_codes(self) -> None:
+        self.assertEqual(bulk_outcome_severity("gcs_not_found"), "error")
+        self.assertEqual(bulk_outcome_severity("submit_failed"), "warning")
 
 
 if __name__ == "__main__":
