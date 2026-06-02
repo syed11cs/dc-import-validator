@@ -1454,28 +1454,7 @@
     #bulk-gcs-root.input-invalid { border-color: var(--fail); }
     #bulk-gcs-root.input-invalid:focus { box-shadow: 0 0 0 1px var(--fail); }
     #bulk-gcs-root { width: 100%; box-sizing: border-box; font-size: 0.82rem; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; }
-    #bulk-gcs-parallelism {
-      width: 5rem;
-      box-sizing: border-box;
-      font-size: 0.82rem;
-      padding: 5px 8px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--bg);
-      color: var(--text);
-      outline: none;
-      -moz-appearance: textfield;
-      appearance: textfield;
-    }
-    #bulk-gcs-parallelism:focus {
-      outline: none;
-      box-shadow: 0 0 0 1px var(--accent, #6366f1);
-    }
-    #bulk-gcs-parallelism::-webkit-outer-spin-button,
-    #bulk-gcs-parallelism::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
+
     .bulk-runs-panel { margin-top: 12px; }
     .bulk-runs-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
     .bulk-runs-table th, .bulk-runs-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
@@ -1848,8 +1827,7 @@
       line-height: 1.38;
     }
     #gcs-bulk-folder-fields > label:first-of-type { margin-top: 0; }
-    #gcs-bulk-folder-fields label[for="bulk-gcs-parallelism"] { margin-top: 6px; }
-    #gcs-bulk-folder-fields #bulk-gcs-parallelism { margin-top: 2px; }
+
     .bulk-folder-structure-hint {
       margin-top: 5px;
       margin-bottom: 2px;
@@ -1872,13 +1850,7 @@
       color: var(--text);
       opacity: 0.88;
     }
-    .bulk-parallel-hint {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      opacity: 0.88;
-      line-height: 1.35;
-      margin: 3px 0 0;
-    }
+
     #validation-config-section .field-hint {
       font-size: 0.73rem;
       line-height: 1.4;
@@ -2065,9 +2037,7 @@
     birth_output.csv
     birth_output.tmcf</pre>
               </details>
-              <label for="bulk-gcs-parallelism">Parallel validations</label>
-              <input type="number" id="bulk-gcs-parallelism" min="1" max="5" step="1" inputmode="numeric" value="3" aria-label="Parallel validations" />
-              <p class="bulk-parallel-hint">Number of dataset folders processed at the same time.</p>
+
             </div>
           </div>
         </div>
@@ -5039,37 +5009,10 @@
 
     const BULK_DISCOVERY_MSG = 'Discovering datasets from GCS\u2026';
 
-    const BULK_PARALLELISM_DEFAULT = 3;
-    const BULK_PARALLELISM_MIN = 1;
-    const BULK_PARALLELISM_MAX = 5;
-
-    function clampBulkParallelismValue(raw) {
-      const s = String(raw ?? '').trim();
-      if (!s) return BULK_PARALLELISM_DEFAULT;
-      const digitsOnly = s.replace(/[^\d]/g, '');
-      if (!digitsOnly) return BULK_PARALLELISM_DEFAULT;
-      const n = parseInt(digitsOnly, 10);
-      if (!Number.isFinite(n)) return BULK_PARALLELISM_DEFAULT;
-      return Math.min(BULK_PARALLELISM_MAX, Math.max(BULK_PARALLELISM_MIN, n));
-    }
+    const BULK_PARALLELISM = 5;
 
     function getBulkParallelismForSubmit() {
-      const el = document.getElementById('bulk-gcs-parallelism');
-      const value = clampBulkParallelismValue(el?.value);
-      if (el) el.value = String(value);
-      return value;
-    }
-
-    function sanitizeBulkParallelismInputField(el) {
-      if (!el) return;
-      let v = String(el.value).replace(/[^\d]/g, '');
-      if (v.length > 2) v = v.slice(0, 2);
-      el.value = v;
-    }
-
-    function commitBulkParallelismInputField(el) {
-      if (!el) return;
-      el.value = String(clampBulkParallelismValue(el.value));
+      return BULK_PARALLELISM;
     }
 
     function validateBulkGcsRoot(value) {
@@ -8298,34 +8241,6 @@
           updateRunButtonState();
         });
       });
-      (function() {
-        const bulkParEl = document.getElementById('bulk-gcs-parallelism');
-        if (!bulkParEl) return;
-        bulkParEl.addEventListener('input', () => {
-          sanitizeBulkParallelismInputField(bulkParEl);
-          updateRunButtonState();
-        });
-        bulkParEl.addEventListener('change', () => {
-          commitBulkParallelismInputField(bulkParEl);
-          updateRunButtonState();
-        });
-        bulkParEl.addEventListener('blur', () => {
-          commitBulkParallelismInputField(bulkParEl);
-          updateRunButtonState();
-        });
-        bulkParEl.addEventListener('keydown', (e) => {
-          if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-' || e.key === '.') {
-            e.preventDefault();
-          }
-        });
-        bulkParEl.addEventListener('paste', (e) => {
-          e.preventDefault();
-          const pasted = (e.clipboardData || window.clipboardData).getData('text') || '';
-          bulkParEl.value = pasted.replace(/[^\d]/g, '').slice(0, 2);
-          commitBulkParallelismInputField(bulkParEl);
-          updateRunButtonState();
-        });
-      })();
       document.getElementById('gcs-mode-single-btn')?.addEventListener('click', () => setGcsValidationMode('single'));
       document.getElementById('gcs-mode-bulk-btn')?.addEventListener('click', () => setGcsValidationMode('bulk'));
       document.getElementById('gcs-mode-single-btn')?.addEventListener('keydown', (e) => {

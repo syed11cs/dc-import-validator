@@ -4193,7 +4193,7 @@ class _BulkRunsRequest(BaseModel):
     """Request body for POST /api/bulk-runs — discover child folders and submit Batch jobs."""
 
     root_gcs_path: str
-    parallelism: int = 1
+    parallelism: int = 5
     llm_review: bool = False
     machine_type_override: str = ""
     existence_checks: str = "false"
