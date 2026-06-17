@@ -431,6 +431,47 @@ def _create_filtered_config(dataset: str, rule_ids: list[str]) -> Path | None:
     return _create_merged_config(dataset, rule_ids, [])
 
 
+def _inject_goldens_into_config(
+    config_path: Path | None,
+    golden_file_paths: list[str],
+    dataset: str,
+) -> Path:
+    """Return a new temp config that includes a GOLDENS_CHECK rule for the given files.
+
+    Loads config_path if provided, otherwise starts from the default dataset config.
+    The caller is responsible for unlinking the returned temp file when done.
+    """
+    if config_path and config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+    else:
+        config_name = DATASET_CONFIG_MAP.get(dataset)
+        if config_name:
+            cfg_file = CONFIG_DIR / config_name
+            config = json.loads(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {"schema_version": "1.0", "rules": []}
+        else:
+            config = {"schema_version": "1.0", "rules": []}
+
+    goldens_rule = {
+        "rule_id": "check_uploaded_golden_files",
+        "validator": "GOLDENS_CHECK",
+        "params": {"golden_files": golden_file_paths},
+    }
+    config.setdefault("rules", []).append(goldens_rule)
+
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="validation_config_goldens_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        return Path(path)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
 def _llm_review_enabled(llm_review: str | None) -> bool:
     """Whether to run LLM review this run.
     If the client did not specify llm_review (None), default to enabled only when an API key exists.
@@ -872,6 +913,8 @@ async def _run_custom_validation_impl(
     stat_vars_schema_mcf_gcs_path: str | None = None,
     validation_config: "UploadFile | None" = None,
     validation_config_url: str | None = None,
+    golden_files: "list[UploadFile] | None" = None,
+    golden_files_gcs_paths: str | None = None,
 ):
     """Shared implementation for /api/run/custom and /api/run/custom/stream.
 
@@ -893,8 +936,10 @@ async def _run_custom_validation_impl(
     tmcf_path = run_upload_dir / "input.tmcf"
     csvs_dir = run_upload_dir / "csvs"
     csvs_dir.mkdir(parents=True, exist_ok=True)
+    goldens_dir = run_upload_dir / "goldens"
     stat_vars_mcf_path = run_upload_dir / "input_stat_vars.mcf"
     stat_vars_schema_mcf_path = run_upload_dir / "input_stat_vars_schema.mcf"
+    golden_file_paths: list[Path] = []
 
     max_bytes = MAX_UPLOAD_BYTES
     _size_display = "100 GB"
@@ -918,6 +963,7 @@ async def _run_custom_validation_impl(
 
             tmcf_path = downloaded.get("tmcf")
             csv_paths: list[Path] = downloaded.get("csvs") or []
+            golden_file_paths = downloaded.get("golden_files") or []
 
             if not tmcf_path or not tmcf_path.exists():
                 raise HTTPException(status_code=400, detail="TMCF file missing from upload session")
@@ -940,6 +986,7 @@ async def _run_custom_validation_impl(
             csv_gcs_paths = (csv_gcs_paths or "").strip()
             stat_vars_mcf_gcs_path = (stat_vars_mcf_gcs_path or "").strip() or None
             stat_vars_schema_mcf_gcs_path = (stat_vars_schema_mcf_gcs_path or "").strip() or None
+            golden_gcs_uri_list = [u.strip() for u in (golden_files_gcs_paths or "").splitlines() if u.strip()]
 
             if not tmcf_gcs_path:
                 raise HTTPException(status_code=400, detail="tmcf_gcs_path is required")
@@ -962,6 +1009,7 @@ async def _run_custom_validation_impl(
                 all_uris.append(stat_vars_mcf_gcs_path)
             if stat_vars_schema_mcf_gcs_path:
                 all_uris.append(stat_vars_schema_mcf_gcs_path)
+            all_uris.extend(golden_gcs_uri_list)
             for uri in all_uris:
                 err = _validate_gcs_uri(uri)
                 if err:
@@ -993,6 +1041,15 @@ async def _run_custom_validation_impl(
                         logger.info("gcs_input_download stat_vars_schema_mcf=%s request_id=%s", stat_vars_schema_mcf_gcs_path, request_id)
                         yield json.dumps({"t": "line", "v": f"  {Path(stat_vars_schema_mcf_gcs_path).name} (StatVars Schema MCF)"}) + "\n"
                         await _download_gcs_uri(stat_vars_schema_mcf_gcs_path, stat_vars_schema_mcf_path)
+                    if golden_gcs_uri_list:
+                        goldens_dir.mkdir(parents=True, exist_ok=True)
+                        for _golden_uri in golden_gcs_uri_list:
+                            _gbn = re.sub(r"[^A-Za-z0-9._-]", "_", Path(_golden_uri).name) or "golden.csv"
+                            _gdest = goldens_dir / _gbn
+                            logger.info("gcs_input_download golden=%s request_id=%s", _golden_uri, request_id)
+                            yield json.dumps({"t": "line", "v": f"  {Path(_golden_uri).name} (golden)"}) + "\n"
+                            await _download_gcs_uri(_golden_uri, _gdest)
+                            golden_file_paths.append(_gdest)
                     yield json.dumps({"t": "line", "v": "Download complete. Starting validation..."}) + "\n"
 
                 _gcs_setup_gen = _gcs_download_gen
@@ -1014,6 +1071,14 @@ async def _run_custom_validation_impl(
                 if stat_vars_schema_mcf_gcs_path:
                     logger.info("gcs_input_download stat_vars_schema_mcf=%s request_id=%s", stat_vars_schema_mcf_gcs_path, request_id)
                     await _download_gcs_uri(stat_vars_schema_mcf_gcs_path, stat_vars_schema_mcf_path)
+                if golden_gcs_uri_list:
+                    goldens_dir.mkdir(parents=True, exist_ok=True)
+                    for golden_uri in golden_gcs_uri_list:
+                        gbn = re.sub(r"[^A-Za-z0-9._-]", "_", Path(golden_uri).name) or "golden.csv"
+                        gdest = goldens_dir / gbn
+                        logger.info("gcs_input_download golden=%s request_id=%s", golden_uri, request_id)
+                        await _download_gcs_uri(golden_uri, gdest)
+                        golden_file_paths.append(gdest)
 
         else:
             # ── Direct upload path: stream UploadFile objects to disk ────────────────
@@ -1065,6 +1130,20 @@ async def _run_custom_validation_impl(
                     raise HTTPException(status_code=400, detail="Stat vars schema MCF file exceeds size limit")
                 stat_vars_schema_mcf_path.write_bytes(content)
 
+            if golden_files:
+                goldens_dir.mkdir(parents=True, exist_ok=True)
+                for gf in golden_files:
+                    if not gf.filename:
+                        continue
+                    orig_name = Path(gf.filename).name
+                    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", orig_name) if orig_name else "golden.csv"
+                    gdest = goldens_dir / safe_name
+                    content = await gf.read()
+                    if len(content) > max_bytes:
+                        raise HTTPException(status_code=400, detail=f"Golden file '{gf.filename}' exceeds size limit")
+                    gdest.write_bytes(content)
+                    golden_file_paths.append(gdest)
+
     except HTTPException:
         # Clean up the upload dir so rejected requests do not accumulate files on disk.
         shutil.rmtree(run_upload_dir, ignore_errors=True)
@@ -1087,6 +1166,19 @@ async def _run_custom_validation_impl(
     if config_path is None:
         rule_ids = [x.strip() for x in (rules or "").split(",") if x.strip()] if rules else []
         config_path = _create_merged_config("custom", rule_ids, list(custom_rules or []))
+
+    # Inject GOLDENS_CHECK rule when golden files were provided (any delivery mode).
+    if golden_file_paths:
+        old_config_path = config_path
+        config_path = _inject_goldens_into_config(
+            config_path, [str(p) for p in golden_file_paths], "custom"
+        )
+        if old_config_path and old_config_path.exists():
+            old_config_path.unlink(missing_ok=True)
+        logger.info(
+            "golden_check injected golden_files=%d request_id=%s",
+            len(golden_file_paths), request_id,
+        )
 
     extra_env = _existence_checks_env(existence_checks)
     logger.info(
@@ -1177,6 +1269,8 @@ async def run_custom_validation_stream(
     stat_vars_schema_mcf_gcs_path: str | None = Form(None),
     validation_config: UploadFile | None = File(None),
     validation_config_url: str | None = Form(None),
+    golden_files: list[UploadFile] | None = File(None),
+    golden_files_gcs_paths: str | None = Form(None),
 ):
     """Run validation with streaming output.
 
@@ -1210,6 +1304,8 @@ async def run_custom_validation_stream(
         stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
         validation_config=validation_config,
         validation_config_url=validation_config_url,
+        golden_files=golden_files or [],
+        golden_files_gcs_paths=golden_files_gcs_paths,
     )
 
 
@@ -1233,6 +1329,8 @@ async def run_custom_validation(
     stat_vars_schema_mcf_gcs_path: str | None = Form(None),
     validation_config: UploadFile | None = File(None),
     validation_config_url: str | None = Form(None),
+    golden_files: list[UploadFile] | None = File(None),
+    golden_files_gcs_paths: str | None = Form(None),
 ):
     """Run validation (non-streaming).
 
@@ -1265,6 +1363,8 @@ async def run_custom_validation(
         stat_vars_schema_mcf_gcs_path=stat_vars_schema_mcf_gcs_path,
         validation_config=validation_config,
         validation_config_url=validation_config_url,
+        golden_files=golden_files or [],
+        golden_files_gcs_paths=golden_files_gcs_paths,
     )
 
 
@@ -3728,6 +3828,11 @@ class _SubmitJobRequest(BaseModel):
     processing_mode: str = "auto"
     # java_threads: explicit thread count; required when processing_mode == "custom".
     java_threads: int = 0
+    # Golden files for GOLDENS_CHECK validation.
+    # For GCS session mode: filenames already uploaded with role "golden_file".
+    # For GCS path mode: full gs:// URIs the Batch VM will download.
+    golden_file_filenames: list[str] = []
+    golden_files_gcs_paths: list[str] = []
 
 
 async def _upload_validation_config_file_to_gcs(run_id: str, upload: UploadFile) -> str:
@@ -4067,6 +4172,55 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
                 )
             logger.info("submit_batch_job: merged config uploaded run_id=%s path=%s", run_id, merged_config_gcs_path)
 
+    # Golden files: inject GOLDENS_CHECK rule into the merged config (or create one).
+    # Batch VM workspace path is predictable: /tmp/workspace/<run_id>/goldens/<filename>.
+    _batch_workspace = f"/tmp/workspace/{run_id}"
+    _batch_golden_paths: list[str] = []
+    if body.golden_file_filenames:
+        # Session mode: files are in sessions/<session_id>/goldens/<filename> and will be
+        # rsynced to ${WORKSPACE}/goldens/<filename> by the Batch VM entrypoint.
+        for _fn in body.golden_file_filenames:
+            _batch_golden_paths.append(f"{_batch_workspace}/goldens/{_fn}")
+    if body.golden_files_gcs_paths:
+        # GCS path mode: entrypoint downloads these to ${WORKSPACE}/goldens/<basename>.
+        for _guri in body.golden_files_gcs_paths:
+            _gbn = Path(_guri.split("?")[0]).name
+            if _gbn:
+                _batch_golden_paths.append(f"{_batch_workspace}/goldens/{_gbn}")
+
+    if _batch_golden_paths:
+        # Load existing config (if any) and inject GOLDENS_CHECK rule, then re-upload.
+        _goldens_base: Path | None = None
+        if merged_config_gcs_path:
+            # Download the already-uploaded merged config to inject into it.
+            try:
+                _dl_content = await _fetch_and_validate_config(merged_config_gcs_path)
+                fd2, _goldens_tmp = tempfile.mkstemp(suffix=".json", prefix="goldens_base_")
+                with os.fdopen(fd2, "wb") as _f2:
+                    _f2.write(_dl_content)
+                _goldens_base = Path(_goldens_tmp)
+            except Exception as _exc:
+                logger.warning("submit_batch_job: could not download merged config for golden injection: %s", _exc)
+        try:
+            _goldens_config_path = _inject_goldens_into_config(
+                _goldens_base, _batch_golden_paths, dataset if dataset in DATASET_CONFIG_MAP else "custom"
+            )
+            try:
+                merged_config_gcs_path = await asyncio.to_thread(
+                    gcs_reports.upload_merged_config_to_gcs, run_id, _goldens_config_path
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Failed to upload golden check config to GCS: {exc}")
+            finally:
+                _goldens_config_path.unlink(missing_ok=True)
+            logger.info(
+                "submit_batch_job: golden check config uploaded run_id=%s golden_count=%d path=%s",
+                run_id, len(_batch_golden_paths), merged_config_gcs_path,
+            )
+        finally:
+            if _goldens_base and _goldens_base.exists():
+                _goldens_base.unlink(missing_ok=True)
+
     # GCS path mode: csv_total_bytes is 0 because the client has no File objects to
     # measure. Fetch actual object sizes from GCS so tier selection is accurate.
     # Falls back to the largest tier on any error (permission denied, missing object,
@@ -4160,6 +4314,16 @@ async def _execute_batch_job_submission(body: _SubmitJobRequest) -> dict:
         machine_type_override=effective_machine_override,
     )
     batch_plan = BatchExecutor().plan_submit(batch_spec)
+    # Inject golden files GCS paths into input_files so the Batch VM downloads them.
+    if body.golden_files_gcs_paths:
+        from dataclasses import replace as _dc_replace
+        batch_plan = _dc_replace(
+            batch_plan,
+            input_files=_dc_replace(
+                batch_plan.input_files,
+                golden_files_gcs_paths=list(body.golden_files_gcs_paths),
+            ),
+        )
     logger.info('[OVERRIDE_TRACE] %s', json.dumps({
         "component": "submit_batch_job", "event": "batch_plan_created",
         "run_id": run_id,

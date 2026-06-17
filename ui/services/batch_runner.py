@@ -103,6 +103,9 @@ class InputFiles:
     csv_gcs_paths: list = field(default_factory=list)   # list of full gs:// URIs
     stat_vars_mcf_gcs_path: str = ""
     stat_vars_schema_mcf_gcs_path: str = ""
+    # Golden files for GOLDENS_CHECK: full gs:// URIs the Batch VM downloads to
+    # ${WORKSPACE}/goldens/<basename> before validation runs.
+    golden_files_gcs_paths: list = field(default_factory=list)
     # Pipeline options
     llm_review: bool = False
     rules_filter: str = ""
@@ -201,6 +204,8 @@ def _build_env_vars(run_id: str, dataset: str, input_files: InputFiles, machine_
         env["STAT_VARS_MCF_GCS_PATH"] = input_files.stat_vars_mcf_gcs_path
     if input_files.stat_vars_schema_mcf_gcs_path:
         env["STAT_VARS_SCHEMA_MCF_GCS_PATH"] = input_files.stat_vars_schema_mcf_gcs_path
+    if input_files.golden_files_gcs_paths:
+        env["GOLDEN_FILES_GCS_PATHS"] = "\n".join(input_files.golden_files_gcs_paths)
     if input_files.baseline_name:
         env["BASELINE_NAME"] = input_files.baseline_name
 

@@ -1997,6 +1997,14 @@
                 <button type="button" id="stat-vars-schema-mcf-clear-btn" class="file-clear-btn" style="display: none;" title="Remove file" aria-label="Remove file">×</button>
               </div>
               <p class="field-hint">Used for custom schema definitions.</p>
+              <label>Golden Check <span class="label-optional">(optional)</span></label>
+              <div class="file-input-row">
+                <input type="file" id="golden-files-file" accept=".csv,.mcf" multiple />
+                <button type="button" id="golden-files-choose-btn" class="file-choose-btn">Choose File(s)</button>
+                <span id="golden-files-file-name" class="file-name">No file chosen</span>
+                <button type="button" id="golden-files-clear-btn" class="file-clear-btn" style="display: none;" title="Remove files" aria-label="Remove files">×</button>
+              </div>
+              <p class="field-hint">CSV where each row is an expected record. Validation fails if any row is missing from the import's summary report.</p>
             </div>
           </div><!-- /upload-mode-section -->
           <div id="gcs-mode-section" class="gcs-input-section" style="display: none;">
@@ -2017,6 +2025,9 @@
               <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
               <label>StatVars Schema MCF <span class="label-optional">(optional)</span></label>
               <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
+              <label>Golden Check <span class="label-optional">(optional)</span></label>
+              <textarea id="golden-files-gcs-paths" rows="2" placeholder="gs://bucket/path/golden_summary.csv" autocomplete="off" spellcheck="false"></textarea>
+              <p class="field-hint">GCS path(s) to golden CSV file(s), one per line. Each row in the file is a record that must exist in this import's output — validation fails if any row is missing.</p>
               <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
             </div>
             <div id="gcs-bulk-folder-fields" style="display: none;">
@@ -2258,6 +2269,7 @@
     let customCsvFiles = [];
     let customStatVarsMcfFile = null;
     let customStatVarsSchemaMcfFile = null;
+    let customGoldenFiles = [];
     let customValidationConfigFile = null;
     function isExternalValidationConfigActive() {
       if (customValidationConfigFile) return true;
@@ -2514,6 +2526,7 @@
         customCsvFiles = [];
         customStatVarsMcfFile = null;
         customStatVarsSchemaMcfFile = null;
+        customGoldenFiles = [];
         customValidationConfigFile = null;
         syncValidationConfigOverrideUi();
         customInputMode = 'upload';
@@ -2521,7 +2534,7 @@
         document.getElementById('mode-gcs-btn')?.classList.remove('active');
         document.getElementById('upload-mode-section').style.display = '';
         document.getElementById('gcs-mode-section').style.display = 'none';
-        ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path'].forEach(id => {
+        ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path', 'golden-files-gcs-paths'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
@@ -2536,11 +2549,11 @@
         if (_vcfClear) _vcfClear.style.display = 'none';
         const _vcfUrl = document.getElementById('validation-config-url');
         if (_vcfUrl) _vcfUrl.value = '';
-        ['tmcf-file-name', 'csv-file-name', 'stat-vars-mcf-file-name', 'stat-vars-schema-mcf-file-name'].forEach(id => {
+        ['tmcf-file-name', 'csv-file-name', 'stat-vars-mcf-file-name', 'stat-vars-schema-mcf-file-name', 'golden-files-file-name'].forEach(id => {
           const el = document.getElementById(id);
           if (el) { el.textContent = 'No file chosen'; el.classList.remove('has-file'); }
         });
-        ['tmcf-clear-btn', 'csv-clear-btn', 'stat-vars-mcf-clear-btn', 'stat-vars-schema-mcf-clear-btn'].forEach(id => {
+        ['tmcf-clear-btn', 'csv-clear-btn', 'stat-vars-mcf-clear-btn', 'stat-vars-schema-mcf-clear-btn', 'golden-files-clear-btn'].forEach(id => {
           const btn = document.getElementById(id);
           if (btn) btn.style.display = 'none';
         });
@@ -5623,6 +5636,9 @@
       document.getElementById('csv-clear-btn').disabled = true;
       document.getElementById('stat-vars-mcf-clear-btn').disabled = true;
       document.getElementById('stat-vars-schema-mcf-clear-btn').disabled = true;
+      document.getElementById('golden-files-file').disabled = true;
+      document.getElementById('golden-files-choose-btn').disabled = true;
+      document.getElementById('golden-files-clear-btn').disabled = true;
       document.getElementById('validation-config-file').disabled = true;
       document.getElementById('validation-config-choose-btn').disabled = true;
       document.getElementById('validation-config-clear-btn').disabled = true;
@@ -5775,6 +5791,7 @@
           const statVarsSchemaMcfGcsPath = (document.getElementById('stat-vars-schema-mcf-gcs-path')?.value || '').trim();
           const batchRunId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           _setActiveStep('Submitting validation job\u2026');
+          const goldenGcsPaths = (document.getElementById('golden-files-gcs-paths')?.value || '').trim();
           data = await _submitAndPollBatchJob(batchRunId, 'custom', {
             session_id: '',
             tmcf_filename: '',
@@ -5784,6 +5801,7 @@
             csv_gcs_paths: csvGcsPaths.split(/[\n,]/).map(s => s.trim()).filter(Boolean),
             stat_vars_mcf_gcs_path: statVarsMcfGcsPath,
             stat_vars_schema_mcf_gcs_path: statVarsSchemaMcfGcsPath,
+            golden_files_gcs_paths: goldenGcsPaths ? goldenGcsPaths.split(/\n/).map(s => s.trim()).filter(Boolean) : [],
             csv_total_bytes: 0,  // server overrides to largest tier for GCS path mode
             llm_review: true,
             rules: rulesParam,
@@ -5807,6 +5825,7 @@
             ...customCsvFiles,
             ...(customStatVarsMcfFile ? [customStatVarsMcfFile] : []),
             ...(customStatVarsSchemaMcfFile ? [customStatVarsSchemaMcfFile] : []),
+            ...customGoldenFiles,
           ];
           const totalBytes = allSelectedFiles.reduce((sum, f) => sum + f.size, 0);
           if (totalBytes > MAX_TOTAL_BYTES) {
@@ -5826,6 +5845,7 @@
               ...customCsvFiles.map(f => ({ name: f.name, size: f.size, role: 'csv' })),
               ...(customStatVarsMcfFile ? [{ name: customStatVarsMcfFile.name, size: customStatVarsMcfFile.size, role: 'stat_vars_mcf' }] : []),
               ...(customStatVarsSchemaMcfFile ? [{ name: customStatVarsSchemaMcfFile.name, size: customStatVarsSchemaMcfFile.size, role: 'stat_vars_schema_mcf' }] : []),
+              ...customGoldenFiles.map(f => ({ name: f.name, size: f.size, role: 'golden_file' })),
             ];
             const prepResp = await fetch(API + '/api/prepare-upload', {
               method: 'POST',
@@ -5845,6 +5865,7 @@
               ...customCsvFiles.map(f => [f.name, f]),
               ...(customStatVarsMcfFile ? [[customStatVarsMcfFile.name, customStatVarsMcfFile]] : []),
               ...(customStatVarsSchemaMcfFile ? [[customStatVarsSchemaMcfFile.name, customStatVarsSchemaMcfFile]] : []),
+              ...customGoldenFiles.map(f => [f.name, f]),
             ]);
             _setActiveStep('Uploading dataset files\u2026');
             // Retry up to 3 attempts per file with exponential backoff (2s, 4s, 8s).
@@ -5907,6 +5928,7 @@
               csv_filenames: customCsvFiles.map(f => f.name),
               stat_vars_mcf_filename: customStatVarsMcfFile ? customStatVarsMcfFile.name : '',
               stat_vars_schema_mcf_filename: customStatVarsSchemaMcfFile ? customStatVarsSchemaMcfFile.name : '',
+              golden_file_filenames: customGoldenFiles.map(f => f.name),
               csv_total_bytes: customCsvFiles.reduce((s, f) => s + f.size, 0),
               llm_review: true,
               rules: rulesParam,
@@ -5930,6 +5952,7 @@
             }
             if (customStatVarsMcfFile) formData.append('stat_vars_mcf', customStatVarsMcfFile);
             if (customStatVarsSchemaMcfFile) formData.append('stat_vars_schema_mcf', customStatVarsSchemaMcfFile);
+            for (const gf of customGoldenFiles) { formData.append('golden_files', gf); }
             if (rulesParam) formData.append('rules', rulesParam);
             formData.append('dataset_name', lastRunCustomDatasetName || '');
             formData.append('llm_review', '1');
@@ -8203,6 +8226,7 @@
         if (isGcs) {
           customTmcfFile = null; customCsvFiles = [];
           customStatVarsMcfFile = null; customStatVarsSchemaMcfFile = null;
+          customGoldenFiles = [];
           // Clear the config file when switching to GCS mode; URL remains.
           customValidationConfigFile = null;
           document.getElementById('validation-config-file').value = '';
@@ -8215,17 +8239,18 @@
           document.getElementById('csv-file').value = '';
           document.getElementById('stat-vars-mcf-file').value = '';
           document.getElementById('stat-vars-schema-mcf-file').value = '';
-          ['tmcf-file-name','csv-file-name','stat-vars-mcf-file-name','stat-vars-schema-mcf-file-name'].forEach(id => {
+          document.getElementById('golden-files-file').value = '';
+          ['tmcf-file-name','csv-file-name','stat-vars-mcf-file-name','stat-vars-schema-mcf-file-name','golden-files-file-name'].forEach(id => {
             const el = document.getElementById(id);
             if (el) { el.textContent = 'No file chosen'; el.classList.remove('has-file'); }
           });
-          ['tmcf-clear-btn','csv-clear-btn','stat-vars-mcf-clear-btn','stat-vars-schema-mcf-clear-btn'].forEach(id => {
+          ['tmcf-clear-btn','csv-clear-btn','stat-vars-mcf-clear-btn','stat-vars-schema-mcf-clear-btn','golden-files-clear-btn'].forEach(id => {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
           });
         } else {
           hideBulkRunsPanel();
           setGcsValidationMode('single');
-          ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path', 'bulk-gcs-root'].forEach((id) => {
+          ['tmcf-gcs-path', 'csv-gcs-paths', 'stat-vars-mcf-gcs-path', 'stat-vars-schema-mcf-gcs-path', 'golden-files-gcs-paths', 'bulk-gcs-root'].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.value = '';
           });
@@ -8351,6 +8376,35 @@
     });
     setupCustomFileInput('stat-vars-mcf-file', 'stat-vars-mcf-choose-btn', 'stat-vars-mcf-file-name', 'stat-vars-mcf-clear-btn', (f) => { customStatVarsMcfFile = f; }, () => { customStatVarsMcfFile = null; });
     setupCustomFileInput('stat-vars-schema-mcf-file', 'stat-vars-schema-mcf-choose-btn', 'stat-vars-schema-mcf-file-name', 'stat-vars-schema-mcf-clear-btn', (f) => { customStatVarsSchemaMcfFile = f; }, () => { customStatVarsSchemaMcfFile = null; });
+    (function() {
+      const input = document.getElementById('golden-files-file');
+      const btn = document.getElementById('golden-files-choose-btn');
+      const nameEl = document.getElementById('golden-files-file-name');
+      const clearBtn = document.getElementById('golden-files-clear-btn');
+      if (!input || !btn || !nameEl || !clearBtn) return;
+      btn.addEventListener('click', () => input.click());
+      input.addEventListener('change', () => {
+        customGoldenFiles = Array.from(input.files || []);
+        if (customGoldenFiles.length > 0) {
+          nameEl.textContent = customGoldenFiles.length === 1
+            ? customGoldenFiles[0].name
+            : `${customGoldenFiles.length} files`;
+          nameEl.classList.add('has-file');
+          clearBtn.style.display = '';
+        } else {
+          nameEl.textContent = 'No file chosen';
+          nameEl.classList.remove('has-file');
+          clearBtn.style.display = 'none';
+        }
+      });
+      clearBtn.addEventListener('click', () => {
+        input.value = '';
+        customGoldenFiles = [];
+        nameEl.textContent = 'No file chosen';
+        nameEl.classList.remove('has-file');
+        clearBtn.style.display = 'none';
+      });
+    })();
     setupCustomFileInput('validation-config-file', 'validation-config-choose-btn', 'validation-config-file-name', 'validation-config-clear-btn', (f) => {
       customValidationConfigFile = f;
       syncValidationConfigOverrideUi();

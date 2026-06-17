@@ -63,6 +63,7 @@ TMCF_GCS_PATH="${TMCF_GCS_PATH:-}"
 CSV_GCS_PATHS="${CSV_GCS_PATHS:-}"            # newline-separated full gs:// URIs
 STAT_VARS_MCF_GCS_PATH="${STAT_VARS_MCF_GCS_PATH:-}"
 STAT_VARS_SCHEMA_MCF_GCS_PATH="${STAT_VARS_SCHEMA_MCF_GCS_PATH:-}"
+GOLDEN_FILES_GCS_PATHS="${GOLDEN_FILES_GCS_PATHS:-}"  # newline-separated full gs:// URIs
 LLM_REVIEW="${LLM_REVIEW:-false}"
 RULES_FILTER="${RULES_FILTER:-}"
 SKIP_RULES_FILTER="${SKIP_RULES_FILTER:-}"
@@ -240,6 +241,16 @@ if [[ "$DATASET" == "custom" ]]; then
             python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
                 "$STAT_VARS_SCHEMA_MCF_GCS_PATH" "${WORKSPACE}/${STAT_VARS_SCHEMA_MCF_FILENAME}" || \
                 log "WARNING: Failed to download stat vars schema MCF from ${STAT_VARS_SCHEMA_MCF_GCS_PATH}"
+        fi
+        if [[ -n "$GOLDEN_FILES_GCS_PATHS" ]]; then
+            mkdir -p "${WORKSPACE}/goldens"
+            while IFS= read -r _golden_uri; do
+                [[ -z "$_golden_uri" ]] && continue
+                _golden_bn="$(basename "${_golden_uri%%\?*}")"
+                python3 "${SCRIPT_DIR}/batch/gcs_download.py" \
+                    "$_golden_uri" "${WORKSPACE}/goldens/${_golden_bn}" || \
+                    log "WARNING: Failed to download golden file from ${_golden_uri}"
+            done <<< "$GOLDEN_FILES_GCS_PATHS"
         fi
     else
         # ── Upload session mode: download all files from the GCS prefix. ──────────

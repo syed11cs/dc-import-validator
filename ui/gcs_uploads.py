@@ -48,7 +48,7 @@ _SIGNED_URL_EXPIRY_MINUTES = 360  # 6 hours — accommodates large uploads (up t
 MAX_SESSION_SIZE = 100 * 1024 * 1024 * 1024  # 100 GB
 
 # Valid roles for files in an upload session.
-_VALID_ROLES = frozenset({"tmcf", "csv", "stat_vars_mcf", "stat_vars_schema_mcf"})
+_VALID_ROLES = frozenset({"tmcf", "csv", "stat_vars_mcf", "stat_vars_schema_mcf", "golden_file"})
 
 
 def is_gcs_uploads_configured() -> bool:
@@ -167,7 +167,12 @@ def create_upload_session(files: list[dict]) -> dict:
             raise ValueError(f"Invalid role {role!r}; must be one of {sorted(_VALID_ROLES)}")
 
         content_type = (file_info.get("content_type") or "").strip() or _guess_content_type(filename)
-        gcs_path = f"{_SESSION_PREFIX}/{session_id}/{filename}"
+        # Golden files go in a goldens/ subdirectory so the Batch VM rsync places them
+        # at ${WORKSPACE}/goldens/<filename>, keeping them separate from input files.
+        if role == "golden_file":
+            gcs_path = f"{_SESSION_PREFIX}/{session_id}/goldens/{filename}"
+        else:
+            gcs_path = f"{_SESSION_PREFIX}/{session_id}/{filename}"
         blob = bucket.blob(gcs_path)
 
         signed_url = _make_signed_url(blob, expiry, content_type)
@@ -252,25 +257,34 @@ async def download_session_to_dir(session_id: str, dest_dir: Path) -> dict:
     # ── Step 2: resolve destination paths (pure computation, no I/O) ─────────
     # Collect as a list to preserve manifest order for the "csvs" result key.
     file_tasks: list[tuple[str, Path, str]] = []  # (role, dest_path, gcs_path)
+    goldens_dir = dest_dir / "goldens"
     for entry in manifest.get("files", []):
         filename = entry.get("filename", "")
         role = entry.get("role", "")
         if not filename or role not in _VALID_ROLES:
             continue
-        gcs_path = f"{_SESSION_PREFIX}/{session_id}/{filename}"
-        if role == "tmcf":
-            dest_path = dest_dir / "input.tmcf"
-        elif role == "csv":
-            dest_path = csvs_dir / filename
-        elif role == "stat_vars_mcf":
-            dest_path = dest_dir / "input_stat_vars.mcf"
-        elif role == "stat_vars_schema_mcf":
-            dest_path = dest_dir / "input_stat_vars_schema.mcf"
+        if role == "golden_file":
+            gcs_path = f"{_SESSION_PREFIX}/{session_id}/goldens/{filename}"
+            dest_path = goldens_dir / filename
         else:
-            continue
+            gcs_path = f"{_SESSION_PREFIX}/{session_id}/{filename}"
+            if role == "tmcf":
+                dest_path = dest_dir / "input.tmcf"
+            elif role == "csv":
+                dest_path = csvs_dir / filename
+            elif role == "stat_vars_mcf":
+                dest_path = dest_dir / "input_stat_vars.mcf"
+            elif role == "stat_vars_schema_mcf":
+                dest_path = dest_dir / "input_stat_vars_schema.mcf"
+            else:
+                continue
         file_tasks.append((role, dest_path, gcs_path))
 
     # ── Step 3: download all files concurrently (bounded concurrency) ─────────
+    # Create goldens dir if any golden_file entries are present.
+    if any(role == "golden_file" for role, _, _ in file_tasks):
+        goldens_dir.mkdir(parents=True, exist_ok=True)
+
     # Each download runs in its own thread-pool slot.  A semaphore caps active
     # downloads at _MAX_PARALLEL_DOWNLOADS so a session with many CSVs does not
     # exhaust the thread pool.  Errors propagate immediately (gather default).
@@ -305,7 +319,13 @@ async def download_session_to_dir(session_id: str, dest_dir: Path) -> dict:
     ])
 
     # ── Step 4: assemble result dict (manifest order preserved) ──────────────
-    result: dict = {"tmcf": None, "csvs": [], "stat_vars_mcf": None, "stat_vars_schema_mcf": None}
+    result: dict = {
+        "tmcf": None,
+        "csvs": [],
+        "stat_vars_mcf": None,
+        "stat_vars_schema_mcf": None,
+        "golden_files": [],
+    }
     for role, dest_path, _ in file_tasks:
         if role == "tmcf":
             result["tmcf"] = dest_path
@@ -315,6 +335,8 @@ async def download_session_to_dir(session_id: str, dest_dir: Path) -> dict:
             result["stat_vars_mcf"] = dest_path
         elif role == "stat_vars_schema_mcf":
             result["stat_vars_schema_mcf"] = dest_path
+        elif role == "golden_file":
+            result["golden_files"].append(dest_path)
 
     return result
 
