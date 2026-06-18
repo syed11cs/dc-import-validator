@@ -5452,6 +5452,8 @@
             machine_type_override: opts.machine_type_override || '',
             processing_mode: opts.processing_mode || 'auto',
             java_threads: opts.java_threads || 0,
+            golden_file_filenames: opts.golden_file_filenames || [],
+            golden_files_gcs_paths: opts.golden_files_gcs_paths || [],
           }),
           signal,
         });
