@@ -61,10 +61,12 @@ def download_prefix(client: storage.Client, uri: str, dest_dir: str) -> None:
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
     for blob in blobs:
-        filename = blob.name.split("/")[-1]
-        if not filename:
+        # Preserve relative path from the prefix so subdirectories (e.g. goldens/) are kept.
+        rel_path = blob.name[len(prefix):]
+        if not rel_path:
             continue
-        local_path = dest / filename
+        local_path = dest / rel_path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(str(local_path))
         size_mb = (blob.size or 0) / (1024 * 1024)
         print(f"[download] {blob.name} -> {local_path} ({size_mb:.1f} MB)", flush=True)
