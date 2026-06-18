@@ -40,6 +40,27 @@ import gcs_baselines  # noqa: E402
 # Column header matching sample_data/empty_differ.csv
 _EMPTY_DIFFER_HEADER = "StatVar,DELETED,MODIFIED,ADDED\n"
 
+# The upstream validation runner loads differ data from MCF files. When no baseline
+# exists, it returns a 0-column DataFrame which DuckDB rejects when registering tables.
+# Writing stub MCF files with one placeholder node ensures the runner always gets a
+# proper-schema DataFrame, even on a first run with no baseline.
+_STUB_MCF_NODE = (
+    "Node: dcid:no_differ_baseline\n"
+    "variableMeasured: dcs:no_differ_baseline\n"
+    "typeOf: dcs:StatVarObservation\n"
+)
+_STUB_MCF_FILES = ("nodes-added.mcf", "nodes-deleted.mcf", "nodes-modified.mcf")
+
+
+def _write_stub_differ_output(output_dir: str) -> None:
+    """Write placeholder MCF files so the DC runner's differ_df has proper column schema."""
+    os.makedirs(output_dir, exist_ok=True)
+    for name in _STUB_MCF_FILES:
+        path = os.path.join(output_dir, name)
+        if not os.path.isfile(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(_STUB_MCF_NODE)
+
 
 def _find_mcf_files(directory: str) -> list[str]:
     return glob.glob(os.path.join(directory, "*.mcf"))
@@ -171,6 +192,8 @@ def run_diff(args: argparse.Namespace) -> int:
             f"No baseline found for dataset_id='{args.dataset_id}' — "
             "skipping differ (first run)"
         )
+        if args.output_dir:
+            _write_stub_differ_output(args.output_dir)
         return 1
 
     baseline_dir = tempfile.mkdtemp(prefix="dc_baseline_")
@@ -212,6 +235,7 @@ def run_diff(args: argparse.Namespace) -> int:
                 "Warning: import_differ failed — differ output unavailable",
                 file=sys.stderr,
             )
+            _write_stub_differ_output(args.output_dir)
             return 2
 
         _normalize_diff_output(args.output_dir)
