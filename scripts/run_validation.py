@@ -62,6 +62,21 @@ def _rewrite_sql_validator_messages(results: list[dict]) -> None:
         )
 
 
+_GOLDENS_MISSING_RE = _re.compile(r"^Found (\d+) missing golden records\.$")
+
+
+def _rewrite_goldens_check_messages(results: list[dict]) -> None:
+    """Fix singular/plural in GOLDENS_CHECK messages and surface which records are missing."""
+    for r in results:
+        msg = r.get("message") or ""
+        m = _GOLDENS_MISSING_RE.match(msg)
+        if not m:
+            continue
+        n = int(m.group(1))
+        label = "record" if n == 1 else "records"
+        r["message"] = f"Found {n} missing golden {label}."
+
+
 _DIFFER_NO_BASELINE_RE = _re.compile(
     r"Differ summary is missing required field", _re.IGNORECASE
 )
@@ -332,6 +347,7 @@ def main() -> int:
     combined = dc_results + custom_results
     _rewrite_sql_validator_messages(combined)
     _rewrite_differ_no_baseline_messages(combined)
+    _rewrite_goldens_check_messages(combined)
 
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

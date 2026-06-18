@@ -3849,7 +3849,7 @@
         else if (pipelineFailedBeforeValidation && (code === FAILURE.ROW_COUNT_EXCEEDED || code === FAILURE.CSV_QUALITY_FAILED || code === FAILURE.PREFLIGHT_FAILED)) failLabel = 'Pre-Import Check Failed';
         else if (pipelineFailedBeforeValidation && (code === FAILURE.DATA_PROCESSING_FAILED || code === FAILURE.LINT_FAILED)) failLabel = 'Pipeline failed';
         else if (!pipelineFailedBeforeValidation && _hasConfigErrors && !_hasRuleFailures) failLabel = 'SQL/config error in validation rule';
-        else if (msg) failLabel = msg;
+        else if (msg && !_hasRuleFailures) failLabel = msg;
         outcomeText.textContent = failLabel;
       }
       outcomeLeft.appendChild(statusDot);

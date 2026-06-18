@@ -260,6 +260,26 @@ def extract_rule_failure_samples(results: list) -> list[dict]:
                 "sourceRow": None,
                 "message": message,
             })
+        elif details.get("missing_goldens") is not None:
+            # GOLDENS_CHECK: one sample per missing golden record.
+            for node in (details["missing_goldens"] or []):
+                stat_var = (
+                    node.get("StatVar") or node.get("stat_var")
+                    or node.get("variableMeasured") or None
+                )
+                extra = {k: v for k, v in node.items()
+                         if k not in ("StatVar", "stat_var", "variableMeasured") and v}
+                value_str = ", ".join(f"{k}: {v}" for k, v in extra.items()) if extra else "—"
+                samples.append({
+                    "statVar": stat_var,
+                    "location": None,
+                    "date": None,
+                    "value": value_str,
+                    "rule": rule,
+                    "expected": "present in import output",
+                    "sourceRow": None,
+                    "message": message,
+                })
         elif details.get("failing_rows"):
             # Generic handler for any rule that returns row-level data (e.g. SQL_VALIDATOR).
             # One sample per failing row; StatVar extracted if present, remaining columns
