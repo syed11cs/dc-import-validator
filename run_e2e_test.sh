@@ -1282,13 +1282,29 @@ if [[ -n "$_DIFFER_DATASET_ID" ]]; then
     DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (elapsed=${_DIFFER_ELAPSED}s)"
   elif [[ $_DIFFER_EXIT -eq 124 ]]; then
+    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_warn "Step 2.4: Differ timed out after ${_DIFFER_TIMEOUT_SEC}s — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
   else
+    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_warn "Step 2.4: Differ failed (exit $_DIFFER_EXIT) — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
   fi
 else
   log_info "Step 2.4: Differ skipped — no dataset_id (use --baseline-name for custom datasets)"
+  DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
 fi
+
+# Guarantee DIFFER_OUTPUT is always a directory with MCF stub files.
+# The DC runner expects a directory to register the differ table with proper column
+# schema; a missing directory or bare CSV file causes a 0-column DataFrame that
+# DuckDB rejects in validate_sql. Stub files are skipped when real MCF output exists.
+mkdir -p "$DIFFER_OUTPUT"
+for _stub_mcf in nodes-added.mcf nodes-deleted.mcf nodes-modified.mcf; do
+  if [[ ! -f "$DIFFER_OUTPUT/$_stub_mcf" ]]; then
+    printf 'Node: dcid:no_differ_baseline\nvariableMeasured: dcs:no_differ_baseline\ntypeOf: dcs:StatVarObservation\n' \
+        > "$DIFFER_OUTPUT/$_stub_mcf"
+  fi
+done
+unset _stub_mcf
 
 # =============================================================================
 # Step 3: Run import_validation
@@ -1331,18 +1347,7 @@ if [[ -n "$TMCF" && -f "$TMCF" && ${#CSVS[@]} -gt 0 ]]; then
   VALIDATION_ARGS+=(--tmcf="$TMCF" "${CSV_ARGS[@]}")
 fi
 
-# differ_output is optional (not available for new imports). When no baseline comparison exists,
-# we pass empty_differ.csv so the DC validation runner can create the differ table in DuckDB
-# without failing; the file has a header row (StatVar,DELETED,MODIFIED,ADDED) and no data.
-# Override path via EMPTY_DIFFER_PATH if needed.
-EMPTY_DIFFER="${EMPTY_DIFFER_PATH:-$SCRIPT_DIR/sample_data/empty_differ.csv}"
-if [[ -n "$DIFFER_OUTPUT" && -e "$DIFFER_OUTPUT" ]]; then
-  VALIDATION_ARGS+=(--differ_output="$DIFFER_OUTPUT")
-elif [[ -f "$EMPTY_DIFFER" ]]; then
-  VALIDATION_ARGS+=(--differ_output="$EMPTY_DIFFER")
-else
-  VALIDATION_ARGS+=(--differ_output=)
-fi
+VALIDATION_ARGS+=(--differ_output="$DIFFER_OUTPUT")
 
 # Preprocess summary_report.csv: rewrite year-only MinDate/MaxDate (YYYY) to YYYY-01-01.
 # The DC validation runner (and pandas) can interpret bare YYYY as Unix epoch or invalid;
