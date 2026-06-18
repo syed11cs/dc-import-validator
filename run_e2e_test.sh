@@ -1279,6 +1279,7 @@ if [[ -n "$_DIFFER_DATASET_ID" ]]; then
     DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_info "Step 2.4: Differ complete → $DIFFER_OUTPUT (elapsed=${_DIFFER_ELAPSED}s)"
   elif [[ $_DIFFER_EXIT -eq 1 ]]; then
+    DIFFER_OUTPUT="$GENMCF_OUTPUT/differ_output"
     log_info "Step 2.4: No baseline for '$_DIFFER_DATASET_ID' — differ skipped; first run (elapsed=${_DIFFER_ELAPSED}s)"
   elif [[ $_DIFFER_EXIT -eq 124 ]]; then
     log_warn "Step 2.4: Differ timed out after ${_DIFFER_TIMEOUT_SEC}s — continuing without differ output (elapsed=${_DIFFER_ELAPSED}s)"
