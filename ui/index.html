@@ -2017,9 +2017,11 @@
             </div>
             <div id="gcs-single-dataset-fields">
               <label>TMCF file <span class="required-asterisk" aria-label="required">*</span></label>
-              <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" />
+              <input type="text" id="tmcf-gcs-path" placeholder="gs://bucket/path/file.tmcf" autocomplete="off" spellcheck="false" aria-describedby="tmcf-gcs-path-error" />
+              <p id="tmcf-gcs-path-error" class="field-inline-error" style="display:none;" role="alert"></p>
               <label>CSV file(s) <span class="required-asterisk" aria-label="required">*</span></label>
-              <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false"></textarea>
+              <textarea id="csv-gcs-paths" rows="3" placeholder="gs://bucket/path/a.csv&#10;gs://bucket/path/b.csv" autocomplete="off" spellcheck="false" aria-describedby="csv-gcs-paths-error"></textarea>
+              <p id="csv-gcs-paths-error" class="field-inline-error" style="display:none;" role="alert"></p>
               <p class="field-hint">One path per line for multiple CSVs</p>
               <label>StatVars MCF <span class="label-optional">(optional)</span></label>
               <input type="text" id="stat-vars-mcf-gcs-path" placeholder="gs://bucket/path/stat_vars.mcf" autocomplete="off" spellcheck="false" />
@@ -2082,6 +2084,7 @@
       <div class="sidebar-footer">
       <div class="run-action" style="padding-top: 20px;">
         <button id="run-btn" class="btn" disabled>▶ Run validation</button>
+        <p id="run-btn-hint" style="display:none;font-size:0.72rem;color:var(--fail);margin:6px 0 0;line-height:1.4;" role="status"></p>
       </div>
       <div id="app-version"></div>
       </div>
@@ -2288,6 +2291,7 @@
       updateRulesSummary();
     }
     let customInputMode = 'upload'; // 'upload' | 'gcs'
+    let _runHintTouched = false;  // only show run-btn hint after user has interacted with the form
     let gcsValidationMode = 'single'; // 'single' | 'bulk'
     let bulkRunsPollTimer = null;
     let bulkRunsPollGeneration = 0;
@@ -4444,20 +4448,42 @@
           if (gcsValidationMode === 'bulk') {
             const _bulkOk = !validateBulkGcsRoot(document.getElementById('bulk-gcs-root')?.value || '');
             btn.disabled = !_bulkOk;
+            btn.title = _bulkOk ? '' : 'Enter a valid GCS folder path to run validation';
           } else {
             const _tmcfGcs = (document.getElementById('tmcf-gcs-path')?.value || '').trim();
             const _csvGcs = (document.getElementById('csv-gcs-paths')?.value || '').trim();
             const _csvEntries = _csvGcs.split(/[\n,]/).map(p => p.trim()).filter(Boolean);
-            const _gcsOk = _tmcfGcs.startsWith('gs://') &&
-              _csvEntries.length > 0 &&
-              _csvEntries.every(p => p.length > 0 && p.startsWith('gs://'));
+            const _tmcfOk = _tmcfGcs.startsWith('gs://');
+            const _csvOk = _csvEntries.length > 0 && _csvEntries.every(p => p.startsWith('gs://'));
+            const _gcsOk = _tmcfOk && _csvOk;
             btn.disabled = !_gcsOk || !_nameOk;
+            let _runHint = '';
+            if (!_nameOk) _runHint = 'Enter a valid dataset name (3–48 lowercase chars, hyphens)';
+            else if (!_tmcfGcs) _runHint = 'Enter the TMCF GCS path to run validation';
+            else if (!_tmcfOk) _runHint = 'TMCF path must start with gs://';
+            else if (_csvEntries.length === 0) _runHint = 'Enter at least one CSV GCS path';
+            else if (!_csvOk) _runHint = 'All CSV paths must start with gs://';
+            if (_runHintTouched) {
+              const _hintEl = document.getElementById('run-btn-hint');
+              if (_hintEl) { _hintEl.textContent = _runHint; _hintEl.style.display = _runHint ? '' : 'none'; }
+            }
           }
         } else {
-          btn.disabled = !customTmcfFile || customCsvFiles.length === 0 || !_nameOk;
+          const _uploadOk = !!customTmcfFile && customCsvFiles.length > 0 && _nameOk;
+          btn.disabled = !_uploadOk;
+          if (_runHintTouched) {
+            let _runHint = '';
+            if (!_nameOk) _runHint = 'Enter a valid dataset name (3–48 lowercase chars, hyphens)';
+            else if (!customTmcfFile) _runHint = 'Select a TMCF file to run validation';
+            else if (customCsvFiles.length === 0) _runHint = 'Select at least one CSV file to run validation';
+            const _hintEl = document.getElementById('run-btn-hint');
+            if (_hintEl) { _hintEl.textContent = _runHint; _hintEl.style.display = _runHint ? '' : 'none'; }
+          }
         }
       } else {
         btn.disabled = false;
+        const _hintEl = document.getElementById('run-btn-hint');
+        if (_hintEl) { _hintEl.textContent = ''; _hintEl.style.display = 'none'; }
       }
       if (!runAbortController && !bulkSubmitInProgress) {
         btn.textContent = '\u25B6 Run validation';
@@ -8182,6 +8208,7 @@
     const _datasetNameInput = document.getElementById('custom-dataset-name');
     if (_datasetNameInput) {
       _datasetNameInput.addEventListener('input', () => {
+        _runHintTouched = true;
         _updateDatasetNameHint();
         // Dataset name changes the effective baseline_id — clear any stale differ/baseline UI
         const _dcEl = document.getElementById('differ-container');
@@ -8225,6 +8252,7 @@
         // In GCS/Batch mode, file upload isn't supported — only URL is used.
         const _vcFileRow = document.getElementById('validation-config-file-row');
         if (_vcFileRow) _vcFileRow.style.display = isGcs ? 'none' : '';
+        _runHintTouched = false;
         if (isGcs) {
           customTmcfFile = null; customCsvFiles = [];
           customStatVarsMcfFile = null; customStatVarsSchemaMcfFile = null;
@@ -8262,12 +8290,48 @@
       uploadBtn.addEventListener('click', () => setMode('upload'));
       gcsBtn.addEventListener('click', () => setMode('gcs'));
       // Update run button state when GCS path inputs change.
-      ['tmcf-gcs-path', 'csv-gcs-paths', 'bulk-gcs-root'].forEach(id => {
-        document.getElementById(id)?.addEventListener('input', () => {
-          if (id === 'bulk-gcs-root') setBulkGcsRootValidation(false);
+      // Also: auto-convert HTTPS storage URLs → gs://, show inline errors for non-gs:// values.
+      (function () {
+        function toGcsUri(raw) {
+          const s = raw.trim();
+          const m = s.match(/^https?:\/\/storage(?:\.cloud)?\.google(?:apis)?\.com\/([^?#\s]+)/);
+          if (m) return 'gs://' + m[1];
+          const c = s.match(/^https?:\/\/console\.cloud\.google\.com\/storage\/browse\/([^?#\s]+)/);
+          if (c) return 'gs://' + c[1];
+          return raw;
+        }
+        function showGcsFieldError(inputEl, errorEl, label) {
+          if (!inputEl || !errorEl) return;
+          const lines = inputEl.value.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+          if (lines.length === 0) { errorEl.style.display = 'none'; return; }
+          const bad = lines.find(p => p && !p.startsWith('gs://'));
+          if (bad) {
+            errorEl.textContent = label + ' must start with gs://';
+            errorEl.style.display = '';
+          } else {
+            errorEl.style.display = 'none';
+          }
+        }
+        function handleGcsInput(id, errorId, label) {
+          const el = document.getElementById(id);
+          const errEl = document.getElementById(errorId);
+          if (!el) return;
+          el.addEventListener('input', () => {
+            _runHintTouched = true;
+            // Auto-convert HTTPS URLs to gs:// on paste/type.
+            const converted = el.value.split(/\n/).map(line => toGcsUri(line)).join('\n');
+            if (converted !== el.value) el.value = converted;
+            showGcsFieldError(el, errEl, label);
+            updateRunButtonState();
+          });
+        }
+        handleGcsInput('tmcf-gcs-path', 'tmcf-gcs-path-error', 'TMCF path');
+        handleGcsInput('csv-gcs-paths', 'csv-gcs-paths-error', 'CSV path(s)');
+        document.getElementById('bulk-gcs-root')?.addEventListener('input', () => {
+          setBulkGcsRootValidation(false);
           updateRunButtonState();
         });
-      });
+      })();
       document.getElementById('gcs-mode-single-btn')?.addEventListener('click', () => setGcsValidationMode('single'));
       document.getElementById('gcs-mode-bulk-btn')?.addEventListener('click', () => setGcsValidationMode('bulk'));
       document.getElementById('gcs-mode-single-btn')?.addEventListener('keydown', (e) => {
@@ -8279,7 +8343,7 @@
       syncGcsValidationModeUi();
     })();
 
-    setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { customTmcfFile = f; }, () => { customTmcfFile = null; });
+    setupCustomFileInput('tmcf-file', 'tmcf-choose-btn', 'tmcf-file-name', 'tmcf-clear-btn', (f) => { _runHintTouched = true; customTmcfFile = f; }, () => { customTmcfFile = null; });
     (function() {
       const input = document.getElementById('csv-file');
       const btn = document.getElementById('csv-choose-btn');
@@ -8292,6 +8356,7 @@
       }
       input.addEventListener('change', () => {
         if (input.files && input.files.length > 0) {
+          _runHintTouched = true;
           customCsvFiles = Array.from(input.files);
           const MAX_SHOWN = 5;
           const names = customCsvFiles.map(f => f.name);
