@@ -30,7 +30,7 @@ FROM python:3.11-slim-bookworm
 
 # Add metadata
 LABEL maintainer="Data Commons Team" \
-      version="0.4.0" \
+      version="0.6.0" \
       description="DC Import Validator - Full image with built-in datasets"
 
 # Java 17 for dc-import JAR; curl for JAR download
