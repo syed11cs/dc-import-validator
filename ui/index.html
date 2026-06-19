@@ -7925,6 +7925,18 @@
               expectedRow +
             '</div>';
           }
+          // Simplified card when no CSV-row context (e.g. golden check — location/date/sourceRow always empty).
+          const hasRowContext = (s.location != null && s.location !== '')
+            || (s.date != null && s.date !== '')
+            || (s.sourceRow != null && s.sourceRow !== '');
+          if (!hasRowContext) {
+            return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
+              (statVar !== '—' ? '<div class="card-row stat-var">' + escapeHtml(statVar) + '</div>' : '') +
+              (value !== '—' ? '<div class="card-row">' + escapeHtml(valueLabel) + ': ' + escapeHtml(value) + '</div>' : '') +
+              '<div class="card-row rule-name">Rule: ' + escapeHtml(rule) + '</div>' +
+              expectedRow +
+            '</div>';
+          }
           return '<div class="rule-failure-card" data-summary="' + summaryAttr + '">' +
             '<div class="card-row stat-var">' + escapeHtml(statVar) + '</div>' +
             '<div class="card-row location">Location: ' + escapeHtml(location) + '</div>' +
@@ -7942,6 +7954,9 @@
           // Lint error-count rules (structural / missing refs)
           if (ruleId === 'check_structural_lint_error_count' || ruleId === 'check_missing_refs_count')
             return count === 1 ? '1 lint error' : count + ' lint errors';
+          // Golden check rules — missing records, not StatVars "affected"
+          if (ruleId === 'check_uploaded_golden_files' || ruleId.startsWith('check_goldens'))
+            return count === 1 ? '1 missing golden record' : count + ' missing golden records';
           // Stats-table rules (per-StatVar aggregated), differ rules, and custom SQL rules
           return count === 1 ? '1 StatVar affected' : count + ' StatVars affected';
         }
