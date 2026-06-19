@@ -2545,6 +2545,7 @@
         document.getElementById('csv-file').value = '';
         document.getElementById('stat-vars-mcf-file').value = '';
         document.getElementById('stat-vars-schema-mcf-file').value = '';
+        document.getElementById('golden-files-file').value = '';
         document.getElementById('validation-config-file').value = '';
         const _vcfName = document.getElementById('validation-config-file-name');
         if (_vcfName) { _vcfName.textContent = 'No file chosen'; _vcfName.classList.remove('has-file'); }
@@ -8480,6 +8481,7 @@
           nameEl.classList.remove('has-file');
           clearBtn.style.display = 'none';
         }
+        updateRunButtonState();
       });
       clearBtn.addEventListener('click', () => {
         input.value = '';
