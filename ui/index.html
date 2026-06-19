@@ -2004,7 +2004,7 @@
                 <span id="golden-files-file-name" class="file-name">No file chosen</span>
                 <button type="button" id="golden-files-clear-btn" class="file-clear-btn" style="display: none;" title="Remove files" aria-label="Remove files">×</button>
               </div>
-              <p class="field-hint">CSV where each row is an expected record. Validation fails if any row is missing from the import's summary report.</p>
+              <p class="field-hint">A CSV listing records that must exist in this import's output. Validation fails if any row is missing.</p>
             </div>
           </div><!-- /upload-mode-section -->
           <div id="gcs-mode-section" class="gcs-input-section" style="display: none;">
@@ -2029,8 +2029,7 @@
               <input type="text" id="stat-vars-schema-mcf-gcs-path" placeholder="gs://bucket/path/schema.mcf" autocomplete="off" spellcheck="false" />
               <label>Golden Check <span class="label-optional">(optional)</span></label>
               <textarea id="golden-files-gcs-paths" rows="2" placeholder="gs://bucket/path/golden_summary.csv" autocomplete="off" spellcheck="false"></textarea>
-              <p class="field-hint">GCS path(s) to golden CSV file(s), one per line. Each row in the file is a record that must exist in this import's output — validation fails if any row is missing.</p>
-              <p class="gcs-sa-hint">The Batch VM service account must have read access to these GCS paths.</p>
+              <p class="field-hint">A CSV listing records that must exist in this import's output. Validation fails if any row is missing.</p>
             </div>
             <div id="gcs-bulk-folder-fields" style="display: none;">
               <label for="bulk-gcs-root">Root GCS folder <span class="required-asterisk" aria-label="required">*</span></label>
